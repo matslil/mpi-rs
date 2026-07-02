@@ -12,8 +12,8 @@ The design covers:
 
 - task-local bounded message queues;
 - statically declared message sets;
-- normal and priority queue placement;
-- asynchronous messages;
+- normal and priority FIFO queue placement;
+- events, meaning asynchronous messages with no reply;
 - synchronous calls with typed replies;
 - generator-style streaming calls;
 - a universal `SessionId` used for both single replies and streams;
