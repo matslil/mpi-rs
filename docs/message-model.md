@@ -4,6 +4,30 @@ This document describes the intended message model for `mpi-rs`.
 
 The goal is to provide an OSE-inspired message passing model for Rust applications while keeping the user-facing API idiomatic for Rust. OSE uses the term signal; `mpi-rs` uses the term message.
 
+## Terminology
+
+`Message` is the umbrella term for every item that can be received by a task.
+
+Messages include:
+
+- start messages;
+- events, meaning asynchronous messages with no reply;
+- synchronous call requests;
+- synchronous call responses;
+- stream start requests;
+- stream pull control messages;
+- stream reply events;
+- stream cancel control messages;
+- internal runtime/control messages when needed.
+
+An **event** is an asynchronous message that does not expect a reply.
+
+A **call** is a synchronous message exchange with exactly one response.
+
+A **stream** is a synchronous/generator-style message exchange with zero or more stream reply events followed by end, error, or cancellation.
+
+A **SessionId** identifies a logical interaction that can produce future messages. It is used for both calls and streams.
+
 ## Goals
 
 - A task is an operating system thread with an associated bounded message queue.
@@ -15,6 +39,7 @@ The goal is to provide an OSE-inspired message passing model for Rust applicatio
 - Message handlers should be able to wait for specific replies without blocking the task thread.
 - While one handler waits, the task should continue receiving and handling other messages.
 - Synchronous calls and streaming calls should be type checked so a task can only wait for replies or stream events that it declares it can receive.
+- The first application message received by a newly spawned task must be its start message.
 
 ## Task model
 
@@ -23,7 +48,7 @@ A task consists of:
 - a task state object;
 - a task handle used by other code to send messages;
 - a bounded message queue;
-- a task context passed to handlers;
+- a generated task context passed to handlers;
 - a dispatch loop running on one OS thread.
 
 Conceptually:
@@ -70,34 +95,84 @@ pub enum MessagePlacement {
 }
 ```
 
-Normal messages are inserted at the tail of the queue.
+The queue should preserve FIFO order separately for normal messages and priority messages.
 
-Priority messages are inserted at the head of the queue.
-
-A single `VecDeque` is sufficient:
+Use two internal queues:
 
 ```rust
-match msg.placement() {
-    MessagePlacement::Normal => queue.push_back(msg),
-    MessagePlacement::Priority => queue.push_front(msg),
+pub struct TaskQueue<M, const N: usize> {
+    priority: VecDeque<M>,
+    normal: VecDeque<M>,
 }
 ```
 
-This means priority messages are LIFO relative to each other. That is intentional for the initial design because priority messages are expected to be exceptional, for example shutdown, cancellation, or urgent control operations.
+Normal messages are inserted at the tail of the normal queue.
+
+Priority messages are inserted at the tail of the priority queue.
+
+Receiving first takes from the head of the priority queue. If the priority queue is empty, receiving takes from the head of the normal queue.
+
+Conceptually:
+
+```rust
+match msg.placement() {
+    MessagePlacement::Normal => normal.push_back(msg),
+    MessagePlacement::Priority => priority.push_back(msg),
+}
+
+let next = priority.pop_front().or_else(|| normal.pop_front());
+```
+
+The total capacity is shared:
+
+```rust
+priority.len() + normal.len() <= N
+```
+
+This gives:
+
+- FIFO ordering among normal messages;
+- FIFO ordering among priority messages;
+- priority messages before normal messages;
+- one compile-time queue capacity per task.
 
 The sender does not choose the priority. The receiver's message declaration decides it.
 
 For example, if `ServerTask` declares `Shutdown` as priority, then all sends of `Shutdown` to `ServerTask` are priority sends.
 
-## Message categories
+## Start message guarantee
 
-There are three main message categories:
+The start message is special.
+
+Task creation creates and enqueues a special start message. The macro should force the generated start message to be a priority message.
+
+The intended spawn sequence is:
 
 ```text
-message       asynchronous, no reply
-call          synchronous, exactly one reply
-stream        synchronous/generator-style, zero or more replies followed by end or error
+create task queue
+enqueue Start message as priority
+spawn OS thread running task loop
+first receive returns Start message
+Start handler initializes task state
 ```
+
+Because priority messages are FIFO, and because no other priority message can be enqueued before the start message during task creation, the first message received by the task is guaranteed to be the start message.
+
+This guarantee is important because all later task behavior may rely on state initialized by the start handler.
+
+There is no separate out-of-band task initialization path.
+
+## Message categories
+
+There are three main user-visible message categories:
+
+```text
+event         asynchronous message, no reply
+call          synchronous message exchange, exactly one reply
+stream        synchronous/generator-style exchange, zero or more replies followed by end or error
+```
+
+`Message` remains the umbrella term for all of these.
 
 Each category can be normal or priority depending on the receiver's declaration.
 
@@ -105,15 +180,15 @@ The matrix is:
 
 ```text
               normal              priority
-message       async message        priority async message
-call          sync call            priority sync call
-stream        streaming call       priority streaming call
+event         event               priority event
+call          call                priority call
+stream        stream              priority stream
 ```
 
 For calls and streams, request priority and reply/event priority are independent:
 
 - the request placement is declared by the callee task, because the callee receives the request;
-- the response or stream event placement is declared by the caller task, because the caller receives the response or stream event.
+- the response or stream reply event placement is declared by the caller task, because the caller receives the response or stream reply event.
 
 ## Task message trait
 
@@ -140,9 +215,11 @@ impl TaskMessage for ServerMessage {
 }
 ```
 
-The queue only needs `M: TaskMessage` to decide where to insert the message.
+The queue only needs `M: TaskMessage` to decide which internal FIFO queue receives the message.
 
-## Declaring messages
+## Declaring a task
+
+The macro used on the implementation block should be named `task`, not `messages`, because it defines more than message handlers. It also creates the task context, task message enum, task handle, dispatch plumbing, and task runtime integration.
 
 A possible user-facing declaration style:
 
@@ -152,14 +229,14 @@ struct ServerTask {
     state: ServerState,
 }
 
-#[messages]
+#[task]
 impl ServerTask {
-    #[start(priority)]
+    #[start]
     async fn start(&mut self, ctx: &mut ServerContext, config: ServerConfig) {
         self.state = ServerState::new(config);
     }
 
-    #[message]
+    #[event]
     async fn set(&mut self, ctx: &mut ServerContext, key: String, value: Vec<u8>) {
         self.state.insert(key, value);
     }
@@ -171,38 +248,24 @@ impl ServerTask {
         }
     }
 
-    #[message(priority)]
+    #[event(priority)]
     async fn shutdown(&mut self, ctx: &mut ServerContext) {
         ctx.stop();
     }
 }
 ```
 
-The macro would generate:
+The `#[start]` handler is treated as priority even if the user does not explicitly write `priority`. The macro should either reject an explicit normal start placement or ignore it and force priority.
+
+The task macro would generate:
 
 - the task message enum;
+- the task context type;
 - the task handle;
 - one handle method per sendable message;
 - the queue placement implementation;
 - dispatch from enum variant to handler;
 - reply and stream plumbing for `call` and `stream` messages.
-
-## Start message
-
-Task creation creates and enqueues a special start message.
-
-The task thread is started first, then the start message is sent to its queue.
-
-This keeps initialization in-band:
-
-```text
-create task queue
-spawn OS thread running task loop
-enqueue Start message
-Start handler initializes task state
-```
-
-There is no separate out-of-band task initialization path.
 
 ## Handler execution and selective receive
 
@@ -223,7 +286,7 @@ suspended handler resumes
 The receive loop conceptually does:
 
 ```text
-pop next message according to queue placement
+pop next message from priority FIFO queue, or from normal FIFO queue if no priority message exists
 check suspended waiters
 if a waiter matches, resume that waiter
 otherwise dispatch the message to its normal handler
@@ -233,7 +296,7 @@ Matching is by message kind and, for protocol messages, by `SessionId`.
 
 ## Compile-time receive checks
 
-A task must declare the reply and stream event messages it can receive.
+A task must declare the response and stream reply event messages it can receive.
 
 This can be checked using a generated trait:
 
@@ -259,7 +322,7 @@ A generated synchronous call method then requires:
 CallerMessage: CanReceive<Response<GetReply>>
 ```
 
-If a handler tries to call a synchronous method but its task has not declared support for the reply message, the code does not compile.
+If a handler tries to call a synchronous method but its task has not declared support for the response message, the code does not compile.
 
 The same model applies to streams:
 
@@ -375,7 +438,7 @@ So the correct handler resumes even when replies arrive out of order.
 
 ## Streaming calls
 
-A streaming call is a request message followed by zero or more stream events and then either end or error.
+A streaming call is a request message followed by zero or more stream reply events and then either end or error.
 
 The stream uses the same `SessionId` model as synchronous calls.
 
@@ -442,7 +505,7 @@ if Error:
 
 ## Stream cancellation
 
-Cancellation is an asynchronous message.
+Cancellation is an event/control message.
 
 A stream object may send cancel when dropped:
 
@@ -613,20 +676,20 @@ examples/
 
 The `mpi` crate contains the runtime primitives.
 
-The `mpi-macros` crate contains proc macros for task and message declarations.
+The `mpi-macros` crate contains proc macros for task declarations and generated task plumbing.
 
 ## Initial implementation phases
 
 A practical implementation order:
 
-1. Bounded task queues with normal/priority insertion.
-2. Task handles and generated asynchronous message send methods.
-3. Start message and task spawn API.
-4. Generated message enums and dispatch loops.
+1. Bounded task queues with separate FIFO queues for normal and priority messages.
+2. Task handles and generated event send methods.
+3. Start message and task spawn API, with start forced to priority and guaranteed to be first.
+4. Generated message enums, task context types, and dispatch loops.
 5. Async handlers run by a task-local executor.
 6. Selective receive by message kind.
 7. `SessionId`, `Response<T>`, and synchronous calls.
-8. Compile-time `CanReceive<T>` checks for replies.
+8. Compile-time `CanReceive<T>` checks for responses.
 9. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
 10. Stream batching and credit-based flow control.
 11. Safe Unix signal bridge.
@@ -637,13 +700,17 @@ A practical implementation order:
 ```text
 Every task owns its message queue.
 Every task declares the messages it can receive.
+Message is the umbrella term for all received items.
+Event means asynchronous message with no reply.
 Every message has receiver-declared queue placement.
-Normal messages go to the queue tail.
-Priority messages go to the queue head.
+Normal messages go to the normal FIFO queue.
+Priority messages go to the priority FIFO queue.
+Priority messages are received before normal messages.
+The start message is forced to priority and must be the first message received.
 Synchronous calls are request messages plus typed Response<T> messages.
 Streaming calls are request messages plus typed StreamEvent<T, E> messages.
 SessionId identifies the logical interaction for calls and streams.
-A task can only await replies or stream events it declares it can receive.
+A task can only await responses or stream events it declares it can receive.
 Handlers suspend on receive instead of blocking the OS thread.
 Late stream events after cancellation may be discarded.
 Everything received by a task is still a message.
