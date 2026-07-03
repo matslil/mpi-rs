@@ -6,11 +6,23 @@ The human maintainer acts as the system engineer and approval authority. AI agen
 
 ## Source of truth
 
-For the current baseline, `docs/message-model.md` is the source of truth for the intended `mpi-rs` message model.
+The authoritative project baseline is the systems-engineering document set under `docs/se/`.
 
-Other pre-existing repository documents are considered outdated unless they are explicitly referenced by one of the documents under `docs/se/` or `docs/agents/`.
+The most important baseline documents are:
 
-When there is a conflict between generated code and the systems-engineering documents, the documents win. When there is a conflict between `docs/message-model.md` and a derived `docs/se/` document, report the conflict instead of guessing.
+- `docs/se/stakeholders.md`
+- `docs/se/requirements.md`
+- `docs/se/architecture.md`
+- `docs/se/interfaces.md`
+- `docs/se/verification-plan.md`
+- `docs/se/validation-scenarios.md`
+- `docs/se/traceability.md`
+- `docs/se/glossary.md`
+- `docs/se/change-process.md`
+
+Historical design notes, including any old message-model document, are not authoritative unless a current `docs/se/` document explicitly references them.
+
+When there is a conflict between generated code and the systems-engineering documents, the systems-engineering documents win. When two current systems-engineering documents conflict, report the conflict instead of guessing.
 
 ## Required reading before making changes
 
@@ -18,14 +30,17 @@ Before changing production code, tests, examples, or process documents, read:
 
 - `docs/agents/process.md`
 - the role-specific document under `docs/agents/`
-- `docs/message-model.md`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
 - `docs/se/interfaces.md`
 - `docs/se/verification-plan.md`
 - `docs/se/traceability.md`
 
-Read `docs/se/validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, or diagnostics.
+Read `docs/se/stakeholders.md` when changing needs, scope, constraints, or process assumptions.
+
+Read `docs/se/validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, external APIs, signal handling, or diagnostics.
+
+Read `docs/se/glossary.md` when adding or changing terminology.
 
 ## Core project intent
 
