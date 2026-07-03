@@ -1,4 +1,4 @@
-//! Stream protocol messages and consumer helper.
+//! Stream protocol messages and consumer/producer helpers.
 
 use std::collections::VecDeque;
 use std::marker::PhantomData;
@@ -116,6 +116,103 @@ impl HasSessionId for StreamCancel {
 pub trait StreamControl: Send + Sync + 'static {
     /// Try to cancel a stream session.
     fn try_cancel(&self, session_id: SessionId) -> Result<(), SendError>;
+}
+
+/// Receives producer-side stream events from a `StreamSink`.
+pub trait StreamEventSink<T, E> {
+    /// Send one stream event to the consumer side.
+    fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError>;
+}
+
+impl<T, E, F> StreamEventSink<T, E> for F
+where
+    F: FnMut(StreamEvent<T, E>) -> Result<(), SendError>,
+{
+    fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
+        self(event)
+    }
+}
+
+/// Producer-side stream helper that batches items and emits end/error events.
+pub struct StreamSink<T, E, S>
+where
+    S: StreamEventSink<T, E>,
+{
+    session_id: SessionId,
+    batch_size: usize,
+    sink: S,
+    buffer: Vec<T>,
+    finished: bool,
+    _error: PhantomData<fn() -> E>,
+}
+
+impl<T, E, S> StreamSink<T, E, S>
+where
+    S: StreamEventSink<T, E>,
+{
+    /// Create a stream sink with the given positive batch size.
+    #[must_use]
+    pub fn new(session_id: SessionId, batch_size: usize, sink: S) -> Self {
+        assert!(
+            batch_size > 0,
+            "stream batch size must be greater than zero"
+        );
+        Self {
+            session_id,
+            batch_size,
+            sink,
+            buffer: Vec::with_capacity(batch_size),
+            finished: false,
+            _error: PhantomData,
+        }
+    }
+
+    /// Return this stream's session identifier.
+    #[must_use]
+    pub const fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    /// Push one item, flushing a batch when the configured batch size is reached.
+    pub fn push(&mut self, value: T) -> Result<(), SendError> {
+        assert!(!self.finished, "cannot push to a finished stream");
+        self.buffer.push(value);
+        if self.buffer.len() >= self.batch_size {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    /// Flush a non-empty batch.
+    pub fn flush(&mut self) -> Result<(), SendError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let values = std::mem::take(&mut self.buffer);
+        self.sink
+            .send_event(StreamEvent::batch(self.session_id, values))
+    }
+
+    /// Flush any buffered items and send normal stream end.
+    pub fn finish(&mut self) -> Result<(), SendError> {
+        if self.finished {
+            return Ok(());
+        }
+        self.flush()?;
+        self.finished = true;
+        self.sink.send_event(StreamEvent::end(self.session_id))
+    }
+
+    /// Flush any buffered items and send stream error.
+    pub fn fail(&mut self, error: E) -> Result<(), SendError> {
+        if self.finished {
+            return Ok(());
+        }
+        self.flush()?;
+        self.finished = true;
+        self.sink
+            .send_event(StreamEvent::error(self.session_id, error))
+    }
 }
 
 /// Consumer-side stream helper that hides batching.
