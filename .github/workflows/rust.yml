@@ -10,7 +10,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout branch
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          git clone --quiet --depth 1 --branch "$branch" https://github.com/matslil/mpi-rs.git .
       - name: Install Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
