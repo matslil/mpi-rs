@@ -1,12 +1,8 @@
 # mpi-rs
 
-`mpi-rs` is intended to be a Rust message passing infrastructure inspired by the task and signal model of Enea OSE, but using Rust terminology and Rust-friendly APIs.
+`mpi-rs` is intended to be a message passing infrastructure using Rust terminology and Rust-friendly APIs.
 
 The core abstraction is a **task**: an operating system thread with an associated bounded message queue. Each task declares the messages it can receive. Generated task handle methods allocate/build the corresponding message and enqueue it directly into the receiving task's queue.
-
-The current design direction is documented in:
-
-- [Message model design](docs/message-model.md)
 
 The design covers:
 
