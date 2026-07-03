@@ -1,6 +1,7 @@
 //! Session identifiers and typed call responses.
 
 use core::fmt;
+use std::sync::mpsc;
 
 use crate::message::HasSessionId;
 
@@ -100,4 +101,16 @@ impl<T> HasSessionId for Response<T> {
     fn session_id(&self) -> SessionId {
         self.session_id
     }
+}
+
+/// Sender endpoint used by synchronous call handlers to return a typed reply.
+pub type SyncReplySender<T> = mpsc::Sender<Response<T>>;
+
+/// Receiver endpoint used by callers waiting for one typed reply.
+pub type SyncReplyReceiver<T> = mpsc::Receiver<Response<T>>;
+
+/// Create a synchronous reply channel.
+#[must_use]
+pub fn sync_reply_channel<T>() -> (SyncReplySender<T>, SyncReplyReceiver<T>) {
+    mpsc::channel()
 }

@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use mpi::{
     EndpointId, HasSessionId, MessagePlacement, MessageStream, Response, SendError, SessionId,
-    SessionIdAllocator, StreamCancel, StreamControl, StreamEvent, TaskMessage, TaskQueue,
-    spawn_task,
+    SessionIdAllocator, StreamCancel, StreamControl, StreamEvent, StreamSink, SyncReplySender,
+    TaskContext, TaskHandle, TaskMessage, TaskQueue, spawn_task,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -100,12 +100,69 @@ fn req_080_req_083_req_084_session_ids_are_origin_plus_local_sequence() {
 }
 
 #[test]
+fn req_084_task_context_allocates_task_local_session_ids() {
+    let queue = Arc::new(TaskQueue::<TestMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue, EndpointId(55));
+    let mut ctx = TaskContext::new(handle);
+
+    assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(55), 0));
+    assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(55), 1));
+    assert!(!ctx.is_stopped());
+
+    ctx.stop();
+    assert!(ctx.is_stopped());
+    assert_eq!(
+        ctx.self_handle().send_message(TestMessage::Normal(1)),
+        Err(SendError::TaskStopped)
+    );
+}
+
+#[test]
 fn req_090_response_carries_session_id_and_value() {
     let session_id = SessionId::new(EndpointId(1), 42);
     let response = Response::new(session_id, "ok");
 
     assert_eq!(response.session_id(), session_id);
     assert_eq!(response.into_value(), "ok");
+}
+
+enum CallMessage {
+    Start,
+    Get {
+        session_id: SessionId,
+        reply: SyncReplySender<u32>,
+    },
+}
+
+impl TaskMessage for CallMessage {
+    fn placement(&self) -> MessagePlacement {
+        match self {
+            Self::Start => MessagePlacement::Priority,
+            Self::Get { .. } => MessagePlacement::Normal,
+        }
+    }
+}
+
+#[test]
+fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
+    let (handle, runtime) = spawn_task::<CallMessage, _, _, 4>(CallMessage::Start, |handle| {
+        assert!(matches!(handle.queue().recv().unwrap(), CallMessage::Start));
+        match handle.queue().recv().unwrap() {
+            CallMessage::Get { session_id, reply } => {
+                reply.send(Response::new(session_id, 42)).unwrap();
+            }
+            CallMessage::Start => panic!("unexpected second start message"),
+        }
+    })
+    .unwrap();
+
+    let response = handle
+        .call_blocking(|session_id, reply| CallMessage::Get { session_id, reply })
+        .unwrap();
+    assert_eq!(response.value, 42);
+    assert_eq!(response.session_id.origin, handle.endpoint());
+
+    runtime.join().unwrap();
 }
 
 #[derive(Default)]
@@ -198,4 +255,55 @@ fn req_082_stream_cancel_has_session_id() {
     let session_id = SessionId::new(EndpointId(3), 9);
     let cancel = StreamCancel::new(session_id);
     assert_eq!(cancel.session_id(), session_id);
+}
+
+#[test]
+fn req_102_req_111_stream_sink_batches_and_sends_end() {
+    let session_id = SessionId::new(EndpointId(4), 0);
+    let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
+    let captured_events = events.clone();
+
+    let mut sink = StreamSink::new(session_id, 2, move |event| {
+        captured_events.lock().unwrap().push(event);
+        Ok(())
+    });
+
+    sink.push(1).unwrap();
+    assert!(events.lock().unwrap().is_empty());
+
+    sink.push(2).unwrap();
+    sink.push(3).unwrap();
+    sink.finish().unwrap();
+
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        &[
+            StreamEvent::batch(session_id, vec![1, 2]),
+            StreamEvent::batch(session_id, vec![3]),
+            StreamEvent::end(session_id),
+        ]
+    );
+}
+
+#[test]
+fn req_105_req_111_stream_sink_flushes_before_error() {
+    let session_id = SessionId::new(EndpointId(4), 1);
+    let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
+    let captured_events = events.clone();
+
+    let mut sink = StreamSink::new(session_id, 4, move |event| {
+        captured_events.lock().unwrap().push(event);
+        Ok(())
+    });
+
+    sink.push(9).unwrap();
+    sink.fail("failed").unwrap();
+
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        &[
+            StreamEvent::batch(session_id, vec![9]),
+            StreamEvent::error(session_id, "failed"),
+        ]
+    );
 }

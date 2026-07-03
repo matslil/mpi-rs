@@ -39,3 +39,30 @@ impl fmt::Display for RecvError {
 }
 
 impl std::error::Error for RecvError {}
+
+/// Error returned by an external blocking synchronous call.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CallError {
+    /// The request could not be enqueued.
+    Send(SendError),
+
+    /// The callee stopped before sending a reply.
+    ReplyDisconnected,
+}
+
+impl fmt::Display for CallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(error) => write!(f, "call request could not be sent: {error}"),
+            Self::ReplyDisconnected => f.write_str("call reply channel disconnected"),
+        }
+    }
+}
+
+impl std::error::Error for CallError {}
+
+impl From<SendError> for CallError {
+    fn from(error: SendError) -> Self {
+        Self::Send(error)
+    }
+}
