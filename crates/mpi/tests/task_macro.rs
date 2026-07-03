@@ -1,4 +1,4 @@
-use mpi::{call, event, start, task};
+use mpi::task;
 
 #[derive(Default)]
 struct Counter {
