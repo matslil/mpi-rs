@@ -13,7 +13,6 @@ The agent shall read:
 - pull request diff or changed files;
 - `AGENTS.md`;
 - `docs/agents/process.md`;
-- `docs/message-model.md`;
 - `docs/se/requirements.md`;
 - `docs/se/architecture.md`;
 - `docs/se/interfaces.md`;
@@ -21,6 +20,8 @@ The agent shall read:
 - `docs/se/validation-scenarios.md`;
 - `docs/se/traceability.md`;
 - test output and verification evidence.
+
+Historical design notes are not authoritative unless a current SE document or the human maintainer explicitly references them for the change.
 
 ## Outputs
 
