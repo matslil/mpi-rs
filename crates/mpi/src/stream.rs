@@ -153,7 +153,10 @@ where
     /// Create a stream sink with the given positive batch size.
     #[must_use]
     pub fn new(session_id: SessionId, batch_size: usize, sink: S) -> Self {
-        assert!(batch_size > 0, "stream batch size must be greater than zero");
+        assert!(
+            batch_size > 0,
+            "stream batch size must be greater than zero"
+        );
         Self {
             session_id,
             batch_size,
@@ -207,7 +210,8 @@ where
         }
         self.flush()?;
         self.finished = true;
-        self.sink.send_event(StreamEvent::error(self.session_id, error))
+        self.sink
+            .send_event(StreamEvent::error(self.session_id, error))
     }
 }
 
