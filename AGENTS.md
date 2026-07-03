@@ -20,8 +20,6 @@ The most important baseline documents are:
 - `docs/se/glossary.md`
 - `docs/se/change-process.md`
 
-Historical design notes, including any old message-model document, are not authoritative unless a current `docs/se/` document explicitly references them.
-
 When there is a conflict between generated code and the systems-engineering documents, the systems-engineering documents win. When two current systems-engineering documents conflict, report the conflict instead of guessing.
 
 ## Required reading before making changes
@@ -44,7 +42,7 @@ Read `docs/se/glossary.md` when adding or changing terminology.
 
 ## Core project intent
 
-`mpi-rs` provides an OSE-inspired message-passing model for Rust applications while keeping the user-facing API idiomatic for Rust.
+`mpi-rs` provides a message-passing model for Rust applications while keeping the user-facing API idiomatic for Rust.
 
 The core concepts are:
 

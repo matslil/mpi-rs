@@ -6,7 +6,7 @@ This document is part of the authoritative systems-engineering baseline under `d
 
 ## Project purpose
 
-`mpi-rs` shall provide an OSE-inspired message-passing model for Rust applications while keeping the public API idiomatic for Rust.
+`mpi-rs` shall provide a message-passing model for Rust applications while keeping the public API idiomatic for Rust.
 
 The library is intended to let developers structure software as tasks with typed messages, generated send methods, bounded queues, synchronous calls, streaming interactions, cancellation, and safe task-local receive behavior.
 

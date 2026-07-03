@@ -12,8 +12,6 @@ Status values are defined in `docs/agents/process.md`.
 
 The repository shall treat the systems-engineering documents under `docs/se/` as the authoritative product and engineering baseline.
 
-Rationale: The maintainer wants `docs/se/` to replace the earlier standalone message-model design note.
-
 Verification: inspection
 
 Status: approved

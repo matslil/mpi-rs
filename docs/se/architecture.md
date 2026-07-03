@@ -6,7 +6,7 @@ It should be used to guide implementation, testing, review, and validation.
 
 ## Architecture goals
 
-ARCH-001: `mpi-rs` shall provide OSE-inspired message passing while exposing an idiomatic Rust API.
+ARCH-001: `mpi-rs` shall provide message passing while exposing an idiomatic Rust API.
 
 ARCH-002: The architecture shall separate runtime primitives from proc-macro generated task plumbing.
 
