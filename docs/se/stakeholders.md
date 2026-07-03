@@ -2,7 +2,7 @@
 
 This document identifies the initial stakeholders and needs for `mpi-rs`.
 
-The baseline is derived from `docs/message-model.md` and the human maintainer's stated intent to use a lightweight systems-engineering process for AI-assisted Rust development.
+This document is part of the authoritative systems-engineering baseline under `docs/se/`.
 
 ## Project purpose
 
@@ -89,7 +89,7 @@ CON-001: The implementation language is Rust.
 
 CON-002: The user-facing API should remain idiomatic for Rust.
 
-CON-003: The current conceptual source of truth is `docs/message-model.md`.
+CON-003: The authoritative systems-engineering baseline is stored under `docs/se/`.
 
 CON-004: The process should remain lightweight enough for a private open-source repository.
 
@@ -99,4 +99,4 @@ CON-006: AI implementation, testing, review, validation, and traceability activi
 
 ## Notes
 
-This document is an initial baseline. It should evolve as the human maintainer makes explicit product, API, implementation, and release decisions.
+This document should evolve as the human maintainer makes explicit product, API, implementation, and release decisions.
