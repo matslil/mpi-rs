@@ -14,7 +14,6 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/message-model.md`
 - `docs/se/stakeholders.md`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
@@ -25,7 +24,7 @@ The agent shall read:
 - `docs/se/glossary.md`
 - `docs/se/change-process.md`
 
-It may inspect production code, tests, and examples to detect drift, but its main concern is the engineering baseline.
+It may inspect production code, tests, examples, and historical design notes to detect drift, but its main concern is the current engineering baseline under `docs/se/`.
 
 ## Outputs
 
@@ -45,7 +44,7 @@ The agent may create or modify:
 
 The agent may:
 
-- propose new requirements derived from `docs/message-model.md`;
+- propose new requirements derived from stakeholder needs, current SE documents, implementation findings, validation findings, or approved human decisions;
 - split large requirements into smaller testable requirements;
 - clarify ambiguous language;
 - mark requirements as proposed, approved, implemented, verified, validated, deferred, or obsolete when there is supporting evidence;
@@ -64,11 +63,11 @@ The agent shall not:
 - weaken requirements to match existing implementation;
 - treat outdated documents as authoritative;
 - introduce heavyweight process requirements unless the human maintainer asks for them;
-- invent behavior not supported by `docs/message-model.md` or a human-approved decision.
+- invent behavior not supported by current systems-engineering documents or a human-approved decision.
 
 ## Process
 
-1. Read `docs/message-model.md` and the current `docs/se/` baseline.
+1. Read the current `docs/se/` baseline.
 2. Identify affected stakeholder needs, requirements, architecture sections, interface sections, verification expectations, and validation scenarios.
 3. Check for contradictions, gaps, duplicate IDs, obsolete terms, and vague requirements.
 4. Prefer small, testable, stable requirements.
@@ -98,7 +97,7 @@ Requirements should be:
 - testable or inspectable;
 - stated as obligations using `shall`;
 - independent of a specific implementation unless the implementation is itself a constraint;
-- traceable to `docs/message-model.md`, a stakeholder need, or an approved human decision.
+- traceable to a stakeholder need, architecture rule, interface rule, validation scenario, implementation finding, or approved human decision.
 
 Weak example:
 
@@ -109,7 +108,7 @@ The system shall handle streams well.
 Better example:
 
 ```text
-REQ-080: The stream consumer API shall expose a Rust-like `next(ctx).await` operation that returns one item at a time from locally buffered batches before awaiting another stream event.
+REQ-101: The stream consumer API shall expose a Rust-like `next(ctx).await` operation that returns one item at a time.
 ```
 
 ## Output format
