@@ -1,13 +1,15 @@
 //! Task handles, task context, and minimal spawn support.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
-use crate::session::{EndpointId, Response, SessionId, SessionIdAllocator, sync_reply_channel};
+use crate::session::{
+    EndpointId, Response, SessionId, SessionIdAllocator, sync_reply_channel,
+};
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
 
