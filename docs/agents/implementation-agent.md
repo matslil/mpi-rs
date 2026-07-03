@@ -12,7 +12,7 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/message-model.md`
+- `docs/se/stakeholders.md` when the change affects needs or scope
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
 - `docs/se/interfaces.md`
@@ -20,6 +20,8 @@ The agent shall read:
 - `docs/se/traceability.md`
 - relevant tests and examples
 - the issue, change request, or human instruction that triggered the work
+
+Historical design notes are not authoritative unless a current SE document or the human maintainer explicitly references them for the change.
 
 ## Outputs
 
