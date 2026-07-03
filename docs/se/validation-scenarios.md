@@ -1,0 +1,263 @@
+# Validation Scenarios
+
+This document defines initial validation scenarios for `mpi-rs`.
+
+Validation answers: did we build the right thing for the intended users?
+
+## Scenario status values
+
+Use these values:
+
+- `proposed`: scenario drafted but not yet approved;
+- `approved`: scenario approved for validation;
+- `passed`: evidence shows the scenario works;
+- `partial`: scenario partly works or has limitations;
+- `failed`: scenario does not work;
+- `blocked`: scenario cannot yet be evaluated;
+- `deferred`: scenario intentionally postponed.
+
+## VAL-001: Declare a simple task
+
+Status: approved
+
+Stakeholder needs: SN-010, SN-011, SN-012
+
+A Rust developer declares a task with a queue size, task state, start handler, and one event handler.
+
+Expected outcome:
+
+- the declaration is compact and Rust-like;
+- the task has a generated message enum;
+- the task has a generated context;
+- the task has a generated handle;
+- the event can be sent through a generated method.
+
+Evidence type: executable example or API walkthrough
+
+Candidate example: `examples/ping_pong.rs`
+
+## VAL-002: Start task predictably
+
+Status: approved
+
+Stakeholder needs: SN-041
+
+A developer spawns a task and relies on the start handler to initialize state before any other application message is handled.
+
+Expected outcome:
+
+- task creation enqueues the start message;
+- the start message is priority;
+- the start message is received first;
+- later handlers can rely on initialized state.
+
+Evidence type: integration test and example
+
+Candidate example: `examples/ping_pong.rs`
+
+## VAL-003: Send an asynchronous event
+
+Status: approved
+
+Stakeholder needs: SN-012, SN-013, SN-014
+
+A developer sends an event to a task through a generated task-handle method.
+
+Expected outcome:
+
+- the caller does not manually construct a message enum;
+- queue-full is returned as an explicit error;
+- the receiving task dispatches the event to the correct handler.
+
+Evidence type: executable example or integration test
+
+Candidate example: `examples/ping_pong.rs`
+
+## VAL-004: Perform a typed synchronous call
+
+Status: approved
+
+Stakeholder needs: SN-013, SN-015, SN-023, SN-042
+
+A task handler calls another task and awaits a typed reply.
+
+Expected outcome:
+
+- caller code looks like `server.get(ctx, key).await?`;
+- the caller does not manually allocate or match session IDs;
+- the response type is checked;
+- the caller task continues processing other messages while waiting;
+- the correct suspended handler resumes when the response arrives.
+
+Evidence type: integration test and example
+
+Candidate example: `examples/synchronous_call.rs`
+
+## VAL-005: Handle concurrent same-type calls
+
+Status: approved
+
+Stakeholder needs: SN-042
+
+Two suspended handlers in the same caller task send the same call type to another task and receive replies out of order.
+
+Expected outcome:
+
+- each suspended handler resumes only for its own session;
+- replies are matched by message kind and `SessionId`;
+- no handler receives the other handler's reply.
+
+Evidence type: integration test
+
+## VAL-006: Reject undeclared receive at compile time
+
+Status: approved
+
+Stakeholder needs: SN-011, SN-023
+
+A task attempts to await a response or stream event it has not declared it can receive.
+
+Expected outcome:
+
+- the code fails to compile;
+- the error points toward missing receive declaration or trait bound;
+- no runtime fallback is needed for this error.
+
+Evidence type: compile-fail test
+
+## VAL-007: Consume a stream with Rust-like API
+
+Status: approved
+
+Stakeholder needs: SN-010, SN-013, SN-016
+
+A developer starts a streaming call and consumes it using a loop over `next(ctx).await`.
+
+Expected outcome:
+
+- caller code looks like ordinary Rust async control flow;
+- stream batches are hidden from the caller;
+- items are returned one at a time;
+- end returns no further items;
+- error returns a typed error.
+
+Evidence type: executable example and integration test
+
+Candidate example: `examples/streaming_query.rs`
+
+## VAL-008: Cancel stream by dropping handle
+
+Status: approved
+
+Stakeholder needs: SN-017, SN-043
+
+A consumer starts a stream and drops the stream object before it completes.
+
+Expected outcome:
+
+- the stream object attempts asynchronous cancellation;
+- drop does not await acknowledgement;
+- late stream events are safely discarded or logged-and-discarded;
+- ordinary application messages are not silently discarded.
+
+Evidence type: integration test
+
+## VAL-009: Avoid flooding consumer queue
+
+Status: approved
+
+Stakeholder needs: SN-016, SN-043
+
+A producer emits many stream items while the consumer processes them more slowly.
+
+Expected outcome:
+
+- batching reduces per-item message overhead;
+- flow control prevents unbounded flooding of the consumer queue;
+- the public API remains `next(ctx).await`.
+
+Evidence type: integration test or analysis plus demonstration
+
+## VAL-010: Use priority shutdown
+
+Status: approved
+
+Stakeholder needs: SN-040
+
+A developer declares a shutdown event as priority and sends it while normal work is queued.
+
+Expected outcome:
+
+- shutdown placement is defined by the receiver's declaration;
+- the shutdown event is handled before queued normal messages;
+- FIFO ordering among priority messages is preserved.
+
+Evidence type: executable example and test
+
+Candidate example: `examples/priority_shutdown.rs`
+
+## VAL-011: Use external blocking API explicitly
+
+Status: approved
+
+Stakeholder needs: SN-010, SN-015
+
+External code outside any task calls into a task and waits for a reply.
+
+Expected outcome:
+
+- the API is explicitly blocking, for example `get_blocking`;
+- task-internal code has a separate context-aware API;
+- developers can see which API may block a thread.
+
+Evidence type: example or API walkthrough
+
+## VAL-012: Forward Unix signals safely
+
+Status: deferred
+
+Stakeholder needs: SN-044
+
+A developer forwards POSIX signals into a task as normal Rust messages.
+
+Expected outcome:
+
+- the signal handler performs only async-signal-safe operations;
+- a bridge task or thread constructs the normal message;
+- the receiving task handles the signal as a normal event.
+
+Evidence type: inspection and demonstration
+
+## VAL-013: Diagnose sessions and queues
+
+Status: deferred
+
+Stakeholder needs: SN-045
+
+A developer investigates a timeout, late response, cancelled stream, or queue-full condition.
+
+Expected outcome:
+
+- diagnostics expose enough information to identify the affected task, session, and queue condition;
+- diagnostics do not require users to understand all internal macro expansion details.
+
+Evidence type: demonstration or documentation review
+
+## VAL-014: AI workflow implements from requirements
+
+Status: approved
+
+Stakeholder needs: SN-001, SN-002, SN-030, SN-032
+
+The human maintainer updates a requirement and asks AI workflows to implement, test, review, validate, and update traceability.
+
+Expected outcome:
+
+- the implementation agent identifies affected requirements;
+- the test agent adds or updates tests;
+- the review agent checks against requirements and architecture;
+- the validation agent evaluates affected scenarios;
+- the traceability agent links the change;
+- human approval remains required.
+
+Evidence type: process demonstration through pull request evidence
