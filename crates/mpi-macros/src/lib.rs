@@ -2,12 +2,11 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
 use syn::{
-    parse_macro_input, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType,
-    ReturnType, Token, Type,
+    Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, Token, Type,
+    parse_macro_input,
 };
 
 struct TaskArgs {
@@ -113,7 +112,9 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
 }
 
 fn strip_handler_attrs(method: &mut ImplItemFn) {
-    method.attrs.retain(|attr| special_attr_name(attr).is_none());
+    method
+        .attrs
+        .retain(|attr| special_attr_name(attr).is_none());
 }
 
 fn payload_args(method: &ImplItemFn) -> syn::Result<Vec<HandlerArg>> {
@@ -249,7 +250,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let mut original_items = stripped_items;
-    original_items.extend(handlers.iter().map(|handler| ImplItem::Fn(handler.method.clone())));
+    original_items.extend(
+        handlers
+            .iter()
+            .map(|handler| ImplItem::Fn(handler.method.clone())),
+    );
     item_impl.items = original_items;
 
     let mut variants = Vec::new();
@@ -272,7 +277,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         match &handler.kind {
             HandlerKind::Start => {
                 start_args = handler.args.clone();
-                start_variant = Some(quote! { #message_ident::#variant_ident { #(#arg_idents),* } });
+                start_variant =
+                    Some(quote! { #message_ident::#variant_ident { #(#arg_idents),* } });
                 variants.push(quote! { #variant_ident { #(#arg_idents: #arg_tys),* } });
                 placements.push(quote! {
                     Self::#variant_ident { .. } => ::mpi::MessagePlacement::Priority
