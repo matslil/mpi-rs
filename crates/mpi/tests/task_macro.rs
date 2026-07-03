@@ -36,7 +36,6 @@ fn req_051_req_052_macro_generates_task_handle_dispatch_and_call_plumbing() {
     counter.add(7).unwrap();
 
     assert_eq!(counter.get_blocking().unwrap(), 22);
-    assert_eq!(counter.endpoint(), counter.endpoint());
 
     counter.stop().unwrap();
     runtime.join().unwrap();
