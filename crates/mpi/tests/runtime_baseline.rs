@@ -89,8 +89,14 @@ fn req_040_req_041_req_042_start_message_is_first() {
 fn req_080_req_083_req_084_session_ids_are_origin_plus_local_sequence() {
     let mut allocator = SessionIdAllocator::new(EndpointId(7));
 
-    assert_eq!(allocator.next_session_id(), SessionId::new(EndpointId(7), 0));
-    assert_eq!(allocator.next_session_id(), SessionId::new(EndpointId(7), 1));
+    assert_eq!(
+        allocator.next_session_id(),
+        SessionId::new(EndpointId(7), 0)
+    );
+    assert_eq!(
+        allocator.next_session_id(),
+        SessionId::new(EndpointId(7), 1)
+    );
 }
 
 #[test]
@@ -137,7 +143,12 @@ fn req_104_stream_end_marks_stream_finished() {
     let session_id = SessionId::new(EndpointId(2), 1);
     let mut stream = MessageStream::<u8, &'static str>::new(session_id, control);
 
-    assert_eq!(stream.next_from_event(StreamEvent::end(session_id)).unwrap(), None);
+    assert_eq!(
+        stream
+            .next_from_event(StreamEvent::end(session_id))
+            .unwrap(),
+        None
+    );
     assert!(stream.is_finished());
 }
 
@@ -171,7 +182,12 @@ fn req_106_completed_stream_drop_does_not_cancel() {
     let session_id = SessionId::new(EndpointId(2), 4);
     {
         let mut stream = MessageStream::<u8, &'static str>::new(session_id, control.clone());
-        assert_eq!(stream.next_from_event(StreamEvent::end(session_id)).unwrap(), None);
+        assert_eq!(
+            stream
+                .next_from_event(StreamEvent::end(session_id))
+                .unwrap(),
+            None
+        );
     }
 
     assert!(control.cancelled.lock().unwrap().is_empty());
