@@ -1,6 +1,7 @@
 //! Stream protocol messages and consumer helper.
 
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::error::SendError;
@@ -51,7 +52,7 @@ impl<T, E> StreamEvent<T, E> {
 
     /// Construct an error event.
     #[must_use]
-    pub const fn error(session_id: SessionId, error: E) -> Self {
+    pub fn error(session_id: SessionId, error: E) -> Self {
         Self::Error { session_id, error }
     }
 }
@@ -123,6 +124,7 @@ pub struct MessageStream<T, E> {
     control: Arc<dyn StreamControl>,
     buffer: VecDeque<T>,
     finished: bool,
+    _error: PhantomData<fn() -> E>,
 }
 
 impl<T, E> MessageStream<T, E> {
@@ -134,6 +136,7 @@ impl<T, E> MessageStream<T, E> {
             control,
             buffer: VecDeque::new(),
             finished: false,
+            _error: PhantomData,
         }
     }
 
