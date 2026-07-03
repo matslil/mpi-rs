@@ -14,10 +14,16 @@ pub mod session;
 pub mod stream;
 pub mod task;
 
-pub use error::{RecvError, SendError};
+pub use error::{CallError, RecvError, SendError};
 pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
-pub use session::{EndpointId, Response, SessionId, SessionIdAllocator};
-pub use stream::{MessageStream, StreamCancel, StreamControl, StreamEvent, StreamPull};
-pub use task::{TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
+pub use session::{
+    EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
+    sync_reply_channel,
+};
+pub use stream::{
+    MessageStream, StreamCancel, StreamControl, StreamEvent, StreamEventSink, StreamPull,
+    StreamSink,
+};
+pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
