@@ -1,18 +1,18 @@
 # Requirements
 
-This document defines the initial lightweight systems-engineering requirements for `mpi-rs`.
+This document defines the authoritative lightweight systems-engineering requirements for `mpi-rs`.
 
-The requirements are derived from `docs/message-model.md` and are intended to be testable, inspectable, and useful for AI-assisted implementation.
+The requirements are intended to be testable, inspectable, and useful for AI-assisted implementation.
 
 Status values are defined in `docs/agents/process.md`.
 
 ## Process requirements
 
-### REQ-001: Authoritative source handling
+### REQ-001: Authoritative SE baseline
 
-The repository shall treat `docs/message-model.md` as the current conceptual source of truth until the human maintainer approves a replacement or update.
+The repository shall treat the systems-engineering documents under `docs/se/` as the authoritative product and engineering baseline.
 
-Rationale: The user explicitly identified `docs/message-model.md` as the only current repository source to use.
+Rationale: The maintainer wants `docs/se/` to replace the earlier standalone message-model design note.
 
 Verification: inspection
 
@@ -506,6 +506,16 @@ Verification: test
 
 Status: approved
 
+### REQ-094: Late one-shot response handling
+
+If a one-shot response arrives and no active waiter exists for its session, the runtime shall surface it to a fallback reply handler or task policy instead of silently discarding it.
+
+Source: SN-042, SN-045
+
+Verification: test
+
+Status: approved
+
 ## Stream requirements
 
 ### REQ-100: Stream event variants
@@ -638,6 +648,26 @@ Verification: test
 
 Status: approved
 
+### REQ-113: Producer suspension under flow control
+
+A stream producer may suspend when backpressured or waiting for stream control messages, and while it is suspended the task shall continue handling other messages.
+
+Source: SN-015, SN-016, SN-043
+
+Verification: test
+
+Status: approved
+
+### REQ-114: Future standard stream compatibility
+
+The design may later add a `futures_core::Stream` implementation only if the stream object can safely capture or access task-local receive state without violating the task-local runtime model.
+
+Source: SN-010, SN-015, SN-016
+
+Verification: inspection
+
+Status: approved
+
 ## External caller requirements
 
 ### REQ-120: Explicit external blocking API
@@ -698,7 +728,7 @@ Status: approved
 
 ### REQ-150: Incremental implementation order
 
-Implementation should follow the phases in `docs/message-model.md` unless the human maintainer approves a different order.
+Implementation should follow the phases in `docs/se/architecture.md` unless the human maintainer approves a different order.
 
 Source: SN-022
 
@@ -708,7 +738,7 @@ Status: approved
 
 ### REQ-151: Suggested crate structure
 
-The repository should organize runtime primitives and macros along the conceptual crate structure described in `docs/message-model.md`, unless implementation evidence justifies a different structure.
+The repository should organize runtime primitives and macros along the conceptual crate structure described in `docs/se/architecture.md`, unless implementation evidence justifies a different structure.
 
 Source: SN-021, SN-022
 
