@@ -53,6 +53,17 @@ This attempt adds implementation and test evidence for:
 - generated priority stop event;
 - start message priority behavior.
 
+## Verification result
+
+GitHub Actions passed the restored normal workflow:
+
+```sh
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --doc
+```
+
 ## Remaining gaps
 
 The implementation is still not a complete implementation of the full SE baseline.
@@ -72,7 +83,7 @@ Remaining gaps include:
 
 ## Design note
 
-The implementation uses a minimal `mpi::block_on` function for generated async handlers. This supports async handler syntax for handlers that complete without awaiting external task-local receive operations. It does not yet provide the full suspended-continuation task-local runtime described by REQ-061 through REQ-063.
+The implementation uses a minimal `mpi::block_on` function for generated async handlers. This supports async handler syntax for handlers that complete without waiting on external task-local receive operations. It does not yet provide the full suspended-continuation task-local runtime described by REQ-061 through REQ-063.
 
 ## Conclusion
 
