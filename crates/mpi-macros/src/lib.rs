@@ -52,7 +52,7 @@ struct HandlerArg {
 enum HandlerKind {
     Start,
     Event { priority: bool },
-    Call { reply: Type },
+    Call { reply: Box<Type> },
     Stream,
 }
 
@@ -101,7 +101,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                 priority: attr.to_token_stream().to_string().contains("priority"),
             },
             "call" => HandlerKind::Call {
-                reply: attr.parse_args::<CallArgs>()?.reply,
+                reply: Box::new(attr.parse_args::<CallArgs>()?.reply),
             },
             "stream" => HandlerKind::Stream,
             _ => unreachable!(),
@@ -311,6 +311,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
             }
             HandlerKind::Call { reply } => {
+                let reply = &**reply;
                 let blocking_method = format_ident!("{}_blocking", method_ident);
                 variants.push(quote! {
                     #variant_ident {
