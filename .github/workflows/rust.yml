@@ -10,23 +10,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
-        run: |
-          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          git clone --quiet --depth 1 --branch "$branch" https://github.com/matslil/mpi-rs.git .
+      - uses: actions/checkout@v4
       - name: Install Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup component add rustfmt clippy
       - name: Check formatting
-        run: |
-          cargo fmt --all
-          git diff
-          git diff --exit-code
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo fmt --all --check
       - name: Run tests
         run: cargo test --workspace
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run doctests
         run: cargo test --workspace --doc
