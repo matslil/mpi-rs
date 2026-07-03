@@ -24,9 +24,9 @@ jobs:
           cargo fmt --all
           git diff
           git diff --exit-code
-      - name: Run tests
-        run: cargo test --workspace
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run tests
+        run: cargo test --workspace
       - name: Run doctests
         run: cargo test --workspace --doc
