@@ -1,18 +1,28 @@
-//! Task handles and minimal spawn support.
+//! Task handles, task context, and minimal spawn support.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use crate::error::SendError;
+use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
+use crate::session::{EndpointId, Response, SessionId, SessionIdAllocator, sync_reply_channel};
+
+static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn allocate_endpoint_id() -> EndpointId {
+    EndpointId(NEXT_ENDPOINT_ID.fetch_add(1, Ordering::Relaxed))
+}
 
 /// Public send surface for a task.
 pub struct TaskHandle<M, const N: usize>
 where
     M: TaskMessage,
 {
+    endpoint: EndpointId,
     queue: Arc<TaskQueue<M, N>>,
+    next_external_sequence: Arc<AtomicU64>,
 }
 
 impl<M, const N: usize> Clone for TaskHandle<M, N>
@@ -21,7 +31,9 @@ where
 {
     fn clone(&self) -> Self {
         Self {
+            endpoint: self.endpoint,
             queue: Arc::clone(&self.queue),
+            next_external_sequence: Arc::clone(&self.next_external_sequence),
         }
     }
 }
@@ -33,7 +45,23 @@ where
     /// Create a handle from an existing queue.
     #[must_use]
     pub fn new(queue: Arc<TaskQueue<M, N>>) -> Self {
-        Self { queue }
+        Self::with_endpoint(queue, allocate_endpoint_id())
+    }
+
+    /// Create a handle from an existing queue and explicit endpoint ID.
+    #[must_use]
+    pub fn with_endpoint(queue: Arc<TaskQueue<M, N>>, endpoint: EndpointId) -> Self {
+        Self {
+            endpoint,
+            queue,
+            next_external_sequence: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Return the logical endpoint represented by this handle.
+    #[must_use]
+    pub const fn endpoint(&self) -> EndpointId {
+        self.endpoint
     }
 
     /// Return the underlying queue.
@@ -47,9 +75,81 @@ where
         self.queue.try_send(message)
     }
 
+    /// Allocate a session ID for an external blocking call.
+    pub fn next_external_session_id(&self) -> SessionId {
+        let sequence = self.next_external_sequence.fetch_add(1, Ordering::Relaxed);
+        SessionId::new(self.endpoint, sequence)
+    }
+
+    /// Send a synchronous request from code that is outside the task model and
+    /// block until exactly one typed response is returned.
+    ///
+    /// This is intentionally distinct from future task-internal call APIs. It
+    /// may block the current operating-system thread because external callers do
+    /// not have a task queue or task-local receive state.
+    pub fn call_blocking<R, F>(&self, make_message: F) -> Result<Response<R>, CallError>
+    where
+        R: Send + 'static,
+        F: FnOnce(SessionId, crate::SyncReplySender<R>) -> M,
+    {
+        let session_id = self.next_external_session_id();
+        let (reply_tx, reply_rx) = sync_reply_channel();
+        self.send_message(make_message(session_id, reply_tx))?;
+        reply_rx.recv().map_err(|_| CallError::ReplyDisconnected)
+    }
+
     /// Close the target task queue.
     pub fn close(&self) {
         self.queue.close();
+    }
+}
+
+/// Generated handler context state shared by task handlers.
+pub struct TaskContext<M, const N: usize>
+where
+    M: TaskMessage,
+{
+    self_handle: TaskHandle<M, N>,
+    session_ids: SessionIdAllocator,
+    stopped: bool,
+}
+
+impl<M, const N: usize> TaskContext<M, N>
+where
+    M: TaskMessage,
+{
+    /// Create a task context for a task handle.
+    #[must_use]
+    pub fn new(self_handle: TaskHandle<M, N>) -> Self {
+        let endpoint = self_handle.endpoint();
+        Self {
+            self_handle,
+            session_ids: SessionIdAllocator::new(endpoint),
+            stopped: false,
+        }
+    }
+
+    /// Return this task's own handle.
+    #[must_use]
+    pub const fn self_handle(&self) -> &TaskHandle<M, N> {
+        &self.self_handle
+    }
+
+    /// Allocate the next task-local session ID.
+    pub fn next_session_id(&mut self) -> SessionId {
+        self.session_ids.next_session_id()
+    }
+
+    /// Request that the task dispatch loop stops.
+    pub fn stop(&mut self) {
+        self.stopped = true;
+        self.self_handle.close();
+    }
+
+    /// Return whether the task has been asked to stop.
+    #[must_use]
+    pub const fn is_stopped(&self) -> bool {
+        self.stopped
     }
 }
 
