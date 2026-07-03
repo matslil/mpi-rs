@@ -8,7 +8,7 @@ The process is intentionally lightweight. It uses systems-engineering artifacts 
 
 The process shall:
 
-- keep the human maintainer in the system-engineering role;
+- keep the human maintainer in the systems-engineering role;
 - make requirements and interfaces explicit before implementation;
 - allow implementation, testing, review, validation, and traceability to be performed by separate AI workflows;
 - preserve human approval for merge to `main`;
@@ -17,11 +17,7 @@ The process shall:
 
 ## Authoritative inputs
 
-The current conceptual source of truth is:
-
-- `docs/message-model.md`
-
-The derived systems-engineering baseline is:
+The authoritative systems-engineering baseline is:
 
 - `docs/se/stakeholders.md`
 - `docs/se/requirements.md`
@@ -42,6 +38,8 @@ Role instructions are stored in:
 - `docs/agents/validation-agent.md`
 - `docs/agents/traceability-agent.md`
 - `docs/agents/release-agent.md`
+
+Historical design notes are non-authoritative unless a current systems-engineering document explicitly references them.
 
 ## Normal change flow
 
@@ -178,4 +176,4 @@ When an agent finds ambiguity, it shall:
 
 ## Outdated-document rule
 
-Pre-existing documents outside `docs/message-model.md`, `docs/se/`, `docs/agents/`, and `AGENTS.md` are not authoritative for the current baseline unless a current SE document explicitly references them.
+Pre-existing documents outside `docs/se/`, `docs/agents/`, and `AGENTS.md` are not authoritative for the current baseline unless a current systems-engineering document explicitly references them.
