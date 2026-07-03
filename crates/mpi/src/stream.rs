@@ -164,17 +164,26 @@ impl<T, E> MessageStream<T, E> {
 
         match event {
             StreamEvent::Batch { session_id, values } => {
-                assert_eq!(session_id, self.session_id, "stream event session mismatch");
+                assert_eq!(
+                    session_id, self.session_id,
+                    "stream event session mismatch"
+                );
                 self.buffer.extend(values);
                 Ok(self.buffer.pop_front())
             }
             StreamEvent::End { session_id } => {
-                assert_eq!(session_id, self.session_id, "stream event session mismatch");
+                assert_eq!(
+                    session_id, self.session_id,
+                    "stream event session mismatch"
+                );
                 self.finished = true;
                 Ok(None)
             }
             StreamEvent::Error { session_id, error } => {
-                assert_eq!(session_id, self.session_id, "stream event session mismatch");
+                assert_eq!(
+                    session_id, self.session_id,
+                    "stream event session mismatch"
+                );
                 self.finished = true;
                 Err(error)
             }
