@@ -161,7 +161,8 @@ Session and call tests should verify:
 - session sequence allocation does not need global synchronization;
 - responses carry the correct session ID;
 - a call has exactly one response or defined failure outcome;
-- concurrent same-type calls with out-of-order replies resume the correct handler.
+- concurrent same-type calls with out-of-order replies resume the correct handler;
+- late one-shot responses are surfaced to fallback handling or task policy.
 
 Relevant requirements:
 
@@ -174,6 +175,7 @@ Relevant requirements:
 - REQ-091
 - REQ-092
 - REQ-093
+- REQ-094
 
 ### Stream verification
 
@@ -187,7 +189,9 @@ Stream tests should verify:
 - no silent discard of ordinary application messages;
 - producer remains within task model;
 - automatic end and error events;
-- credit-based flow control or documented interim limitation.
+- credit-based flow control or documented interim limitation;
+- producer suspension under backpressure or stream-control waiting;
+- future standard stream compatibility does not violate task-local receive-state constraints.
 
 Relevant requirements:
 
@@ -204,6 +208,8 @@ Relevant requirements:
 - REQ-110
 - REQ-111
 - REQ-112
+- REQ-113
+- REQ-114
 
 ### External caller verification
 
