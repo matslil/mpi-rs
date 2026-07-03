@@ -1,8 +1,8 @@
 # Architecture
 
-This document describes the initial `mpi-rs` architecture baseline.
+This document describes the authoritative `mpi-rs` architecture baseline.
 
-It is derived from `docs/message-model.md` and should be used to guide implementation, testing, review, and validation.
+It should be used to guide implementation, testing, review, and validation.
 
 ## Architecture goals
 
@@ -206,6 +206,8 @@ ARCH-062: A call handler can return the reply payload; runtime or macro plumbing
 
 ARCH-063: Concurrent calls with the same request and response type are disambiguated by `SessionId`.
 
+ARCH-064: Late one-shot responses are surfaced to fallback reply handling or task policy rather than silently discarded by default.
+
 ## Stream architecture
 
 A stream is a request message followed by zero or more stream events and then end, error, or cancellation.
@@ -225,6 +227,10 @@ ARCH-074: Stream cancellation uses the same `SessionId` as the stream.
 ARCH-075: Stream producers remain within the current task model.
 
 ARCH-076: Credit-based flow control is the recommended mechanism to avoid flooding the consumer queue.
+
+ARCH-077: A stream producer may suspend when backpressured or waiting for stream control messages while the task continues handling other messages.
+
+ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
 ## External caller architecture
 
