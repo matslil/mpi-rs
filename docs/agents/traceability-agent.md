@@ -12,7 +12,6 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/message-model.md`
 - `docs/se/stakeholders.md`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
@@ -24,6 +23,8 @@ The agent shall read:
 - tests;
 - examples;
 - verification and validation reports.
+
+Historical design notes are not authoritative unless a current SE document or the human maintainer explicitly references them for the change.
 
 ## Outputs
 
