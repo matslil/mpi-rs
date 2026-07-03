@@ -2,7 +2,7 @@
 
 This document describes the intended public and internal interfaces for `mpi-rs`.
 
-The baseline is derived from `docs/message-model.md` and should guide implementation, tests, review, and validation.
+It is part of the authoritative systems-engineering baseline and should guide implementation, tests, review, and validation.
 
 ## Interface principles
 
@@ -203,6 +203,8 @@ INT-061: User call handlers may return the reply payload rather than manually co
 
 INT-062: The macro or runtime shall convert the returned payload into the response message.
 
+INT-063: Late one-shot responses shall be exposed to fallback reply handling or task policy rather than silently discarded by default.
+
 ## Stream interface
 
 Conceptual stream event:
@@ -244,6 +246,22 @@ while let Some(row) = rows.next(ctx).await? {
 }
 ```
 
+`next(ctx)` should behave conceptually as follows:
+
+```text
+if local buffer has item:
+    return item
+if stream is finished:
+    return None
+receive matching StreamEvent<T, E> for this SessionId
+if Batch:
+    buffer values and return first item
+if End:
+    mark finished and return None
+if Error:
+    mark finished and return error
+```
+
 Producer API:
 
 ```rust
@@ -275,6 +293,8 @@ INT-073: The stream object shall attempt asynchronous cancellation when dropped 
 INT-074: Stream cancellation shall not require awaiting acknowledgement during drop.
 
 INT-075: The producer-side `StreamSink` shall hide batching, end, error, and flow-control details where possible.
+
+INT-076: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
 ## Stream flow-control interface
 
