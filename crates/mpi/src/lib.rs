@@ -20,4 +20,4 @@ pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
 pub use session::{EndpointId, Response, SessionId, SessionIdAllocator};
 pub use stream::{MessageStream, StreamCancel, StreamControl, StreamEvent, StreamPull};
-pub use task::{spawn_task, TaskHandle, TaskJoinError, TaskRuntime};
+pub use task::{TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
