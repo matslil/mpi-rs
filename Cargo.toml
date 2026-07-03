@@ -1,0 +1,8 @@
+[workspace]
+members = ["crates/mpi", "crates/mpi-macros"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/matslil/mpi-rs"
