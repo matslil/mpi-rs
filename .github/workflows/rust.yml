@@ -17,7 +17,10 @@ jobs:
           rustup default stable
           rustup component add rustfmt clippy
       - name: Check formatting
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all
+          git diff
+          git diff --exit-code
       - name: Run tests
         run: cargo test --workspace
       - name: Run clippy
