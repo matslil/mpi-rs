@@ -30,7 +30,10 @@ fn req_012_req_013_req_014_queue_capacity_is_static_shared_and_explicit() {
     queue.try_send(TestMessage::Normal(1)).unwrap();
     queue.try_send(TestMessage::Priority(2)).unwrap();
     assert_eq!(queue.len(), 2);
-    assert_eq!(queue.try_send(TestMessage::Normal(3)), Err(SendError::QueueFull));
+    assert_eq!(
+        queue.try_send(TestMessage::Normal(3)),
+        Err(SendError::QueueFull)
+    );
 }
 
 #[test]
@@ -134,10 +137,7 @@ fn req_104_stream_end_marks_stream_finished() {
     let session_id = SessionId::new(EndpointId(2), 1);
     let mut stream = MessageStream::<u8, &'static str>::new(session_id, control);
 
-    assert_eq!(
-        stream.next_from_event(StreamEvent::end(session_id)).unwrap(),
-        None
-    );
+    assert_eq!(stream.next_from_event(StreamEvent::end(session_id)).unwrap(), None);
     assert!(stream.is_finished());
 }
 
@@ -171,10 +171,7 @@ fn req_106_completed_stream_drop_does_not_cancel() {
     let session_id = SessionId::new(EndpointId(2), 4);
     {
         let mut stream = MessageStream::<u8, &'static str>::new(session_id, control.clone());
-        assert_eq!(
-            stream.next_from_event(StreamEvent::end(session_id)).unwrap(),
-            None
-        );
+        assert_eq!(stream.next_from_event(StreamEvent::end(session_id)).unwrap(), None);
     }
 
     assert!(control.cancelled.lock().unwrap().is_empty());
