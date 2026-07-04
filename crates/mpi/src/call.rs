@@ -26,6 +26,21 @@ impl QueuedCallResponse {
     }
 }
 
+/// Hidden call-release control message carried by a callee task queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedCallRelease {
+    /// Call session released by the caller.
+    pub session_id: SessionId,
+}
+
+impl QueuedCallRelease {
+    /// Construct a queued call-release control message.
+    #[must_use]
+    pub const fn new(session_id: SessionId) -> Self {
+        Self { session_id }
+    }
+}
+
 /// Message enums that can carry queued task-internal call responses.
 pub trait CallResponseMessage: Sized {
     /// Wrap a typed response value into this task's message enum.
@@ -33,6 +48,15 @@ pub trait CallResponseMessage: Sized {
 
     /// Extract a queued call response from this message, if it is one.
     fn into_call_response(self) -> Result<QueuedCallResponse, Self>;
+}
+
+/// Message enums that can carry queued task-internal call-release control.
+pub trait CallReleaseMessage: Sized {
+    /// Wrap a call-release control value into this task's message enum.
+    fn call_release(session_id: SessionId) -> Self;
+
+    /// Extract a queued call-release control value from this message, if it is one.
+    fn into_call_release(self) -> Result<QueuedCallRelease, Self>;
 }
 
 /// Owned task-local call session state returned by a task context.
@@ -81,6 +105,25 @@ impl<T> SuspendedCall<T> {
             failed: None,
             on_drop: Some(Box::new(on_drop)),
         }
+    }
+
+    /// Chain another drop hook onto this suspended call.
+    ///
+    /// Hooks run in registration order when the active future is dropped before
+    /// completion. Normal completion disarms all hooks.
+    #[must_use]
+    pub fn with_additional_on_drop<F>(mut self, on_drop: F) -> Self
+    where
+        F: FnOnce(SessionId) + 'static,
+    {
+        let previous = self.on_drop.take();
+        self.on_drop = Some(Box::new(move |session_id| {
+            if let Some(previous) = previous {
+                previous(session_id);
+            }
+            on_drop(session_id);
+        }));
+        self
     }
 
     /// Create a suspended call future that immediately resolves to an error.
