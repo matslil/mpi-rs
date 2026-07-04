@@ -103,7 +103,7 @@ fn req_080_req_083_req_084_session_ids_are_origin_plus_local_sequence() {
 fn req_084_task_context_allocates_task_local_session_ids() {
     let queue = Arc::new(TaskQueue::<TestMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue, EndpointId(55));
-    let mut ctx = TaskContext::new(handle);
+    let ctx = TaskContext::new(handle);
 
     assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(55), 0));
     assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(55), 1));
