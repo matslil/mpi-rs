@@ -21,7 +21,8 @@ use crate::session::{
 };
 use crate::stream::{
     QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
-    StreamPull, StreamSession, suspended_stream_waiter_with_on_drop,
+    StreamPull, StreamSession, add_stream_credit, forget_stream_credit,
+    suspended_stream_waiter_with_on_drop,
 };
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
@@ -51,8 +52,7 @@ where
             next_external_sequence: Arc::clone(&self.next_external_sequence),
         }
     }
-}
-
+}\n
 impl<M, const N: usize> TaskHandle<M, N>
 where
     M: TaskMessage,
@@ -259,6 +259,7 @@ where
 
     /// Record additional item credit for a stream producer.
     pub fn record_stream_pull(&self, pull: StreamPull) {
+        add_stream_credit(pull);
         let mut state = self.inner.borrow_mut();
         let credit = state.stream_credits.entry(pull.session_id).or_insert(0);
         *credit = credit.saturating_add(pull.credit);
@@ -302,6 +303,7 @@ where
         if finished {
             state.stream_waiters.remove(&session_id);
             state.stream_credits.remove(&session_id);
+            forget_stream_credit(session_id);
         }
         Ok(())
     }
@@ -368,6 +370,7 @@ where
                 let mut state = inner.borrow_mut();
                 state.stream_waiters.remove(&session_id);
                 state.stream_credits.remove(&session_id);
+                forget_stream_credit(session_id);
             });
         self.inner.borrow_mut().stream_waiters.insert(
             session_id,
@@ -438,7 +441,7 @@ mod tests {
     use super::*;
     use crate::call::CallReleaseMessage;
     use crate::message::MessagePlacement;
-    use crate::stream::StreamPullMessage;
+    use crate::stream::{StreamPullMessage, stream_credit};
 
     enum TestMessage {
         CallResponse {
@@ -563,15 +566,18 @@ mod tests {
     fn stream_pull_credit_is_recorded_and_consumed() {
         let ctx = context();
         let session_id = SessionId::new(ctx.self_handle().endpoint(), 11);
+        forget_stream_credit(session_id);
 
         ctx.record_stream_pull(StreamPull::new(session_id, 2));
 
         assert_eq!(ctx.stream_credit(session_id), 2);
+        assert_eq!(stream_credit(session_id), 2);
         assert!(ctx.take_stream_credit(session_id));
         assert_eq!(ctx.stream_credit(session_id), 1);
         assert!(ctx.take_stream_credit(session_id));
         assert!(!ctx.take_stream_credit(session_id));
         assert_eq!(ctx.stream_credit(session_id), 0);
+        forget_stream_credit(session_id);
     }
 
     #[test]
