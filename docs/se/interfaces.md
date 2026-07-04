@@ -18,35 +18,36 @@ INT-005: External blocking APIs should be explicit and visually distinct from ta
 
 ## Task declaration interface
 
-A possible declaration style is:
+The task state is a normal Rust struct. The `#[task]` attribute is applied to the `impl` block that contains the task handlers. The `impl` attribute shall contain the queue-size configuration so that one macro invocation has all information needed to generate the task message enum, context type, handle type, send methods, spawn helper, placement implementation, and dispatch plumbing.
+
+Example declaration style:
 
 ```rust
-#[task(queue_size = 32)]
 struct ServerTask {
     state: ServerState,
 }
 
-#[task]
+#[task(queue_size = 32)]
 impl ServerTask {
     #[start]
-    async fn start(&mut self, ctx: &mut ServerContext, config: ServerConfig) {
+    async fn start(&mut self, ctx: &mut ServerTaskContext, config: ServerConfig) {
         self.state = ServerState::new(config);
     }
 
     #[event]
-    async fn set(&mut self, ctx: &mut ServerContext, key: String, value: Vec<u8>) {
+    async fn set(&mut self, ctx: &mut ServerTaskContext, key: String, value: Vec<u8>) {
         self.state.insert(key, value);
     }
 
     #[call(reply = GetReply)]
-    async fn get(&mut self, ctx: &mut ServerContext, key: String) -> GetReply {
+    async fn get(&mut self, ctx: &mut ServerTaskContext, key: String) -> GetReply {
         GetReply {
             value: self.state.get(&key).cloned(),
         }
     }
 
     #[event(priority)]
-    async fn shutdown(&mut self, ctx: &mut ServerContext) {
+    async fn shutdown(&mut self, ctx: &mut ServerTaskContext) {
         ctx.stop();
     }
 }
@@ -56,7 +57,7 @@ Interface rules:
 
 INT-010: The task declaration macro shall be named `task`.
 
-INT-011: The task declaration interface shall support static queue-size configuration.
+INT-011: The task declaration interface shall support static queue-size configuration on the `#[task]` impl attribute.
 
 INT-012: `#[start]` shall identify the start handler.
 
@@ -69,6 +70,8 @@ INT-015: `#[stream(item = T, error = E)]` shall identify a streaming handler wit
 INT-016: `priority` shall be declared on the receiver's message declaration, not at each send site.
 
 INT-017: An explicit normal placement for a start handler shall be rejected or ignored in favor of forced priority.
+
+INT-018: A `#[task]` attribute on a struct is non-authoritative and should not be required for code generation.
 
 ## Generated task handle interface
 
@@ -84,6 +87,12 @@ Call example:
 
 ```rust
 let reply = server.get(ctx, key).await?;
+```
+
+External blocking call example:
+
+```rust
+let reply = server.get_blocking(key)?;
 ```
 
 Stream example:
@@ -108,6 +117,8 @@ INT-023: Call send methods shall hide session allocation and response matching f
 INT-024: Stream send methods shall hide stream request, stream event, flow-control, and cancellation plumbing from ordinary user code.
 
 INT-025: Task-internal generated methods shall accept a task context argument when needed to suspend and resume handlers.
+
+INT-026: Generated external blocking call methods shall be explicitly named with a blocking suffix such as `_blocking`.
 
 ## Message interface
 
