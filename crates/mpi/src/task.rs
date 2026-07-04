@@ -16,6 +16,10 @@ use crate::queue::TaskQueue;
 use crate::session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel,
 };
+use crate::stream::{
+    QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
+    StreamSession, suspended_stream_waiter,
+};
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -132,13 +136,36 @@ impl<T: Send + 'static> ErasedCallWaiter for TypedCallWaiter<T> {
     }
 }
 
+trait ErasedStreamWaiter {
+    fn deliver(&self, event: QueuedStreamEvent) -> Result<bool, SendError>;
+}
+
+struct TypedStreamWaiter<T, E> {
+    sender: Sender<StreamEvent<T, E>>,
+}
+
+impl<T: Send + 'static, E: Send + 'static> ErasedStreamWaiter for TypedStreamWaiter<T, E> {
+    fn deliver(&self, event: QueuedStreamEvent) -> Result<bool, SendError> {
+        let event = event
+            .event
+            .downcast::<StreamEvent<T, E>>()
+            .expect("queued stream event carried unexpected type");
+        let finished = event.is_terminal();
+        self.sender
+            .send(*event)
+            .map_err(|_| SendError::TaskStopped)?;
+        Ok(finished)
+    }
+}
+
 struct TaskContextState<M, const N: usize>
 where
     M: TaskMessage,
 {
     self_handle: TaskHandle<M, N>,
     session_ids: SessionIdAllocator,
-    waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
+    call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
+    stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
     stopped: bool,
 }
 
@@ -179,7 +206,8 @@ where
             inner: Rc::new(RefCell::new(TaskContextState {
                 self_handle,
                 session_ids: SessionIdAllocator::new(endpoint),
-                waiters: HashMap::new(),
+                call_waiters: HashMap::new(),
+                stream_waiters: HashMap::new(),
                 stopped: false,
             })),
         }
@@ -198,11 +226,29 @@ where
 
     /// Route a queued call response to the registered waiter, if any.
     pub fn deliver_call_response(&self, response: QueuedCallResponse) -> Result<(), CallError> {
-        let waiter = self.inner.borrow_mut().waiters.remove(&response.session_id);
+        let waiter = self
+            .inner
+            .borrow_mut()
+            .call_waiters
+            .remove(&response.session_id);
         match waiter {
             Some(waiter) => waiter.deliver(response),
             None => Ok(()),
         }
+    }
+
+    /// Route a queued stream event to the registered stream waiter, if any.
+    pub fn deliver_stream_event(&self, event: QueuedStreamEvent) -> Result<(), SendError> {
+        let session_id = event.session_id;
+        let mut state = self.inner.borrow_mut();
+        let finished = match state.stream_waiters.get(&session_id) {
+            Some(waiter) => waiter.deliver(event)?,
+            None => return Ok(()),
+        };
+        if finished {
+            state.stream_waiters.remove(&session_id);
+        }
+        Ok(())
     }
 
     /// Request that the task dispatch loop stops.
@@ -227,7 +273,7 @@ where
     pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
         let session_id = self.next_session_id();
         let (waiter, future) = suspended_call_waiter(session_id);
-        self.inner.borrow_mut().waiters.insert(
+        self.inner.borrow_mut().call_waiters.insert(
             session_id,
             Box::new(TypedCallWaiter::<T> { sender: waiter }),
         );
@@ -245,6 +291,35 @@ where
         });
 
         (session_id, reply, future)
+    }
+}
+
+impl<M, const N: usize> TaskContext<M, N>
+where
+    M: TaskMessage + StreamEventMessage,
+{
+    /// Allocate one task-local stream session and its queued event sender.
+    pub fn begin_stream<T: Send + 'static, E: Send + 'static>(
+        &self,
+        control: Arc<dyn StreamControl>,
+    ) -> StreamSession<T, E> {
+        let session_id = self.next_session_id();
+        let (waiter, stream) = suspended_stream_waiter(session_id, control);
+        self.inner.borrow_mut().stream_waiters.insert(
+            session_id,
+            Box::new(TypedStreamWaiter::<T, E> { sender: waiter }),
+        );
+
+        let self_handle = self.self_handle();
+        let events = StreamEventSender::new(Box::new(move |event: StreamEvent<T, E>| {
+            let session_id = event.session_id();
+            self_handle.send_message(M::stream_event(
+                session_id,
+                Box::new(event) as Box<dyn Any + Send>,
+            ))
+        }));
+
+        (session_id, events, stream)
     }
 }
 
