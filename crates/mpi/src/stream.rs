@@ -164,7 +164,9 @@ impl HasSessionId for StreamCancel {
 /// Sends stream lifecycle control for a live stream.
 pub trait StreamControl: Send + Sync + 'static {
     /// Try to grant additional item credit to a stream producer.
-    fn try_pull(&self, session_id: SessionId, credit: u32) -> Result<(), SendError>;
+    fn try_pull(&self, _session_id: SessionId, _credit: u32) -> Result<(), SendError> {
+        Ok(())
+    }
 
     /// Try to cancel a stream session.
     fn try_cancel(&self, session_id: SessionId) -> Result<(), SendError>;
