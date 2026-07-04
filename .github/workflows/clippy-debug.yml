@@ -1,0 +1,14 @@
+name: Clippy Debug
+
+on:
+  pull_request:
+
+jobs:
+  clippy-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Quiet clippy check
+        run: |
+          git clone --quiet --depth 1 --branch "$GITHUB_HEAD_REF" "https://github.com/$GITHUB_REPOSITORY.git" .
+          rustup component add clippy >/dev/null
+          cargo clippy --workspace --all-targets -- -D warnings
