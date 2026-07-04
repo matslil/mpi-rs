@@ -146,7 +146,9 @@ pub type SyncReplyReceiver<T> = mpsc::Receiver<Response<T>>;
 pub fn sync_reply_channel<T: Send + 'static>() -> (SyncReplySender<T>, SyncReplyReceiver<T>) {
     let (sender, receiver) = mpsc::channel();
     (
-        SyncReplySender::new(move |response| sender.send(response).map_err(|_| SendError::TaskStopped)),
+        SyncReplySender::new(move |response| {
+            sender.send(response).map_err(|_| SendError::TaskStopped)
+        }),
         receiver,
     )
 }
