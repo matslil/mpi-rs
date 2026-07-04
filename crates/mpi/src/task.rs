@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
-use crate::call::{CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter};
+use crate::call::{
+    CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter_with_on_drop,
+};
 use crate::error::{CallError, SendError};
 use crate::message::{HasSessionId, TaskMessage};
 use crate::queue::TaskQueue;
@@ -18,7 +20,7 @@ use crate::session::{
 };
 use crate::stream::{
     QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
-    StreamSession, suspended_stream_waiter,
+    StreamSession, suspended_stream_waiter_with_on_drop,
 };
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
@@ -272,7 +274,10 @@ where
     /// Allocate one task-local call session and its queued reply sender.
     pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
         let session_id = self.next_session_id();
-        let (waiter, future) = suspended_call_waiter(session_id);
+        let inner = Rc::clone(&self.inner);
+        let (waiter, future) = suspended_call_waiter_with_on_drop(session_id, move |session_id| {
+            inner.borrow_mut().call_waiters.remove(&session_id);
+        });
         self.inner.borrow_mut().call_waiters.insert(
             session_id,
             Box::new(TypedCallWaiter::<T> { sender: waiter }),
@@ -304,7 +309,11 @@ where
         control: Arc<dyn StreamControl>,
     ) -> StreamSession<T, E> {
         let session_id = self.next_session_id();
-        let (waiter, stream) = suspended_stream_waiter(session_id, control);
+        let inner = Rc::clone(&self.inner);
+        let (waiter, stream) =
+            suspended_stream_waiter_with_on_drop(session_id, control, move |session_id| {
+                inner.borrow_mut().stream_waiters.remove(&session_id);
+            });
         self.inner.borrow_mut().stream_waiters.insert(
             session_id,
             Box::new(TypedStreamWaiter::<T, E> { sender: waiter }),
@@ -367,4 +376,93 @@ where
     let runtime_handle = handle.clone();
     let join = thread::spawn(move || run(runtime_handle));
     Ok((handle, TaskRuntime { join }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::MessagePlacement;
+
+    enum TestMessage {
+        CallResponse {
+            session_id: SessionId,
+            value: Box<dyn Any + Send>,
+        },
+        StreamEvent {
+            session_id: SessionId,
+            event: Box<dyn Any + Send>,
+        },
+    }
+
+    impl TaskMessage for TestMessage {
+        fn placement(&self) -> MessagePlacement {
+            MessagePlacement::Priority
+        }
+    }
+
+    impl CallResponseMessage for TestMessage {
+        fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
+            Self::CallResponse { session_id, value }
+        }
+
+        fn into_call_response(self) -> Result<QueuedCallResponse, Self> {
+            match self {
+                Self::CallResponse { session_id, value } => {
+                    Ok(QueuedCallResponse::new(session_id, value))
+                }
+                other => Err(other),
+            }
+        }
+    }
+
+    impl StreamEventMessage for TestMessage {
+        fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
+            Self::StreamEvent { session_id, event }
+        }
+
+        fn into_stream_event(self) -> Result<QueuedStreamEvent, Self> {
+            match self {
+                Self::StreamEvent { session_id, event } => {
+                    Ok(QueuedStreamEvent::new(session_id, event))
+                }
+                other => Err(other),
+            }
+        }
+    }
+
+    struct TestControl;
+
+    impl StreamControl for TestControl {
+        fn try_cancel(&self, _session_id: SessionId) -> Result<(), SendError> {
+            Ok(())
+        }
+    }
+
+    fn context() -> TaskContext<TestMessage, 4> {
+        let queue = Arc::new(TaskQueue::<TestMessage, 4>::new());
+        TaskContext::new(TaskHandle::new(queue))
+    }
+
+    #[test]
+    fn dropped_suspended_call_removes_registered_waiter() {
+        let ctx = context();
+        let (_session_id, _reply, future) = ctx.begin_call::<u32>();
+        assert_eq!(ctx.inner.borrow().call_waiters.len(), 1);
+
+        drop(future);
+
+        assert_eq!(ctx.inner.borrow().call_waiters.len(), 0);
+    }
+
+    #[test]
+    fn dropped_suspended_stream_removes_registered_waiter() {
+        let ctx = context();
+        let (_session_id, _events, stream) =
+            ctx.begin_stream::<u32, String>(Arc::new(TestControl));
+        assert_eq!(ctx.inner.borrow().stream_waiters.len(), 1);
+
+        drop(stream);
+
+        assert_eq!(ctx.inner.borrow().stream_waiters.len(), 0);
+    }
 }
