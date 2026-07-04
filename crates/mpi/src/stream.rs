@@ -371,10 +371,13 @@ pub type StreamSession<T, E> = (
     SuspendedMessageStream<T, E>,
 );
 
+type StreamOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
+
 /// Task-internal stream consumer for generated handlers.
 pub struct SuspendedMessageStream<T, E> {
     stream: MessageStream<T, E>,
     receiver: Receiver<StreamEvent<T, E>>,
+    on_drop: Option<StreamOnDrop>,
 }
 
 impl<T, E> SuspendedMessageStream<T, E> {
@@ -389,6 +392,25 @@ impl<T, E> SuspendedMessageStream<T, E> {
         Self {
             stream: MessageStream::new(session_id, control),
             receiver,
+            on_drop: None,
+        }
+    }
+
+    /// Construct a task-internal stream with a drop hook.
+    #[must_use]
+    pub fn new_with_on_drop<F>(
+        session_id: SessionId,
+        control: Arc<dyn StreamControl>,
+        receiver: Receiver<StreamEvent<T, E>>,
+        on_drop: F,
+    ) -> Self
+    where
+        F: FnOnce(SessionId) + 'static,
+    {
+        Self {
+            stream: MessageStream::new(session_id, control),
+            receiver,
+            on_drop: Some(Box::new(on_drop)),
         }
     }
 
@@ -408,6 +430,20 @@ impl<T, E> SuspendedMessageStream<T, E> {
     pub fn next<'a>(&'a mut self, _ctx: &mut impl TaskScope) -> SuspendedStreamNext<'a, T, E> {
         SuspendedStreamNext { stream: self }
     }
+
+    fn disarm_on_drop(&mut self) {
+        self.on_drop = None;
+    }
+}
+
+impl<T, E> Drop for SuspendedMessageStream<T, E> {
+    fn drop(&mut self) {
+        if !self.stream.is_finished()
+            && let Some(on_drop) = self.on_drop.take()
+        {
+            on_drop(self.stream.session_id());
+        }
+    }
 }
 
 /// Future returned by `SuspendedMessageStream::next`.
@@ -426,16 +462,26 @@ impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
         }
 
         if this.stream.stream.is_finished() {
+            this.stream.disarm_on_drop();
             return Poll::Ready(Ok(None));
         }
 
         match this.stream.receiver.try_recv() {
-            Ok(event) => Poll::Ready(this.stream.stream.next_from_event(event)),
+            Ok(event) => {
+                let result = this.stream.stream.next_from_event(event);
+                if this.stream.stream.is_finished() {
+                    this.stream.disarm_on_drop();
+                }
+                Poll::Ready(result)
+            }
             Err(TryRecvError::Empty) => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            Err(TryRecvError::Disconnected) => Poll::Ready(Ok(None)),
+            Err(TryRecvError::Disconnected) => {
+                this.stream.disarm_on_drop();
+                Poll::Ready(Ok(None))
+            }
         }
     }
 }
@@ -450,6 +496,24 @@ pub fn suspended_stream_waiter<T, E>(
     (
         sender,
         SuspendedMessageStream::new(session_id, control, receiver),
+    )
+}
+
+/// Create the waiter sender and suspended stream for one queued task-internal
+/// stream with a hook for dropped streams.
+#[must_use]
+pub(crate) fn suspended_stream_waiter_with_on_drop<T, E, F>(
+    session_id: SessionId,
+    control: Arc<dyn StreamControl>,
+    on_drop: F,
+) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>)
+where
+    F: FnOnce(SessionId) + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    (
+        sender,
+        SuspendedMessageStream::new_with_on_drop(session_id, control, receiver, on_drop),
     )
 }
 
