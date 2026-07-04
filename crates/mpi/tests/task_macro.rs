@@ -183,7 +183,9 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
     let (counter, counter_runtime) = Counter::spawn(Counter::default(), 31).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
-    client.ask_counter_then_mark_blocking(counter.clone()).unwrap();
+    client
+        .ask_counter_then_mark_blocking(counter.clone())
+        .unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 32);
 
     client.stop_blocking().unwrap();
