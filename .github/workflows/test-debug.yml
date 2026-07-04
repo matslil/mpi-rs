@@ -1,0 +1,13 @@
+name: Test Debug
+
+on:
+  pull_request:
+
+jobs:
+  test-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Quiet test check
+        run: |
+          git clone --quiet --depth 1 --branch "$GITHUB_HEAD_REF" "https://github.com/$GITHUB_REPOSITORY.git" .
+          cargo test --workspace
