@@ -8,6 +8,9 @@ use std::task::{Context, Poll};
 use crate::error::CallError;
 use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
 
+/// Owned task-local call session state returned by a task context.
+pub type CallSession<T> = (SessionId, SyncReplySender<T>, SuspendedCall<T>);
+
 /// Future returned by a task-internal call.
 ///
 /// The task context allocates the `SessionId` and constructs this owned future
@@ -91,7 +94,7 @@ impl<T> Future for SuspendedCall<T> {
 
 /// Create the reply sender and suspended future for one task-internal call.
 #[must_use]
-pub fn suspended_call_channel<T>(session_id: SessionId) -> (SyncReplySender<T>, SuspendedCall<T>) {
+pub fn suspended_call_channel<T>(session_id: SessionId) -> CallSession<T> {
     let (sender, receiver) = sync_reply_channel();
-    (sender, SuspendedCall::pending(session_id, receiver))
+    (session_id, sender, SuspendedCall::pending(session_id, receiver))
 }
