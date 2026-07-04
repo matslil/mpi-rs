@@ -1,12 +1,17 @@
 //! Task handles, task context, and minimal spawn support.
 
+use std::any::Any;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
-use crate::call::{CallSession, suspended_call_channel};
+use crate::call::{
+    CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter,
+};
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
@@ -109,12 +114,33 @@ where
     }
 }
 
+trait ErasedCallWaiter {
+    fn deliver(self: Box<Self>, response: QueuedCallResponse) -> Result<(), CallError>;
+}
+
+struct TypedCallWaiter<T> {
+    sender: Sender<Response<T>>,
+}
+
+impl<T: Send + 'static> ErasedCallWaiter for TypedCallWaiter<T> {
+    fn deliver(self: Box<Self>, response: QueuedCallResponse) -> Result<(), CallError> {
+        let value = response
+            .value
+            .downcast::<T>()
+            .map_err(|_| CallError::UnexpectedReplyType)?;
+        self.sender
+            .send(Response::new(response.session_id, *value))
+            .map_err(|_| CallError::ReplyDisconnected)
+    }
+}
+
 struct TaskContextState<M, const N: usize>
 where
     M: TaskMessage,
 {
     self_handle: TaskHandle<M, N>,
     session_ids: SessionIdAllocator,
+    waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
     stopped: bool,
 }
 
@@ -155,6 +181,7 @@ where
             inner: Rc::new(RefCell::new(TaskContextState {
                 self_handle,
                 session_ids: SessionIdAllocator::new(endpoint),
+                waiters: HashMap::new(),
                 stopped: false,
             })),
         }
@@ -171,9 +198,13 @@ where
         self.inner.borrow_mut().session_ids.next_session_id()
     }
 
-    /// Allocate one task-local call session and its owned suspended future.
-    pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
-        suspended_call_channel(self.next_session_id())
+    /// Route a queued call response to the registered waiter, if any.
+    pub fn deliver_call_response(&self, response: QueuedCallResponse) -> Result<(), CallError> {
+        let waiter = self.inner.borrow_mut().waiters.remove(&response.session_id);
+        match waiter {
+            Some(waiter) => waiter.deliver(response),
+            None => Ok(()),
+        }
     }
 
     /// Request that the task dispatch loop stops.
@@ -187,6 +218,35 @@ where
     #[must_use]
     pub fn is_stopped(&self) -> bool {
         self.inner.borrow().stopped
+    }
+}
+
+impl<M, const N: usize> TaskContext<M, N>
+where
+    M: TaskMessage + CallResponseMessage,
+{
+    /// Allocate one task-local call session and its queued reply sender.
+    pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
+        let session_id = self.next_session_id();
+        let (waiter, future) = suspended_call_waiter(session_id);
+        self.inner.borrow_mut().waiters.insert(
+            session_id,
+            Box::new(TypedCallWaiter::<T> { sender: waiter }),
+        );
+
+        let self_handle = self.self_handle();
+        let reply = SyncReplySender::new(move |response: Response<T>| {
+            assert_eq!(
+                response.session_id, session_id,
+                "queued reply sender received response for wrong session"
+            );
+            self_handle.send_message(M::call_response(
+                response.session_id,
+                Box::new(response.value) as Box<dyn Any + Send>,
+            ))
+        });
+
+        (session_id, reply, future)
     }
 }
 
