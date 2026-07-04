@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
 use crate::error::SendError;
 use crate::message::HasSessionId;
@@ -132,6 +133,15 @@ where
         self(event)
     }
 }
+
+impl<T, E> StreamEventSink<T, E> for Box<dyn StreamEventSink<T, E> + Send> {
+    fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
+        (**self).send_event(event)
+    }
+}
+
+/// Boxed producer-side stream sink used by generated stream handlers.
+pub type BoxStreamSink<T, E> = StreamSink<T, E, Box<dyn StreamEventSink<T, E> + Send>>;
 
 /// Producer-side stream helper that batches items and emits end/error events.
 pub struct StreamSink<T, E, S>
@@ -295,6 +305,57 @@ impl<T, E> Drop for MessageStream<T, E> {
     fn drop(&mut self) {
         if !self.finished {
             let _ = self.control.try_cancel(self.session_id);
+        }
+    }
+}
+
+/// Blocking stream consumer for callers outside the task model.
+pub struct BlockingMessageStream<T, E> {
+    stream: MessageStream<T, E>,
+    receiver: Receiver<StreamEvent<T, E>>,
+}
+
+impl<T, E> BlockingMessageStream<T, E> {
+    /// Construct a blocking stream from a stream session, cancellation control,
+    /// and a receiver for producer events.
+    #[must_use]
+    pub fn new(
+        session_id: SessionId,
+        control: Arc<dyn StreamControl>,
+        receiver: Receiver<StreamEvent<T, E>>,
+    ) -> Self {
+        Self {
+            stream: MessageStream::new(session_id, control),
+            receiver,
+        }
+    }
+
+    /// Return this stream's logical session identifier.
+    #[must_use]
+    pub const fn session_id(&self) -> SessionId {
+        self.stream.session_id()
+    }
+
+    /// Return whether the stream has reached end or error.
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
+        self.stream.is_finished()
+    }
+
+    /// Block the current OS thread until one item, end, error, or producer
+    /// disconnect is observed.
+    pub fn next_blocking(&mut self) -> Result<Option<T>, E> {
+        if let Some(value) = self.stream.next_buffered()? {
+            return Ok(Some(value));
+        }
+
+        if self.stream.is_finished() {
+            return Ok(None);
+        }
+
+        match self.receiver.recv() {
+            Ok(event) => self.stream.next_from_event(event),
+            Err(_) => Ok(None),
         }
     }
 }
