@@ -150,10 +150,7 @@ impl<T: Send + 'static, E: Send + 'static> ErasedStreamWaiter for TypedStreamWai
             .event
             .downcast::<StreamEvent<T, E>>()
             .expect("queued stream event carried unexpected type");
-        let finished = matches!(
-            &*event,
-            StreamEvent::End { .. } | StreamEvent::Error { .. }
-        );
+        let finished = matches!(&*event, StreamEvent::End { .. } | StreamEvent::Error { .. });
         self.sender
             .send(*event)
             .map_err(|_| SendError::TaskStopped)?;
