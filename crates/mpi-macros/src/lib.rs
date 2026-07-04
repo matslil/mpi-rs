@@ -261,7 +261,7 @@ fn to_variant_ident(method: &Ident) -> Ident {
         if ch == '_' {
             upper_next = true;
         } else if upper_next {
-            out.extend(ch.to_upperCase());
+            out.extend(ch.to_uppercase());
             upper_next = false;
         } else {
             out.push(ch);
