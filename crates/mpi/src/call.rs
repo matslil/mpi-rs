@@ -1,12 +1,39 @@
 //! Task-internal suspended call futures.
 
+use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
 use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
+
+/// Type-erased queued call response carried by a caller task message.
+pub struct QueuedCallResponse {
+    /// Completed session ID.
+    pub session_id: SessionId,
+
+    /// Type-erased reply value.
+    pub value: Box<dyn Any + Send>,
+}
+
+impl QueuedCallResponse {
+    /// Construct a queued call response.
+    #[must_use]
+    pub fn new(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
+        Self { session_id, value }
+    }
+}
+
+/// Message enums that can carry queued task-internal call responses.
+pub trait CallResponseMessage: Sized {
+    /// Wrap a typed response value into this task's message enum.
+    fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self;
+
+    /// Extract a queued call response from this message, if it is one.
+    fn into_call_response(self) -> Result<QueuedCallResponse, Self>;
+}
 
 /// Owned task-local call session state returned by a task context.
 pub type CallSession<T> = (SessionId, SyncReplySender<T>, SuspendedCall<T>);
@@ -92,13 +119,20 @@ impl<T> Future for SuspendedCall<T> {
     }
 }
 
-/// Create the reply sender and suspended future for one task-internal call.
+/// Create the reply sender and suspended future for one direct in-memory call.
 #[must_use]
-pub fn suspended_call_channel<T>(session_id: SessionId) -> CallSession<T> {
+pub fn suspended_call_channel<T: Send + 'static>(session_id: SessionId) -> CallSession<T> {
     let (sender, receiver) = sync_reply_channel();
     (
         session_id,
         sender,
         SuspendedCall::pending(session_id, receiver),
     )
+}
+
+/// Create the waiter sender and suspended future for one queued task-internal call.
+#[must_use]
+pub fn suspended_call_waiter<T>(session_id: SessionId) -> (Sender<Response<T>>, SuspendedCall<T>) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    (sender, SuspendedCall::pending(session_id, receiver))
 }
