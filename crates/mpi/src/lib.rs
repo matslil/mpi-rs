@@ -25,7 +25,7 @@ pub use session::{
     sync_reply_channel,
 };
 pub use stream::{
-    MessageStream, StreamCancel, StreamControl, StreamEvent, StreamEventSink, StreamPull,
-    StreamSink,
+    BlockingMessageStream, BoxStreamSink, MessageStream, StreamCancel, StreamControl, StreamEvent,
+    StreamEventSink, StreamPull, StreamSink,
 };
 pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
