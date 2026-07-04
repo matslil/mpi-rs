@@ -25,6 +25,7 @@ pub use session::{
 pub use stream::{
     BlockingMessageStream, BoxStreamSink, MessageStream, QueuedStreamEvent, StreamCancel,
     StreamControl, StreamEvent, StreamEventMessage, StreamEventSender, StreamEventSink, StreamPull,
-    StreamSession, StreamSink, SuspendedMessageStream, SuspendedStreamNext, suspended_stream_waiter,
+    StreamSession, StreamSink, SuspendedMessageStream, SuspendedStreamNext,
+    suspended_stream_waiter,
 };
 pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
