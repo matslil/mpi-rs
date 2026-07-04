@@ -457,8 +457,7 @@ mod tests {
     #[test]
     fn dropped_suspended_stream_removes_registered_waiter() {
         let ctx = context();
-        let (_session_id, _events, stream) =
-            ctx.begin_stream::<u32, String>(Arc::new(TestControl));
+        let (_session_id, _events, stream) = ctx.begin_stream::<u32, String>(Arc::new(TestControl));
         assert_eq!(ctx.inner.borrow().stream_waiters.len(), 1);
 
         drop(stream);
