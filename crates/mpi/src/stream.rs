@@ -1,12 +1,12 @@
 //! Stream protocol messages and consumer/producer helpers.
 
 use std::any::Any;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 
 use crate::error::SendError;
@@ -15,6 +15,63 @@ use crate::scope::TaskScope;
 use crate::session::SessionId;
 
 const STREAM_PULL_CREDIT: u32 = 1;
+const STREAM_INITIAL_CREDIT: u32 = 64;
+
+static STREAM_CREDITS: OnceLock<Mutex<HashMap<SessionId, u32>>> = OnceLock::new();
+
+fn stream_credits() -> &'static Mutex<HashMap<SessionId, u32>> {
+    STREAM_CREDITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Add producer credit for a stream session.
+pub fn add_stream_credit(pull: StreamPull) {
+    let mut credits = stream_credits()
+        .lock()
+        .expect("stream credit table poisoned");
+    let credit = credits.entry(pull.session_id).or_insert(0);
+    *credit = credit.saturating_add(pull.credit);
+}
+
+/// Consume producer credit for stream items before an event is sent.
+pub fn consume_stream_credit(session_id: SessionId, count: usize) -> Result<(), SendError> {
+    if count == 0 {
+        return Ok(());
+    }
+    let count = u32::try_from(count).unwrap_or(u32::MAX);
+    let mut credits = stream_credits()
+        .lock()
+        .expect("stream credit table poisoned");
+    let Some(available) = credits.get_mut(&session_id) else {
+        return Err(SendError::TaskStopped);
+    };
+    if *available < count {
+        return Err(SendError::TaskStopped);
+    }
+    *available -= count;
+    if *available == 0 {
+        credits.remove(&session_id);
+    }
+    Ok(())
+}
+
+/// Forget producer credit for a stream session.
+pub fn forget_stream_credit(session_id: SessionId) {
+    stream_credits()
+        .lock()
+        .expect("stream credit table poisoned")
+        .remove(&session_id);
+}
+
+/// Return producer credit stored for a stream session.
+#[must_use]
+pub fn stream_credit(session_id: SessionId) -> u32 {
+    stream_credits()
+        .lock()
+        .expect("stream credit table poisoned")
+        .get(&session_id)
+        .copied()
+        .unwrap_or(0)
+}
 
 /// Event sent from a stream producer to a stream consumer.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -207,7 +264,16 @@ impl<T, E> StreamEventSender<T, E> {
 
     /// Send one stream event.
     pub fn send(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
-        self.sink.send_event(event)
+        if let StreamEvent::Batch { session_id, values } = &event {
+            consume_stream_credit(*session_id, values.len())?;
+        }
+        let terminal = event.is_terminal();
+        let session_id = event.session_id();
+        let result = self.sink.send_event(event);
+        if terminal {
+            forget_stream_credit(session_id);
+        }
+        result
     }
 }
 
@@ -316,7 +382,7 @@ impl<T, E> MessageStream<T, E> {
             finished: false,
             _error: PhantomData,
         };
-        stream.grant_one_credit();
+        stream.grant_credit(STREAM_INITIAL_CREDIT);
         stream
     }
 
@@ -332,8 +398,12 @@ impl<T, E> MessageStream<T, E> {
         self.finished
     }
 
+    fn grant_credit(&self, credit: u32) {
+        let _ = self.control.try_pull(self.session_id, credit);
+    }
+
     fn grant_one_credit(&self) {
-        let _ = self.control.try_pull(self.session_id, STREAM_PULL_CREDIT);
+        self.grant_credit(STREAM_PULL_CREDIT);
     }
 
     /// Consume one incoming stream event and return at most one item.
@@ -637,7 +707,10 @@ mod tests {
         let control = Arc::new(RecordingControl::default());
         let mut stream = MessageStream::<u32, String>::new(session_id, control.clone());
 
-        assert_eq!(control.pulls(), vec![StreamPull::new(session_id, 1)]);
+        assert_eq!(
+            control.pulls(),
+            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)]
+        );
 
         assert_eq!(
             stream.next_from_event(StreamEvent::batch(session_id, vec![10, 11])),
@@ -646,7 +719,7 @@ mod tests {
         assert_eq!(
             control.pulls(),
             vec![
-                StreamPull::new(session_id, 1),
+                StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
                 StreamPull::new(session_id, 1)
             ]
         );
@@ -655,10 +728,35 @@ mod tests {
         assert_eq!(
             control.pulls(),
             vec![
-                StreamPull::new(session_id, 1),
+                StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
                 StreamPull::new(session_id, 1),
                 StreamPull::new(session_id, 1)
             ]
+        );
+    }
+
+    #[test]
+    fn stream_event_sender_enforces_credit() {
+        let session_id = SessionId::new(crate::EndpointId(8), 1);
+        forget_stream_credit(session_id);
+        let events = Arc::new(Mutex::new(Vec::<StreamEvent<u32, String>>::new()));
+        let captured_events = events.clone();
+        let mut sender = StreamEventSender::new(Box::new(move |event| {
+            captured_events.lock().expect("events lock poisoned").push(event);
+            Ok(())
+        }));
+
+        assert!(sender
+            .send(StreamEvent::batch(session_id, vec![1]))
+            .is_err());
+        assert!(events.lock().expect("events lock poisoned").is_empty());
+
+        add_stream_credit(StreamPull::new(session_id, 1));
+        sender.send(StreamEvent::batch(session_id, vec![2])).unwrap();
+        assert_eq!(stream_credit(session_id), 0);
+        assert_eq!(
+            events.lock().expect("events lock poisoned").as_slice(),
+            &[StreamEvent::batch(session_id, vec![2])]
         );
     }
 }
