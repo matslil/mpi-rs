@@ -359,6 +359,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
+    variants.push(quote! {
+        __StreamEvent {
+            session_id: ::mpi::SessionId,
+            event: Box<dyn ::std::any::Any + Send>,
+        }
+    });
+    placements.push(quote! { Self::__StreamEvent { .. } => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! {
+        #message_ident::__StreamEvent { session_id, event } => {
+            let _ = ctx.inner.deliver_stream_event(::mpi::QueuedStreamEvent::new(session_id, event));
+        }
+    });
+
     for handler in &handlers {
         let method_ident = &handler.method.sig.ident;
         let variant_ident = if matches!(handler.kind, HandlerKind::Start) {
@@ -486,7 +499,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 variants.push(quote! {
                     #variant_ident {
                         session_id: ::mpi::SessionId,
-                        events: ::std::sync::mpsc::Sender<::mpi::StreamEvent<#item, #error>>
+                        events: ::mpi::StreamEventSender<#item, #error>
                         #(, #arg_idents: #arg_tys)*
                     }
                 });
@@ -494,14 +507,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     Self::#variant_ident { .. } => ::mpi::MessagePlacement::Normal
                 });
                 dispatch_arms.push(quote! {
-                    #message_ident::#variant_ident { session_id, events #(, #arg_idents)* } => {
+                    #message_ident::#variant_ident { session_id, mut events #(, #arg_idents)* } => {
                         let mut out = ::mpi::StreamSink::new(
                             session_id,
                             #batch_size,
                             Box::new(move |event: ::mpi::StreamEvent<#item, #error>| {
-                                events
-                                    .send(event)
-                                    .map_err(|_| ::mpi::SendError::TaskStopped)
+                                events.send(event)
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
@@ -526,12 +537,34 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
+                    pub fn #method_ident(
+                        &self,
+                        ctx: &mut impl ::mpi::TaskScope,
+                        #(#arg_idents: #arg_tys),*
+                    ) -> Result<::mpi::SuspendedMessageStream<#item, #error>, ::mpi::SendError> {
+                        let control = ::std::sync::Arc::new(#stream_control_ident {
+                            inner: self.inner.clone(),
+                        });
+                        let (session_id, events, stream) = ctx.begin_stream::<#item, #error>(control);
+                        self.inner.send_message(#message_ident::#variant_ident {
+                            session_id,
+                            events
+                            #(, #arg_idents)*
+                        })?;
+                        Ok(stream)
+                    }
+
                     pub fn #blocking_method(
                         &self,
                         #(#arg_idents: #arg_tys),*
                     ) -> Result<::mpi::BlockingMessageStream<#item, #error>, ::mpi::SendError> {
                         let session_id = self.inner.next_external_session_id();
                         let (events, receiver) = ::std::sync::mpsc::channel::<::mpi::StreamEvent<#item, #error>>();
+                        let events = ::mpi::StreamEventSender::new(Box::new(move |event| {
+                            events
+                                .send(event)
+                                .map_err(|_| ::mpi::SendError::TaskStopped)
+                        }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>);
                         self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             events
@@ -584,6 +617,24 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::mpi::StreamEventMessage for #message_ident {
+            fn stream_event(
+                session_id: ::mpi::SessionId,
+                event: Box<dyn ::std::any::Any + Send>,
+            ) -> Self {
+                Self::__StreamEvent { session_id, event }
+            }
+
+            fn into_stream_event(self) -> Result<::mpi::QueuedStreamEvent, Self> {
+                match self {
+                    Self::__StreamEvent { session_id, event } => {
+                        Ok(::mpi::QueuedStreamEvent::new(session_id, event))
+                    }
+                    other => Err(other),
+                }
+            }
+        }
+
         struct #stream_control_ident {
             inner: ::mpi::TaskHandle<#message_ident, #queue_size>,
         }
@@ -618,6 +669,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl ::mpi::TaskScope for #context_ident {
             fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
                 self.inner.begin_call::<T>()
+            }
+
+            fn begin_stream<T: Send + 'static, E: Send + 'static>(
+                &mut self,
+                control: ::std::sync::Arc<dyn ::mpi::StreamControl>,
+            ) -> ::mpi::StreamSession<T, E> {
+                self.inner.begin_stream::<T, E>(control)
             }
         }
 
