@@ -272,6 +272,7 @@ fn to_variant_ident(method: &Ident) -> Ident {
 
 /// Generates task message enum, context, handle, send methods, spawn helper,
 /// placement implementation, and dispatch for one task impl block.
+#[rustfmt::skip]
 #[proc_macro_attribute]
 pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TaskArgs);
