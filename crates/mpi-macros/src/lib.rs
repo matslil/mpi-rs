@@ -98,8 +98,12 @@ struct HandlerArg {
 
 enum HandlerKind {
     Start,
-    Event { priority: bool },
-    Call { reply: Box<Type> },
+    Event {
+        priority: bool,
+    },
+    Call {
+        reply: Box<Type>,
+    },
     Stream {
         item: Box<Type>,
         error: Box<Type>,
