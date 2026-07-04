@@ -35,6 +35,32 @@ impl Counter {
 }
 
 #[derive(Default)]
+struct Client {
+    observed: u32,
+}
+
+#[task(queue_size = 8)]
+impl Client {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    async fn ask_counter(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        self.observed = counter.get(ctx).await.unwrap();
+    }
+
+    #[call(reply = u32)]
+    async fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
+        self.observed
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
 struct Producer;
 
 #[task(queue_size = 8)]
@@ -103,6 +129,20 @@ fn req_123_generated_event_send_requires_task_scope_for_non_blocking_api() {
 
     counter.stop_blocking().unwrap();
     runtime.join().unwrap();
+}
+
+#[test]
+fn req_120_req_121_generated_call_has_context_aware_handler_api() {
+    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 41).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.ask_counter_blocking(counter.clone()).unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 41);
+
+    client.stop_blocking().unwrap();
+    counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    counter_runtime.join().unwrap();
 }
 
 #[test]
