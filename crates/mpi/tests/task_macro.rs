@@ -63,7 +63,7 @@ impl Client {
         self.observed = counter.get(ctx).await.unwrap();
     }
 
-    #[event]
+    #[event(priority)]
     async fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
         self.observed += amount;
     }
