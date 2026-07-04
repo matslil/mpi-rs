@@ -261,7 +261,7 @@ fn to_variant_ident(method: &Ident) -> Ident {
         if ch == '_' {
             upper_next = true;
         } else if upper_next {
-            out.extend(ch.to_uppercase());
+            out.extend(ch.to_upperCase());
             upper_next = false;
         } else {
             out.push(ch);
@@ -560,13 +560,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl ::mpi::TaskScope for #context_ident {
-            fn begin_call<T: Send + 'static>(
-                &mut self,
-            ) -> (
-                ::mpi::SessionId,
-                ::mpi::SyncReplySender<T>,
-                ::mpi::SuspendedCall<T>,
-            ) {
+            fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
                 self.inner.begin_call::<T>()
             }
         }
