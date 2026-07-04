@@ -62,7 +62,9 @@ impl<T, E> StreamEvent<T, E> {
         Self::Error { session_id, error }
     }
 
-    fn is_terminal(&self) -> bool {
+    /// Return whether this event ends the stream session.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
         matches!(self, Self::End { .. } | Self::Error { .. })
     }
 }
