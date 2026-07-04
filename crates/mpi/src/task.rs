@@ -172,9 +172,7 @@ where
     }
 
     /// Allocate one task-local call session and its owned suspended future.
-    pub fn begin_call<T: Send + 'static>(
-        &self,
-    ) -> CallSession<T> {
+    pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
         suspended_call_channel(self.next_session_id())
     }
 
