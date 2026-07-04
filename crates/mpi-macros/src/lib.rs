@@ -272,6 +272,7 @@ fn to_variant_ident(method: &Ident) -> Ident {
 
 /// Generates task message enum, context, handle, send methods, spawn helper,
 /// placement implementation, and dispatch for one task impl block.
+#[rustfmt::skip]
 #[proc_macro_attribute]
 pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as TaskArgs);
@@ -416,8 +417,20 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
-                    pub fn #method_ident(&self, _ctx: &mut impl ::mpi::TaskScope #(, #arg_idents: #arg_tys)*) -> ::std::future::Ready<Result<#reply, ::mpi::CallError>> {
-                        ::std::future::ready(self.#blocking_method(#(#arg_idents),*))
+                    pub fn #method_ident(
+                        &self,
+                        ctx: &mut impl ::mpi::TaskScope,
+                        #(#arg_idents: #arg_tys),*
+                    ) -> ::mpi::SuspendedCall<#reply> {
+                        let (session_id, reply, future) = ctx.begin_call::<#reply>();
+                        match self.inner.send_message(#message_ident::#variant_ident {
+                            session_id,
+                            reply
+                            #(, #arg_idents)*
+                        }) {
+                            Ok(()) => future,
+                            Err(error) => ::mpi::SuspendedCall::failed(error.into()),
+                        }
                     }
 
                     pub fn #blocking_method(&self, #(#arg_idents: #arg_tys),*) -> Result<#reply, ::mpi::CallError> {
@@ -547,12 +560,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             inner: ::mpi::TaskContext<#message_ident, #queue_size>,
         }
 
-        impl ::mpi::TaskScope for #context_ident {}
+        impl ::mpi::TaskScope for #context_ident {
+            fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
+                self.inner.begin_call::<T>()
+            }
+        }
 
         impl #context_ident {
             pub fn self_handle(&self) -> #handle_ident {
                 #handle_ident {
-                    inner: self.inner.self_handle().clone(),
+                    inner: self.inner.self_handle(),
                 }
             }
 

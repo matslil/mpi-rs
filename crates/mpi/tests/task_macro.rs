@@ -49,6 +49,13 @@ impl Client {
         self.observed = counter.get(ctx).await.unwrap();
     }
 
+    #[event]
+    async fn ask_counter_twice(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        let first = counter.get(ctx);
+        let second = counter.get(ctx);
+        self.observed = first.await.unwrap() + second.await.unwrap();
+    }
+
     #[call(reply = u32)]
     async fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
         self.observed
@@ -138,6 +145,20 @@ fn req_120_req_121_generated_call_has_context_aware_handler_api() {
 
     client.ask_counter_blocking(counter.clone()).unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 41);
+
+    client.stop_blocking().unwrap();
+    counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
+    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 21).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.ask_counter_twice_blocking(counter.clone()).unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 42);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();
