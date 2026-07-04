@@ -12,9 +12,15 @@ impl Counter {
         self.value = initial;
     }
 
-    #[event]
+    #[event(priority)]
     async fn add(&mut self, _ctx: &mut CounterContext, amount: u32) {
         self.value += amount;
+    }
+
+    #[event(priority)]
+    async fn add_from_handler(&mut self, ctx: &mut CounterContext, amount: u32) {
+        let self_handle = ctx.self_handle();
+        self_handle.add(ctx, amount).unwrap();
     }
 
     #[call(reply = u32)]
@@ -69,12 +75,12 @@ impl Producer {
 fn req_051_req_052_macro_generates_task_handle_dispatch_and_call_plumbing() {
     let (counter, runtime) = Counter::spawn(Counter::default(), 10).unwrap();
 
-    counter.add(5).unwrap();
-    counter.add(7).unwrap();
+    counter.add_blocking(5).unwrap();
+    counter.add_blocking(7).unwrap();
 
     assert_eq!(counter.get_blocking().unwrap(), 22);
 
-    counter.stop().unwrap();
+    counter.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
 
@@ -84,7 +90,18 @@ fn req_053_macro_forces_start_message_to_priority() {
 
     // If the generated start message were normal, this priority stop could run
     // first and prevent the start handler from initializing the value.
-    counter.stop().unwrap();
+    counter.stop_blocking().unwrap();
+    runtime.join().unwrap();
+}
+
+#[test]
+fn req_123_generated_event_send_requires_task_scope_for_non_blocking_api() {
+    let (counter, runtime) = Counter::spawn(Counter::default(), 1).unwrap();
+
+    counter.add_from_handler_blocking(4).unwrap();
+    assert_eq!(counter.get_blocking().unwrap(), 5);
+
+    counter.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
 
@@ -99,7 +116,7 @@ fn req_101_req_102_req_103_generated_stream_hides_batches() {
     assert_eq!(stream.next_blocking().unwrap(), None);
     assert!(stream.is_finished());
 
-    producer.stop().unwrap();
+    producer.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
 
@@ -112,6 +129,6 @@ fn req_105_req_111_generated_stream_error_is_reported_after_buffered_items() {
     assert_eq!(stream.next_blocking(), Err("failed".to_owned()));
     assert!(stream.is_finished());
 
-    producer.stop().unwrap();
+    producer.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
