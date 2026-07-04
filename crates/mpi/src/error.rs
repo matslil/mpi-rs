@@ -40,7 +40,7 @@ impl fmt::Display for RecvError {
 
 impl std::error::Error for RecvError {}
 
-/// Error returned by an external blocking synchronous call.
+/// Error returned by synchronous calls.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CallError {
     /// The request could not be enqueued.
@@ -48,6 +48,9 @@ pub enum CallError {
 
     /// The callee stopped before sending a reply.
     ReplyDisconnected,
+
+    /// A queued reply carried a different type than the registered waiter.
+    UnexpectedReplyType,
 }
 
 impl fmt::Display for CallError {
@@ -55,6 +58,7 @@ impl fmt::Display for CallError {
         match self {
             Self::Send(error) => write!(f, "call request could not be sent: {error}"),
             Self::ReplyDisconnected => f.write_str("call reply channel disconnected"),
+            Self::UnexpectedReplyType => f.write_str("call reply carried unexpected type"),
         }
     }
 }
