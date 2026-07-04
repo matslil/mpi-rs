@@ -376,6 +376,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     quote! { ::mpi::MessagePlacement::Normal }
                 };
+                let blocking_method = format_ident!("{}_blocking", method_ident);
                 variants.push(quote! { #variant_ident { #(#arg_idents: #arg_tys),* } });
                 placements.push(quote! {
                     Self::#variant_ident { .. } => #placement
@@ -386,7 +387,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
-                    pub fn #method_ident(&self, #(#arg_idents: #arg_tys),*) -> Result<(), ::mpi::SendError> {
+                    pub fn #method_ident(&self, _ctx: &mut impl ::mpi::TaskScope #(, #arg_idents: #arg_tys)*) -> Result<(), ::mpi::SendError> {
+                        self.inner.send_message(#message_ident::#variant_ident { #(#arg_idents),* })
+                    }
+
+                    pub fn #blocking_method(&self, #(#arg_idents: #arg_tys),*) -> Result<(), ::mpi::SendError> {
                         self.inner.send_message(#message_ident::#variant_ident { #(#arg_idents),* })
                     }
                 });
@@ -537,6 +542,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         pub struct #context_ident {
             inner: ::mpi::TaskContext<#message_ident, #queue_size>,
         }
+
+        impl ::mpi::TaskScope for #context_ident {}
 
         impl #context_ident {
             pub fn self_handle(&self) -> #handle_ident {
