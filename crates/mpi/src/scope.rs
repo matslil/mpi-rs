@@ -1,7 +1,6 @@
 //! Marker traits and task-local API hooks for generated task scopes.
 
-use crate::call::{CallSession, SuspendedCall};
-use crate::session::{SessionId, SyncReplySender};
+use crate::call::CallSession;
 
 /// Marker trait implemented by generated task contexts.
 pub trait TaskScope {
