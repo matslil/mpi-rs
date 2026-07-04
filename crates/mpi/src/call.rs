@@ -6,7 +6,9 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
-use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
+use crate::session::{
+    Response, SessionId, SyncReplySender, sync_reply_channel,
+};
 
 /// Future returned by a task-internal call.
 ///
