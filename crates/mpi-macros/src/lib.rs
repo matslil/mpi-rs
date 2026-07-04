@@ -346,6 +346,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     placements.push(quote! { Self::__StreamCancel { .. } => ::mpi::MessagePlacement::Priority });
     dispatch_arms.push(quote! { #message_ident::__StreamCancel { session_id: _ } => {} });
 
+    variants.push(quote! {
+        __CallResponse {
+            session_id: ::mpi::SessionId,
+            value: Box<dyn ::std::any::Any + Send>,
+        }
+    });
+    placements.push(quote! { Self::__CallResponse { .. } => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! {
+        #message_ident::__CallResponse { session_id, value } => {
+            let _ = ctx.inner.deliver_call_response(::mpi::QueuedCallResponse::new(session_id, value));
+        }
+    });
+
     for handler in &handlers {
         let method_ident = &handler.method.sig.ident;
         let variant_ident = if matches!(handler.kind, HandlerKind::Start) {
@@ -367,7 +380,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
-                        ::mpi::block_on(state.#method_ident(&mut ctx, #(#arg_idents),*));
+                        let __ctx_inner = ctx.inner.clone();
+                        ::mpi::block_on_task(
+                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            inner_handle.queue(),
+                            &__ctx_inner,
+                            &mut deferred,
+                        );
                     }
                 });
             }
@@ -384,7 +403,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
-                        ::mpi::block_on(state.#method_ident(&mut ctx, #(#arg_idents),*));
+                        let __ctx_inner = ctx.inner.clone();
+                        ::mpi::block_on_task(
+                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            inner_handle.queue(),
+                            &__ctx_inner,
+                            &mut deferred,
+                        );
                     }
                 });
                 handle_methods.push(quote! {
@@ -412,7 +437,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { session_id, reply #(, #arg_idents)* } => {
-                        let value = ::mpi::block_on(state.#method_ident(&mut ctx, #(#arg_idents),*));
+                        let __ctx_inner = ctx.inner.clone();
+                        let value = ::mpi::block_on_task(
+                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            inner_handle.queue(),
+                            &__ctx_inner,
+                            &mut deferred,
+                        );
                         let _ = reply.send(::mpi::Response::new(session_id, value));
                     }
                 });
@@ -473,11 +504,17 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     .map_err(|_| ::mpi::SendError::TaskStopped)
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
-                        let result = ::mpi::block_on(state.#method_ident(
-                            &mut ctx,
-                            &mut out,
-                            #(#arg_idents),*
-                        ));
+                        let __ctx_inner = ctx.inner.clone();
+                        let result = ::mpi::block_on_task(
+                            state.#method_ident(
+                                &mut ctx,
+                                &mut out,
+                                #(#arg_idents),*
+                            ),
+                            inner_handle.queue(),
+                            &__ctx_inner,
+                            &mut deferred,
+                        );
                         match result {
                             Ok(()) => {
                                 let _ = out.finish();
@@ -525,6 +562,24 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn placement(&self) -> ::mpi::MessagePlacement {
                 match self {
                     #(#placements),*
+                }
+            }
+        }
+
+        impl ::mpi::CallResponseMessage for #message_ident {
+            fn call_response(
+                session_id: ::mpi::SessionId,
+                value: Box<dyn ::std::any::Any + Send>,
+            ) -> Self {
+                Self::__CallResponse { session_id, value }
+            }
+
+            fn into_call_response(self) -> Result<::mpi::QueuedCallResponse, Self> {
+                match self {
+                    Self::__CallResponse { session_id, value } => {
+                        Ok(::mpi::QueuedCallResponse::new(session_id, value))
+                    }
+                    other => Err(other),
                 }
             }
         }
@@ -600,15 +655,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let mut ctx = #context_ident {
                             inner: ::mpi::TaskContext::new(inner_handle.clone()),
                         };
+                        let mut deferred = ::std::collections::VecDeque::<#message_ident>::new();
 
                         loop {
                             if ctx.is_stopped() {
                                 break;
                             }
 
-                            let message = match inner_handle.queue().recv() {
-                                Ok(message) => message,
-                                Err(_) => break,
+                            let message = match deferred.pop_front() {
+                                Some(message) => message,
+                                None => match inner_handle.queue().recv() {
+                                    Ok(message) => message,
+                                    Err(_) => break,
+                                },
                             };
 
                             match message {
