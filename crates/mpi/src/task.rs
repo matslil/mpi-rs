@@ -10,7 +10,7 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
 use crate::call::{
-    CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
+    CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
     suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, SendError};
@@ -397,6 +397,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::call::CallReleaseMessage;
     use crate::message::MessagePlacement;
 
     enum TestMessage {
