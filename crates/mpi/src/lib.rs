@@ -28,4 +28,4 @@ pub use stream::{
     BlockingMessageStream, BoxStreamSink, MessageStream, StreamCancel, StreamControl, StreamEvent,
     StreamEventSink, StreamPull, StreamSink,
 };
-pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
+pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, TaskScope, spawn_task};
