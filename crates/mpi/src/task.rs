@@ -21,7 +21,7 @@ use crate::session::{
 };
 use crate::stream::{
     QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
-    StreamSession, suspended_stream_waiter_with_on_drop,
+    StreamPull, StreamPullMessage, StreamSession, suspended_stream_waiter_with_on_drop,
 };
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
@@ -169,6 +169,7 @@ where
     session_ids: SessionIdAllocator,
     call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
     stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
+    stream_credits: HashMap<SessionId, u32>,
     released_calls: HashSet<SessionId>,
     stopped: bool,
 }
@@ -212,6 +213,7 @@ where
                 session_ids: SessionIdAllocator::new(endpoint),
                 call_waiters: HashMap::new(),
                 stream_waiters: HashMap::new(),
+                stream_credits: HashMap::new(),
                 released_calls: HashSet::new(),
                 stopped: false,
             })),
@@ -255,6 +257,40 @@ where
         self.inner.borrow_mut().released_calls.remove(&session_id)
     }
 
+    /// Record additional item credit for a stream producer.
+    pub fn record_stream_pull(&self, pull: StreamPull) {
+        let mut state = self.inner.borrow_mut();
+        let credit = state.stream_credits.entry(pull.session_id).or_insert(0);
+        *credit = credit.saturating_add(pull.credit);
+    }
+
+    /// Consume one stream item credit if any has been granted.
+    pub fn take_stream_credit(&self, session_id: SessionId) -> bool {
+        let mut state = self.inner.borrow_mut();
+        let Some(credit) = state.stream_credits.get_mut(&session_id) else {
+            return false;
+        };
+        if *credit == 0 {
+            return false;
+        }
+        *credit -= 1;
+        if *credit == 0 {
+            state.stream_credits.remove(&session_id);
+        }
+        true
+    }
+
+    /// Return currently recorded stream credit for diagnostics and tests.
+    #[must_use]
+    pub fn stream_credit(&self, session_id: SessionId) -> u32 {
+        self.inner
+            .borrow()
+            .stream_credits
+            .get(&session_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Route a queued stream event to the registered stream waiter, if any.
     pub fn deliver_stream_event(&self, event: QueuedStreamEvent) -> Result<(), SendError> {
         let session_id = event.session_id;
@@ -265,6 +301,7 @@ where
         };
         if finished {
             state.stream_waiters.remove(&session_id);
+            state.stream_credits.remove(&session_id);
         }
         Ok(())
     }
@@ -328,7 +365,9 @@ where
         let inner = Rc::clone(&self.inner);
         let (waiter, stream) =
             suspended_stream_waiter_with_on_drop(session_id, control, move |session_id| {
-                inner.borrow_mut().stream_waiters.remove(&session_id);
+                let mut state = inner.borrow_mut();
+                state.stream_waiters.remove(&session_id);
+                state.stream_credits.remove(&session_id);
             });
         self.inner.borrow_mut().stream_waiters.insert(
             session_id,
@@ -412,6 +451,10 @@ mod tests {
             session_id: SessionId,
             event: Box<dyn Any + Send>,
         },
+        StreamPull {
+            session_id: SessionId,
+            credit: u32,
+        },
     }
 
     impl TaskMessage for TestMessage {
@@ -463,9 +506,26 @@ mod tests {
         }
     }
 
+    impl StreamPullMessage for TestMessage {
+        fn stream_pull(session_id: SessionId, credit: u32) -> Self {
+            Self::StreamPull { session_id, credit }
+        }
+
+        fn into_stream_pull(self) -> Result<StreamPull, Self> {
+            match self {
+                Self::StreamPull { session_id, credit } => Ok(StreamPull::new(session_id, credit)),
+                other => Err(other),
+            }
+        }
+    }
+
     struct TestControl;
 
     impl StreamControl for TestControl {
+        fn try_pull(&self, _session_id: SessionId, _credit: u32) -> Result<(), SendError> {
+            Ok(())
+        }
+
         fn try_cancel(&self, _session_id: SessionId) -> Result<(), SendError> {
             Ok(())
         }
@@ -496,6 +556,21 @@ mod tests {
 
         assert!(ctx.take_call_released(session_id));
         assert!(!ctx.take_call_released(session_id));
+    }
+
+    #[test]
+    fn stream_pull_credit_is_recorded_and_consumed() {
+        let ctx = context();
+        let session_id = SessionId::new(ctx.self_handle().endpoint(), 11);
+
+        ctx.record_stream_pull(StreamPull::new(session_id, 2));
+
+        assert_eq!(ctx.stream_credit(session_id), 2);
+        assert!(ctx.take_stream_credit(session_id));
+        assert_eq!(ctx.stream_credit(session_id), 1);
+        assert!(ctx.take_stream_credit(session_id));
+        assert!(!ctx.take_stream_credit(session_id));
+        assert_eq!(ctx.stream_credit(session_id), 0);
     }
 
     #[test]
