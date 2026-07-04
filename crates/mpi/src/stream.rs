@@ -709,7 +709,7 @@ mod tests {
 
         assert_eq!(
             control.pulls(),
-            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT),]
+            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)]
         );
 
         assert_eq!(
