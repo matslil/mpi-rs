@@ -611,7 +611,7 @@ where
     let (sender, receiver) = std::sync::mpsc::channel();
     (
         sender,
-        SuspendedMessageStream::new_with_on_drop(session_id, control, receiver, on_drop),
+        SuspendedMessageStream::new_with_on_drop(session_id, control, receiver),
     )
 }
 
@@ -709,7 +709,7 @@ mod tests {
 
         assert_eq!(
             control.pulls(),
-            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)]
+            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT),]
         );
 
         assert_eq!(
@@ -720,7 +720,7 @@ mod tests {
             control.pulls(),
             vec![
                 StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
-                StreamPull::new(session_id, 1)
+                StreamPull::new(session_id, 1),
             ]
         );
 
@@ -730,7 +730,7 @@ mod tests {
             vec![
                 StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
                 StreamPull::new(session_id, 1),
-                StreamPull::new(session_id, 1)
+                StreamPull::new(session_id, 1),
             ]
         );
     }
