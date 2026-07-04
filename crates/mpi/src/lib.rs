@@ -22,10 +22,5 @@ pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
     sync_reply_channel,
 };
-pub use stream::{
-    BlockingMessageStream, BoxStreamSink, MessageStream, QueuedStreamEvent, StreamCancel,
-    StreamControl, StreamEvent, StreamEventMessage, StreamEventSender, StreamEventSink, StreamPull,
-    StreamSession, StreamSink, SuspendedMessageStream, SuspendedStreamNext,
-    suspended_stream_waiter,
-};
+pub use stream::*;
 pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
