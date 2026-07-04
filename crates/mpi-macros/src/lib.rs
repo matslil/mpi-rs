@@ -416,6 +416,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
+                    pub fn #method_ident(&self, _ctx: &mut impl ::mpi::TaskScope #(, #arg_idents: #arg_tys)*) -> ::std::future::Ready<Result<#reply, ::mpi::CallError>> {
+                        ::std::future::ready(self.#blocking_method(#(#arg_idents),*))
+                    }
+
                     pub fn #blocking_method(&self, #(#arg_idents: #arg_tys),*) -> Result<#reply, ::mpi::CallError> {
                         self.inner
                             .call_blocking(|session_id, reply| #message_ident::#variant_ident {
