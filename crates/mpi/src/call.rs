@@ -6,9 +6,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
-use crate::session::{
-    Response, SessionId, SyncReplySender, sync_reply_channel,
-};
+use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
 
 /// Future returned by a task-internal call.
 ///
@@ -95,9 +93,7 @@ impl<T> Future for SuspendedCall<T> {
 
 /// Create the reply sender and suspended future for one task-internal call.
 #[must_use]
-pub fn suspended_call_channel<T>(
-    session_id: SessionId,
-) -> (SyncReplySender<T>, SuspendedCall<T>) {
+pub fn suspended_call_channel<T>(session_id: SessionId) -> (SyncReplySender<T>, SuspendedCall<T>) {
     let (sender, receiver) = sync_reply_channel();
     (sender, SuspendedCall::pending(session_id, receiver))
 }
