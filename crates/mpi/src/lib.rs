@@ -8,7 +8,7 @@ pub mod session;
 pub mod stream;
 pub mod task;
 
-pub use call::{SuspendedCall, suspended_call_channel};
+pub use call::{CallSession, SuspendedCall, suspended_call_channel};
 pub use error::{CallError, RecvError, SendError};
 pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
