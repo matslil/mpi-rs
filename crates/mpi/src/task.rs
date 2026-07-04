@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
-use crate::call::{
-    CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter,
-};
+use crate::call::{CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter};
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
