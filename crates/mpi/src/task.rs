@@ -10,7 +10,9 @@ use crate::call::{SuspendedCall, suspended_call_channel};
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
-use crate::session::{EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel};
+use crate::session::{
+    EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel,
+};
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -170,7 +172,9 @@ where
     }
 
     /// Allocate one task-local call session and its owned suspended future.
-    pub fn begin_call<T: Send + 'static>(&self) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>) {
+    pub fn begin_call<T: Send + 'static>(
+        &self,
+    ) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>) {
         let session_id = self.next_session_id();
         let (reply, future) = suspended_call_channel(session_id);
         (session_id, reply, future)
