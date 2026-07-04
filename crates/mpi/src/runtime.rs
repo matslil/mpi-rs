@@ -9,7 +9,7 @@ use std::task::{Context, Poll, Waker};
 use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
-use crate::stream::StreamEventMessage;
+use crate::stream::{StreamEventMessage, StreamPullMessage};
 use crate::task::TaskContext;
 
 /// Run a future to completion on the current task thread.
@@ -33,7 +33,8 @@ where
 }
 
 /// Run a handler future while routing queued call responses, call lifecycle
-/// messages, and stream events to registered task-local state.
+/// messages, stream pull control, and stream events to registered task-local
+/// state.
 ///
 /// Ordinary messages received while the current handler is suspended are deferred
 /// and processed by the outer task loop after the current handler completes.
@@ -44,7 +45,11 @@ pub fn block_on_task<M, F, const N: usize>(
     deferred: &mut VecDeque<M>,
 ) -> F::Output
 where
-    M: TaskMessage + CallResponseMessage + CallReleaseMessage + StreamEventMessage,
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamEventMessage,
     F: Future,
 {
     let waker = Waker::noop();
@@ -63,11 +68,16 @@ where
                         Ok(release) => {
                             ctx.record_call_release(release);
                         }
-                        Err(message) => match message.into_stream_event() {
-                            Ok(event) => {
-                                let _ = ctx.deliver_stream_event(event);
+                        Err(message) => match message.into_stream_pull() {
+                            Ok(pull) => {
+                                ctx.record_stream_pull(pull);
                             }
-                            Err(message) => deferred.push_back(message),
+                            Err(message) => match message.into_stream_event() {
+                                Ok(event) => {
+                                    let _ = ctx.deliver_stream_event(event);
+                                }
+                                Err(message) => deferred.push_back(message),
+                            },
                         },
                     },
                 },
