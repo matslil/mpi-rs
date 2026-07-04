@@ -2,7 +2,7 @@
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,7 +10,8 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
 use crate::call::{
-    CallResponseMessage, CallSession, QueuedCallResponse, suspended_call_waiter_with_on_drop,
+    CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
+    suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, SendError};
 use crate::message::{HasSessionId, TaskMessage};
@@ -168,6 +169,7 @@ where
     session_ids: SessionIdAllocator,
     call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
     stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
+    released_calls: HashSet<SessionId>,
     stopped: bool,
 }
 
@@ -210,6 +212,7 @@ where
                 session_ids: SessionIdAllocator::new(endpoint),
                 call_waiters: HashMap::new(),
                 stream_waiters: HashMap::new(),
+                released_calls: HashSet::new(),
                 stopped: false,
             })),
         }
@@ -237,6 +240,19 @@ where
             Some(waiter) => waiter.deliver(response),
             None => Ok(()),
         }
+    }
+
+    /// Record that a queued call has been released by its caller.
+    pub fn record_call_release(&self, release: QueuedCallRelease) {
+        self.inner
+            .borrow_mut()
+            .released_calls
+            .insert(release.session_id);
+    }
+
+    /// Return whether a call was released, consuming the marker if present.
+    pub fn take_call_released(&self, session_id: SessionId) -> bool {
+        self.inner.borrow_mut().released_calls.remove(&session_id)
     }
 
     /// Route a queued stream event to the registered stream waiter, if any.
@@ -388,6 +404,9 @@ mod tests {
             session_id: SessionId,
             value: Box<dyn Any + Send>,
         },
+        CallRelease {
+            session_id: SessionId,
+        },
         StreamEvent {
             session_id: SessionId,
             event: Box<dyn Any + Send>,
@@ -410,6 +429,19 @@ mod tests {
                 Self::CallResponse { session_id, value } => {
                     Ok(QueuedCallResponse::new(session_id, value))
                 }
+                other => Err(other),
+            }
+        }
+    }
+
+    impl CallReleaseMessage for TestMessage {
+        fn call_release(session_id: SessionId) -> Self {
+            Self::CallRelease { session_id }
+        }
+
+        fn into_call_release(self) -> Result<QueuedCallRelease, Self> {
+            match self {
+                Self::CallRelease { session_id } => Ok(QueuedCallRelease::new(session_id)),
                 other => Err(other),
             }
         }
@@ -452,6 +484,17 @@ mod tests {
         drop(future);
 
         assert_eq!(ctx.inner.borrow().call_waiters.len(), 0);
+    }
+
+    #[test]
+    fn call_release_marker_is_consumed_once() {
+        let ctx = context();
+        let session_id = SessionId::new(ctx.self_handle().endpoint(), 9);
+
+        ctx.record_call_release(QueuedCallRelease::new(session_id));
+
+        assert!(ctx.take_call_released(session_id));
+        assert!(!ctx.take_call_released(session_id));
     }
 
     #[test]
