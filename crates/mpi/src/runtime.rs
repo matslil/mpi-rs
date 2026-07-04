@@ -6,7 +6,7 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use crate::call::CallResponseMessage;
+use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
 use crate::stream::StreamEventMessage;
@@ -32,8 +32,8 @@ where
     }
 }
 
-/// Run a handler future while routing queued call responses and stream events to
-/// registered waiters.
+/// Run a handler future while routing queued call responses, call lifecycle
+/// messages, and stream events to registered task-local state.
 ///
 /// Ordinary messages received while the current handler is suspended are deferred
 /// and processed by the outer task loop after the current handler completes.
@@ -44,7 +44,7 @@ pub fn block_on_task<M, F, const N: usize>(
     deferred: &mut VecDeque<M>,
 ) -> F::Output
 where
-    M: TaskMessage + CallResponseMessage + StreamEventMessage,
+    M: TaskMessage + CallResponseMessage + CallReleaseMessage + StreamEventMessage,
     F: Future,
 {
     let waker = Waker::noop();
@@ -59,11 +59,16 @@ where
                     Ok(response) => {
                         let _ = ctx.deliver_call_response(response);
                     }
-                    Err(message) => match message.into_stream_event() {
-                        Ok(event) => {
-                            let _ = ctx.deliver_stream_event(event);
+                    Err(message) => match message.into_call_release() {
+                        Ok(release) => {
+                            ctx.record_call_release(release);
                         }
-                        Err(message) => deferred.push_back(message),
+                        Err(message) => match message.into_stream_event() {
+                            Ok(event) => {
+                                let _ = ctx.deliver_stream_event(event);
+                            }
+                            Err(message) => deferred.push_back(message),
+                        },
                     },
                 },
                 Err(_) => std::thread::yield_now(),

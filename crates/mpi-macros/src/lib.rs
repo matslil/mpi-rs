@@ -359,6 +359,14 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
+    variants.push(quote! { __CallRelease { session_id: ::mpi::SessionId } });
+    placements.push(quote! { Self::__CallRelease { .. } => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! {
+        #message_ident::__CallRelease { session_id } => {
+            ctx.inner.record_call_release(::mpi::QueuedCallRelease::new(session_id));
+        }
+    });
+
     variants.push(quote! {
         __StreamEvent {
             session_id: ::mpi::SessionId,
@@ -450,14 +458,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { session_id, reply #(, #arg_idents)* } => {
-                        let __ctx_inner = ctx.inner.clone();
-                        let value = ::mpi::block_on_task(
-                            state.#method_ident(&mut ctx, #(#arg_idents),*),
-                            inner_handle.queue(),
-                            &__ctx_inner,
-                            &mut deferred,
-                        );
-                        let _ = reply.send(::mpi::Response::new(session_id, value));
+                        if !ctx.inner.take_call_released(session_id) {
+                            let __ctx_inner = ctx.inner.clone();
+                            let value = ::mpi::block_on_task(
+                                state.#method_ident(&mut ctx, #(#arg_idents),*),
+                                inner_handle.queue(),
+                                &__ctx_inner,
+                                &mut deferred,
+                            );
+                            let _ = reply.send(::mpi::Response::new(session_id, value));
+                        }
                     }
                 });
                 handle_methods.push(quote! {
@@ -472,7 +482,14 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             reply
                             #(, #arg_idents)*
                         }) {
-                            Ok(()) => future,
+                            Ok(()) => {
+                                let __call_lifecycle = self.inner.clone();
+                                future.with_additional_on_drop(move |session_id| {
+                                    let _ = __call_lifecycle.send_message(
+                                        #message_ident::__CallRelease { session_id }
+                                    );
+                                })
+                            }
                             Err(error) => ::mpi::SuspendedCall::failed(error.into()),
                         }
                     }
@@ -611,6 +628,21 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 match self {
                     Self::__CallResponse { session_id, value } => {
                         Ok(::mpi::QueuedCallResponse::new(session_id, value))
+                    }
+                    other => Err(other),
+                }
+            }
+        }
+
+        impl ::mpi::CallReleaseMessage for #message_ident {
+            fn call_release(session_id: ::mpi::SessionId) -> Self {
+                Self::__CallRelease { session_id }
+            }
+
+            fn into_call_release(self) -> Result<::mpi::QueuedCallRelease, Self> {
+                match self {
+                    Self::__CallRelease { session_id } => {
+                        Ok(::mpi::QueuedCallRelease::new(session_id))
                     }
                     other => Err(other),
                 }

@@ -9,8 +9,8 @@ pub mod stream;
 pub mod task;
 
 pub use call::{
-    CallResponseMessage, CallSession, QueuedCallResponse, SuspendedCall, suspended_call_channel,
-    suspended_call_waiter,
+    CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
+    SuspendedCall, suspended_call_channel, suspended_call_waiter,
 };
 pub use error::{CallError, RecvError, SendError};
 pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
