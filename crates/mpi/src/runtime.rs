@@ -9,6 +9,7 @@ use std::task::{Context, Poll, Waker};
 use crate::call::CallResponseMessage;
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
+use crate::stream::StreamEventMessage;
 use crate::task::TaskContext;
 
 /// Run a future to completion on the current task thread.
@@ -31,8 +32,8 @@ where
     }
 }
 
-/// Run a handler future while routing queued call responses to registered
-/// waiters.
+/// Run a handler future while routing queued call responses and stream events to
+/// registered waiters.
 ///
 /// Ordinary messages received while the current handler is suspended are deferred
 /// and processed by the outer task loop after the current handler completes.
@@ -43,7 +44,7 @@ pub fn block_on_task<M, F, const N: usize>(
     deferred: &mut VecDeque<M>,
 ) -> F::Output
 where
-    M: TaskMessage + CallResponseMessage,
+    M: TaskMessage + CallResponseMessage + StreamEventMessage,
     F: Future,
 {
     let waker = Waker::noop();
@@ -58,7 +59,12 @@ where
                     Ok(response) => {
                         let _ = ctx.deliver_call_response(response);
                     }
-                    Err(message) => deferred.push_back(message),
+                    Err(message) => match message.into_stream_event() {
+                        Ok(event) => {
+                            let _ = ctx.deliver_stream_event(event);
+                        }
+                        Err(message) => deferred.push_back(message),
+                    },
                 },
                 Err(_) => std::thread::yield_now(),
             },
