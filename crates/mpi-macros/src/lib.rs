@@ -367,6 +367,14 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
+    variants.push(quote! { __StreamPull { session_id: ::mpi::SessionId, credit: u32 } });
+    placements.push(quote! { Self::__StreamPull { .. } => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! {
+        #message_ident::__StreamPull { session_id, credit } => {
+            ctx.inner.record_stream_pull(::mpi::StreamPull::new(session_id, credit));
+        }
+    });
+
     variants.push(quote! {
         __StreamEvent {
             session_id: ::mpi::SessionId,
@@ -649,6 +657,21 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::mpi::StreamPullMessage for #message_ident {
+            fn stream_pull(session_id: ::mpi::SessionId, credit: u32) -> Self {
+                Self::__StreamPull { session_id, credit }
+            }
+
+            fn into_stream_pull(self) -> Result<::mpi::StreamPull, Self> {
+                match self {
+                    Self::__StreamPull { session_id, credit } => {
+                        Ok(::mpi::StreamPull::new(session_id, credit))
+                    }
+                    other => Err(other),
+                }
+            }
+        }
+
         impl ::mpi::StreamEventMessage for #message_ident {
             fn stream_event(
                 session_id: ::mpi::SessionId,
@@ -672,6 +695,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl ::mpi::StreamControl for #stream_control_ident {
+            fn try_pull(&self, session_id: ::mpi::SessionId, credit: u32) -> Result<(), ::mpi::SendError> {
+                self.inner.send_message(#message_ident::__StreamPull { session_id, credit })
+            }
+
             fn try_cancel(&self, session_id: ::mpi::SessionId) -> Result<(), ::mpi::SendError> {
                 self.inner.send_message(#message_ident::__StreamCancel { session_id })
             }
