@@ -611,7 +611,7 @@ where
     let (sender, receiver) = std::sync::mpsc::channel();
     (
         sender,
-        SuspendedMessageStream::new_with_on_drop(session_id, control, receiver),
+        SuspendedMessageStream::new_with_on_drop(session_id, control, receiver, on_drop),
     )
 }
 
