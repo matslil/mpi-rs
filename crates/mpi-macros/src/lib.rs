@@ -418,8 +418,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 handle_methods.push(quote! {
                     pub fn #method_ident(
                         &self,
-                        ctx: &mut impl ::mpi::TaskScope
-                        #(, #arg_idents: #arg_tys)*
+                        ctx: &mut impl ::mpi::TaskScope,
+                        #(#arg_idents: #arg_tys),*
                     ) -> ::mpi::SuspendedCall<#reply> {
                         let (session_id, reply, future) = ctx.begin_call::<#reply>();
                         match self.inner.send_message(#message_ident::#variant_ident {
@@ -562,7 +562,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl ::mpi::TaskScope for #context_ident {
             fn begin_call<T: Send + 'static>(
                 &mut self,
-            ) -> (::mpi::SessionId, ::mpi::SyncReplySender<T>, ::mpi::SuspendedCall<T>) {
+            ) -> (
+                ::mpi::SessionId,
+                ::mpi::SyncReplySender<T>,
+                ::mpi::SuspendedCall<T>,
+            ) {
                 self.inner.begin_call::<T>()
             }
         }
