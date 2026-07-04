@@ -63,6 +63,16 @@ impl Client {
         self.observed = counter.get(ctx).await.unwrap();
     }
 
+    #[event]
+    async fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+        let mut stream = producer.numbers(ctx, 4).unwrap();
+        let mut sum = 0;
+        while let Some(value) = stream.next(ctx).await.unwrap() {
+            sum += value;
+        }
+        self.observed = sum;
+    }
+
     #[event(priority)]
     async fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
         self.observed += amount;
@@ -207,6 +217,20 @@ fn req_101_req_102_req_103_generated_stream_hides_batches() {
 
     producer.stop_blocking().unwrap();
     runtime.join().unwrap();
+}
+
+#[test]
+fn req_101_req_103_task_internal_stream_next_await_hides_batches() {
+    let (producer, producer_runtime) = Producer::spawn(Producer).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.sum_numbers_blocking(producer.clone()).unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 6);
+
+    client.stop_blocking().unwrap();
+    producer.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    producer_runtime.join().unwrap();
 }
 
 #[test]
