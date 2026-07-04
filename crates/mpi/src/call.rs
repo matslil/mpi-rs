@@ -20,6 +20,8 @@ pub struct SuspendedCall<T> {
     failed: Option<CallError>,
 }
 
+impl<T> Unpin for SuspendedCall<T> {}
+
 impl<T> SuspendedCall<T> {
     /// Create a suspended call future for an active session.
     #[must_use]
@@ -51,8 +53,8 @@ impl<T> SuspendedCall<T> {
 impl<T> Future for SuspendedCall<T> {
     type Output = Result<T, CallError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.as_mut().get_mut();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
 
         if let Some(error) = this.failed.take() {
             return Poll::Ready(Err(error));
@@ -91,7 +93,9 @@ impl<T> Future for SuspendedCall<T> {
 
 /// Create the reply sender and suspended future for one task-internal call.
 #[must_use]
-pub fn suspended_call_channel<T>(session_id: SessionId) -> (SyncReplySender<T>, SuspendedCall<T>) {
+pub fn suspended_call_channel<T>(
+    session_id: SessionId,
+) -> (SyncReplySender<T>, SuspendedCall<T>) {
     let (sender, receiver) = sync_reply_channel();
     (sender, SuspendedCall::pending(session_id, receiver))
 }
