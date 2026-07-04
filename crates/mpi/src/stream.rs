@@ -593,3 +593,67 @@ impl<T, E> BlockingMessageStream<T, E> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingControl {
+        pulls: Mutex<Vec<StreamPull>>,
+        cancels: Mutex<Vec<SessionId>>,
+    }
+
+    impl RecordingControl {
+        fn pulls(&self) -> Vec<StreamPull> {
+            self.pulls.lock().expect("pulls lock poisoned").clone()
+        }
+    }
+
+    impl StreamControl for RecordingControl {
+        fn try_pull(&self, session_id: SessionId, credit: u32) -> Result<(), SendError> {
+            self.pulls
+                .lock()
+                .expect("pulls lock poisoned")
+                .push(StreamPull::new(session_id, credit));
+            Ok(())
+        }
+
+        fn try_cancel(&self, session_id: SessionId) -> Result<(), SendError> {
+            self.cancels
+                .lock()
+                .expect("cancels lock poisoned")
+                .push(session_id);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn stream_consumer_grants_credit_on_create_and_item_consumption() {
+        let session_id = SessionId::new(crate::EndpointId(7), 3);
+        let control = Arc::new(RecordingControl::default());
+        let mut stream = MessageStream::<u32, String>::new(session_id, control.clone());
+
+        assert_eq!(control.pulls(), vec![StreamPull::new(session_id, 1)]);
+
+        assert_eq!(
+            stream.next_from_event(StreamEvent::batch(session_id, vec![10, 11])),
+            Ok(Some(10))
+        );
+        assert_eq!(
+            control.pulls(),
+            vec![StreamPull::new(session_id, 1), StreamPull::new(session_id, 1)]
+        );
+
+        assert_eq!(stream.next_buffered(), Ok(Some(11)));
+        assert_eq!(
+            control.pulls(),
+            vec![
+                StreamPull::new(session_id, 1),
+                StreamPull::new(session_id, 1),
+                StreamPull::new(session_id, 1)
+            ]
+        );
+    }
+}
