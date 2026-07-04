@@ -38,6 +38,8 @@ pub trait CallResponseMessage: Sized {
 /// Owned task-local call session state returned by a task context.
 pub type CallSession<T> = (SessionId, SyncReplySender<T>, SuspendedCall<T>);
 
+type CallOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
+
 /// Future returned by a task-internal call.
 ///
 /// The task context allocates the `SessionId` and constructs this owned future
@@ -48,6 +50,7 @@ pub struct SuspendedCall<T> {
     session_id: Option<SessionId>,
     receiver: Option<Receiver<Response<T>>>,
     failed: Option<CallError>,
+    on_drop: Option<CallOnDrop>,
 }
 
 impl<T> SuspendedCall<T> {
@@ -58,6 +61,25 @@ impl<T> SuspendedCall<T> {
             session_id: Some(session_id),
             receiver: Some(receiver),
             failed: None,
+            on_drop: None,
+        }
+    }
+
+    /// Create a suspended call future for an active session with a drop hook.
+    #[must_use]
+    pub fn pending_with_on_drop<F>(
+        session_id: SessionId,
+        receiver: Receiver<Response<T>>,
+        on_drop: F,
+    ) -> Self
+    where
+        F: FnOnce(SessionId) + 'static,
+    {
+        Self {
+            session_id: Some(session_id),
+            receiver: Some(receiver),
+            failed: None,
+            on_drop: Some(Box::new(on_drop)),
         }
     }
 
@@ -68,6 +90,7 @@ impl<T> SuspendedCall<T> {
             session_id: None,
             receiver: None,
             failed: Some(error),
+            on_drop: None,
         }
     }
 
@@ -75,6 +98,10 @@ impl<T> SuspendedCall<T> {
     #[must_use]
     pub const fn session_id(&self) -> Option<SessionId> {
         self.session_id
+    }
+
+    fn disarm_on_drop(&mut self) {
+        self.on_drop = None;
     }
 }
 
@@ -104,6 +131,7 @@ impl<T> Future for SuspendedCall<T> {
                 );
                 this.session_id = None;
                 this.receiver = None;
+                this.disarm_on_drop();
                 Poll::Ready(Ok(response.value))
             }
             Err(TryRecvError::Empty) => {
@@ -113,8 +141,17 @@ impl<T> Future for SuspendedCall<T> {
             Err(TryRecvError::Disconnected) => {
                 this.session_id = None;
                 this.receiver = None;
+                this.disarm_on_drop();
                 Poll::Ready(Err(CallError::ReplyDisconnected))
             }
+        }
+    }
+}
+
+impl<T> Drop for SuspendedCall<T> {
+    fn drop(&mut self) {
+        if let (Some(session_id), Some(on_drop)) = (self.session_id.take(), self.on_drop.take()) {
+            on_drop(session_id);
         }
     }
 }
@@ -135,4 +172,21 @@ pub fn suspended_call_channel<T: Send + 'static>(session_id: SessionId) -> CallS
 pub fn suspended_call_waiter<T>(session_id: SessionId) -> (Sender<Response<T>>, SuspendedCall<T>) {
     let (sender, receiver) = std::sync::mpsc::channel();
     (sender, SuspendedCall::pending(session_id, receiver))
+}
+
+/// Create the waiter sender and suspended future for one queued task-internal
+/// call with a hook for dropped futures.
+#[must_use]
+pub(crate) fn suspended_call_waiter_with_on_drop<T, F>(
+    session_id: SessionId,
+    on_drop: F,
+) -> (Sender<Response<T>>, SuspendedCall<T>)
+where
+    F: FnOnce(SessionId) + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    (
+        sender,
+        SuspendedCall::pending_with_on_drop(session_id, receiver, on_drop),
+    )
 }
