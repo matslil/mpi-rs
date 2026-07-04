@@ -7,5 +7,7 @@ use crate::session::{SessionId, SyncReplySender};
 pub trait TaskScope {
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.
-    fn begin_call<T: Send + 'static>(&mut self) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>);
+    fn begin_call<T: Send + 'static>(
+        &mut self,
+    ) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>);
 }
