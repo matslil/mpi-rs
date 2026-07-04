@@ -23,7 +23,8 @@ pub use session::{
     sync_reply_channel,
 };
 pub use stream::{
-    BlockingMessageStream, BoxStreamSink, MessageStream, StreamCancel, StreamControl, StreamEvent,
-    StreamEventSink, StreamPull, StreamSink,
+    BlockingMessageStream, BoxStreamSink, MessageStream, QueuedStreamEvent, StreamCancel,
+    StreamControl, StreamEvent, StreamEventMessage, StreamEventSender, StreamEventSink, StreamPull,
+    StreamSession, StreamSink, SuspendedMessageStream, SuspendedStreamNext, suspended_stream_waiter,
 };
 pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
