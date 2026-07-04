@@ -20,8 +20,6 @@ pub struct SuspendedCall<T> {
     failed: Option<CallError>,
 }
 
-impl<T> Unpin for SuspendedCall<T> {}
-
 impl<T> SuspendedCall<T> {
     /// Create a suspended call future for an active session.
     #[must_use]
