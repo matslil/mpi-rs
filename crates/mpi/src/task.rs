@@ -21,7 +21,7 @@ use crate::session::{
 };
 use crate::stream::{
     QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
-    StreamPull, StreamPullMessage, StreamSession, suspended_stream_waiter_with_on_drop,
+    StreamPull, StreamSession, suspended_stream_waiter_with_on_drop,
 };
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
@@ -438,6 +438,7 @@ mod tests {
     use super::*;
     use crate::call::CallReleaseMessage;
     use crate::message::MessagePlacement;
+    use crate::stream::StreamPullMessage;
 
     enum TestMessage {
         CallResponse {
