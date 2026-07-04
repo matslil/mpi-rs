@@ -134,17 +134,27 @@ where
     }
 }
 
-impl<T, E, S> StreamEventSink<T, E> for Box<S>
-where
-    S: StreamEventSink<T, E> + ?Sized,
-{
+/// Concrete boxed stream event sink used by generated stream handlers.
+pub struct BoxedStreamEventSink<T, E> {
+    inner: Box<dyn StreamEventSink<T, E> + Send>,
+}
+
+impl<T, E> BoxedStreamEventSink<T, E> {
+    /// Wrap a boxed stream event sink.
+    #[must_use]
+    pub fn new(inner: Box<dyn StreamEventSink<T, E> + Send>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T, E> StreamEventSink<T, E> for BoxedStreamEventSink<T, E> {
     fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
-        (**self).send_event(event)
+        self.inner.send_event(event)
     }
 }
 
 /// Boxed producer-side stream sink used by generated stream handlers.
-pub type BoxStreamSink<T, E> = StreamSink<T, E, Box<dyn StreamEventSink<T, E> + Send>>;
+pub type BoxStreamSink<T, E> = StreamSink<T, E, BoxedStreamEventSink<T, E>>;
 
 /// Producer-side stream helper that batches items and emits end/error events.
 pub struct StreamSink<T, E, S>
