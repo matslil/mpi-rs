@@ -643,7 +643,10 @@ mod tests {
         );
         assert_eq!(
             control.pulls(),
-            vec![StreamPull::new(session_id, 1), StreamPull::new(session_id, 1)]
+            vec![
+                StreamPull::new(session_id, 1),
+                StreamPull::new(session_id, 1)
+            ]
         );
 
         assert_eq!(stream.next_buffered(), Ok(Some(11)));
