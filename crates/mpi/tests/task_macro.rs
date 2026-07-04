@@ -56,6 +56,18 @@ impl Client {
         self.observed = first.await.unwrap() + second.await.unwrap();
     }
 
+    #[event]
+    async fn ask_counter_then_mark(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        let self_handle = ctx.self_handle();
+        self_handle.mark(ctx, 1).unwrap();
+        self.observed = counter.get(ctx).await.unwrap();
+    }
+
+    #[event]
+    async fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
+        self.observed += amount;
+    }
+
     #[call(reply = u32)]
     async fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
         self.observed
@@ -159,6 +171,20 @@ fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
 
     client.ask_counter_twice_blocking(counter.clone()).unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 42);
+
+    client.stop_blocking().unwrap();
+    counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() {
+    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 31).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.ask_counter_then_mark_blocking(counter.clone()).unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 32);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();
