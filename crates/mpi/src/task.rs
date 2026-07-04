@@ -1,13 +1,16 @@
 //! Task handles, task context, and minimal spawn support.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
+use crate::call::{SuspendedCall, suspended_call_channel};
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
-use crate::session::{EndpointId, Response, SessionId, SessionIdAllocator, sync_reply_channel};
+use crate::session::{EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel};
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -84,13 +87,13 @@ where
     /// Send a synchronous request from code that is outside the task model and
     /// block until exactly one typed response is returned.
     ///
-    /// This is intentionally distinct from future task-internal call APIs. It
-    /// may block the current operating-system thread because external callers do
-    /// not have a task queue or task-local receive state.
+    /// This is intentionally distinct from task-internal call APIs. It may block
+    /// the current operating-system thread because external callers do not have a
+    /// task queue or task-local receive state.
     pub fn call_blocking<R, F>(&self, make_message: F) -> Result<Response<R>, CallError>
     where
         R: Send + 'static,
-        F: FnOnce(SessionId, crate::SyncReplySender<R>) -> M,
+        F: FnOnce(SessionId, SyncReplySender<R>) -> M,
     {
         let session_id = self.next_external_session_id();
         let (reply_tx, reply_rx) = sync_reply_channel();
@@ -104,14 +107,38 @@ where
     }
 }
 
-/// Generated handler context state shared by task handlers.
-pub struct TaskContext<M, const N: usize>
+struct TaskContextState<M, const N: usize>
 where
     M: TaskMessage,
 {
     self_handle: TaskHandle<M, N>,
     session_ids: SessionIdAllocator,
     stopped: bool,
+}
+
+/// Generated handler context state shared by task handlers.
+///
+/// The context uses task-local interior mutability. Generated handlers and the
+/// main task loop are still single-threaded, but suspended handler futures may
+/// retain owned capabilities derived from the context while the loop continues
+/// to manage sessions and control state. Borrow violations indicate a runtime
+/// implementation bug and are allowed to panic.
+pub struct TaskContext<M, const N: usize>
+where
+    M: TaskMessage,
+{
+    inner: Rc<RefCell<TaskContextState<M, N>>>,
+}
+
+impl<M, const N: usize> Clone for TaskContext<M, N>
+where
+    M: TaskMessage,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
 }
 
 impl<M, const N: usize> TaskContext<M, N>
@@ -123,33 +150,43 @@ where
     pub fn new(self_handle: TaskHandle<M, N>) -> Self {
         let endpoint = self_handle.endpoint();
         Self {
-            self_handle,
-            session_ids: SessionIdAllocator::new(endpoint),
-            stopped: false,
+            inner: Rc::new(RefCell::new(TaskContextState {
+                self_handle,
+                session_ids: SessionIdAllocator::new(endpoint),
+                stopped: false,
+            })),
         }
     }
 
-    /// Return this task's own handle.
+    /// Return a clone of this task's own handle.
     #[must_use]
-    pub const fn self_handle(&self) -> &TaskHandle<M, N> {
-        &self.self_handle
+    pub fn self_handle(&self) -> TaskHandle<M, N> {
+        self.inner.borrow().self_handle.clone()
     }
 
     /// Allocate the next task-local session ID.
-    pub fn next_session_id(&mut self) -> SessionId {
-        self.session_ids.next_session_id()
+    pub fn next_session_id(&self) -> SessionId {
+        self.inner.borrow_mut().session_ids.next_session_id()
+    }
+
+    /// Allocate one task-local call session and its owned suspended future.
+    pub fn begin_call<T: Send + 'static>(&self) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>) {
+        let session_id = self.next_session_id();
+        let (reply, future) = suspended_call_channel(session_id);
+        (session_id, reply, future)
     }
 
     /// Request that the task dispatch loop stops.
-    pub fn stop(&mut self) {
-        self.stopped = true;
-        self.self_handle.close();
+    pub fn stop(&self) {
+        let mut state = self.inner.borrow_mut();
+        state.stopped = true;
+        state.self_handle.close();
     }
 
     /// Return whether the task has been asked to stop.
     #[must_use]
-    pub const fn is_stopped(&self) -> bool {
-        self.stopped
+    pub fn is_stopped(&self) -> bool {
+        self.inner.borrow().stopped
     }
 }
 
