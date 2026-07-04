@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crate::call::{SuspendedCall, suspended_call_channel};
+use crate::call::{CallSession, suspended_call_channel};
 use crate::error::{CallError, SendError};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
@@ -172,12 +172,8 @@ where
     }
 
     /// Allocate one task-local call session and its owned suspended future.
-    pub fn begin_call<T: Send + 'static>(
-        &self,
-    ) -> (SessionId, SyncReplySender<T>, SuspendedCall<T>) {
-        let session_id = self.next_session_id();
-        let (reply, future) = suspended_call_channel(session_id);
-        (session_id, reply, future)
+    pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
+        suspended_call_channel(self.next_session_id())
     }
 
     /// Request that the task dispatch loop stops.
