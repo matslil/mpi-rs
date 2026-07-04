@@ -14,6 +14,8 @@ use crate::message::HasSessionId;
 use crate::scope::TaskScope;
 use crate::session::SessionId;
 
+const STREAM_PULL_CREDIT: u32 = 1;
+
 /// Event sent from a stream producer to a stream consumer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamEvent<T, E> {
@@ -129,6 +131,15 @@ impl HasSessionId for StreamPull {
     }
 }
 
+/// Message enums that can carry queued stream pull control.
+pub trait StreamPullMessage: Sized {
+    /// Wrap stream pull control into this task's message enum.
+    fn stream_pull(session_id: SessionId, credit: u32) -> Self;
+
+    /// Extract stream pull control from this message, if it is one.
+    fn into_stream_pull(self) -> Result<StreamPull, Self>;
+}
+
 /// Hidden stream cancel control message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamCancel {
@@ -150,8 +161,11 @@ impl HasSessionId for StreamCancel {
     }
 }
 
-/// Sends cancellation for a live stream.
+/// Sends stream lifecycle control for a live stream.
 pub trait StreamControl: Send + Sync + 'static {
+    /// Try to grant additional item credit to a stream producer.
+    fn try_pull(&self, session_id: SessionId, credit: u32) -> Result<(), SendError>;
+
     /// Try to cancel a stream session.
     fn try_cancel(&self, session_id: SessionId) -> Result<(), SendError>;
 }
@@ -290,16 +304,18 @@ pub struct MessageStream<T, E> {
 }
 
 impl<T, E> MessageStream<T, E> {
-    /// Construct a stream object.
+    /// Construct a stream object and grant the producer initial item credit.
     #[must_use]
     pub fn new(session_id: SessionId, control: Arc<dyn StreamControl>) -> Self {
-        Self {
+        let stream = Self {
             session_id,
             control,
             buffer: VecDeque::new(),
             finished: false,
             _error: PhantomData,
-        }
+        };
+        stream.grant_one_credit();
+        stream
     }
 
     /// Return this stream's logical session identifier.
@@ -314,12 +330,17 @@ impl<T, E> MessageStream<T, E> {
         self.finished
     }
 
+    fn grant_one_credit(&self) {
+        let _ = self.control.try_pull(self.session_id, STREAM_PULL_CREDIT);
+    }
+
     /// Consume one incoming stream event and return at most one item.
     ///
     /// This is the synchronous core of the future `next(ctx).await` API. It
     /// drains the local buffer before using another incoming event.
     pub fn next_from_event(&mut self, event: StreamEvent<T, E>) -> Result<Option<T>, E> {
         if let Some(value) = self.buffer.pop_front() {
+            self.grant_one_credit();
             return Ok(Some(value));
         }
 
@@ -331,7 +352,11 @@ impl<T, E> MessageStream<T, E> {
             StreamEvent::Batch { session_id, values } => {
                 assert_eq!(session_id, self.session_id, "stream event session mismatch");
                 self.buffer.extend(values);
-                Ok(self.buffer.pop_front())
+                let value = self.buffer.pop_front();
+                if value.is_some() {
+                    self.grant_one_credit();
+                }
+                Ok(value)
             }
             StreamEvent::End { session_id } => {
                 assert_eq!(session_id, self.session_id, "stream event session mismatch");
@@ -349,6 +374,7 @@ impl<T, E> MessageStream<T, E> {
     /// Return the next buffered item, without consuming a new event.
     pub fn next_buffered(&mut self) -> Result<Option<T>, E> {
         if let Some(value) = self.buffer.pop_front() {
+            self.grant_one_credit();
             return Ok(Some(value));
         }
 
