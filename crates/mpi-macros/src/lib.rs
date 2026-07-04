@@ -43,6 +43,53 @@ impl Parse for CallArgs {
     }
 }
 
+struct StreamArgs {
+    item: Type,
+    error: Type,
+    batch_size: TokenStream2,
+}
+
+impl Parse for StreamArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut item = None;
+        let mut error = None;
+        let mut batch_size = None;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            if key == "item" {
+                item = Some(input.parse()?);
+            } else if key == "error" {
+                error = Some(input.parse()?);
+            } else if key == "batch_size" {
+                let value: syn::Expr = input.parse()?;
+                batch_size = Some(value.into_token_stream());
+            } else {
+                return Err(syn::Error::new_spanned(
+                    key,
+                    "expected `item`, `error`, or `batch_size`",
+                ));
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        let item = item.ok_or_else(|| input.error("missing `item` stream attribute"))?;
+        let error = error.ok_or_else(|| input.error("missing `error` stream attribute"))?;
+        let batch_size = batch_size.unwrap_or_else(|| quote! { 64usize });
+
+        Ok(Self {
+            item,
+            error,
+            batch_size,
+        })
+    }
+}
+
 #[derive(Clone)]
 struct HandlerArg {
     ident: Ident,
@@ -53,7 +100,11 @@ enum HandlerKind {
     Start,
     Event { priority: bool },
     Call { reply: Box<Type> },
-    Stream,
+    Stream {
+        item: Box<Type>,
+        error: Box<Type>,
+        batch_size: TokenStream2,
+    },
 }
 
 struct Handler {
@@ -103,7 +154,14 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
             "call" => HandlerKind::Call {
                 reply: Box::new(attr.parse_args::<CallArgs>()?.reply),
             },
-            "stream" => HandlerKind::Stream,
+            "stream" => {
+                let args = attr.parse_args::<StreamArgs>()?;
+                HandlerKind::Stream {
+                    item: Box::new(args.item),
+                    error: Box::new(args.error),
+                    batch_size: args.batch_size,
+                }
+            }
             _ => unreachable!(),
         });
     }
@@ -117,7 +175,7 @@ fn strip_handler_attrs(method: &mut ImplItemFn) {
         .retain(|attr| special_attr_name(attr).is_none());
 }
 
-fn payload_args(method: &ImplItemFn) -> syn::Result<Vec<HandlerArg>> {
+fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<HandlerArg>> {
     let mut inputs = method.sig.inputs.iter();
 
     match inputs.next() {
@@ -137,6 +195,25 @@ fn payload_args(method: &ImplItemFn) -> syn::Result<Vec<HandlerArg>> {
                 &method.sig,
                 "handler must take a context parameter after `self`",
             ));
+        }
+    }
+
+    if skip_stream_sink {
+        match inputs.next() {
+            Some(FnArg::Typed(PatType { pat, .. })) => {
+                if !matches!(&**pat, Pat::Ident(_)) {
+                    return Err(syn::Error::new_spanned(
+                        pat,
+                        "stream sink parameter must use a simple identifier",
+                    ));
+                }
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "stream handler must take a stream sink parameter after the context",
+                ));
+            }
         }
     }
 
@@ -204,6 +281,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let message_ident = format_ident!("{}Message", task_ident);
     let handle_ident = format_ident!("{}Handle", task_ident);
     let context_ident = format_ident!("{}Context", task_ident);
+    let stream_control_ident = format_ident!("{}StreamControl", task_ident);
     let queue_size = args.queue_size;
 
     let mut handlers = Vec::new();
@@ -218,13 +296,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
 
                 if let Some(kind) = kind {
-                    if matches!(kind, HandlerKind::Stream) {
-                        return compile_error(syn::Error::new_spanned(
-                            method.sig.ident,
-                            "#[stream] task macro generation is not implemented yet",
-                        ));
-                    }
-                    let args = match payload_args(&method) {
+                    let skip_stream_sink = matches!(kind, HandlerKind::Stream { .. });
+                    let args = match payload_args(&method, skip_stream_sink) {
                         Ok(args) => args,
                         Err(error) => return compile_error(error),
                     };
@@ -263,6 +336,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut handle_methods = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
+
+    variants.push(quote! { __StreamCancel { session_id: ::mpi::SessionId } });
+    placements.push(quote! { Self::__StreamCancel { .. } => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! { #message_ident::__StreamCancel { session_id: _ } => {} });
 
     for handler in &handlers {
         let method_ident = &handler.method.sig.ident;
@@ -341,7 +418,69 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
-            HandlerKind::Stream => unreachable!(),
+            HandlerKind::Stream {
+                item,
+                error,
+                batch_size,
+            } => {
+                let item = &**item;
+                let error = &**error;
+                let blocking_method = format_ident!("{}_blocking", method_ident);
+                variants.push(quote! {
+                    #variant_ident {
+                        session_id: ::mpi::SessionId,
+                        events: ::std::sync::mpsc::Sender<::mpi::StreamEvent<#item, #error>>
+                        #(, #arg_idents: #arg_tys)*
+                    }
+                });
+                placements.push(quote! {
+                    Self::#variant_ident { .. } => ::mpi::MessagePlacement::Normal
+                });
+                dispatch_arms.push(quote! {
+                    #message_ident::#variant_ident { session_id, events #(, #arg_idents)* } => {
+                        let mut out = ::mpi::StreamSink::new(
+                            session_id,
+                            #batch_size,
+                            Box::new(move |event: ::mpi::StreamEvent<#item, #error>| {
+                                events
+                                    .send(event)
+                                    .map_err(|_| ::mpi::SendError::TaskStopped)
+                            }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
+                        );
+                        let result = ::mpi::block_on(state.#method_ident(
+                            &mut ctx,
+                            &mut out,
+                            #(#arg_idents),*
+                        ));
+                        match result {
+                            Ok(()) => {
+                                let _ = out.finish();
+                            }
+                            Err(error) => {
+                                let _ = out.fail(error);
+                            }
+                        }
+                    }
+                });
+                handle_methods.push(quote! {
+                    pub fn #blocking_method(
+                        &self,
+                        #(#arg_idents: #arg_tys),*
+                    ) -> Result<::mpi::BlockingMessageStream<#item, #error>, ::mpi::SendError> {
+                        let session_id = self.inner.next_external_session_id();
+                        let (events, receiver) = ::std::sync::mpsc::channel::<::mpi::StreamEvent<#item, #error>>();
+                        self.inner.send_message(#message_ident::#variant_ident {
+                            session_id,
+                            events
+                            #(, #arg_idents)*
+                        })?;
+                        let control = ::std::sync::Arc::new(#stream_control_ident {
+                            inner: self.inner.clone(),
+                        });
+                        Ok(::mpi::BlockingMessageStream::new(session_id, control, receiver))
+                    }
+                });
+            }
         }
     }
 
@@ -361,6 +500,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 match self {
                     #(#placements),*
                 }
+            }
+        }
+
+        struct #stream_control_ident {
+            inner: ::mpi::TaskHandle<#message_ident, #queue_size>,
+        }
+
+        impl ::mpi::StreamControl for #stream_control_ident {
+            fn try_cancel(&self, session_id: ::mpi::SessionId) -> Result<(), ::mpi::SendError> {
+                self.inner.send_message(#message_ident::__StreamCancel { session_id })
             }
         }
 
