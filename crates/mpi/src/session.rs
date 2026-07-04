@@ -3,6 +3,7 @@
 use core::fmt;
 use std::sync::mpsc;
 
+use crate::error::SendError;
 use crate::message::HasSessionId;
 
 /// Identifies the task or external endpoint that allocated a session.
@@ -91,6 +92,12 @@ impl<T> Response<T> {
         Self { session_id, value }
     }
 
+    /// Return the response session ID.
+    #[must_use]
+    pub const fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
     /// Consume the response and return the payload.
     pub fn into_value(self) -> T {
         self.value
@@ -103,14 +110,47 @@ impl<T> HasSessionId for Response<T> {
     }
 }
 
-/// Sender endpoint used by synchronous call handlers to return a typed reply.
-pub type SyncReplySender<T> = mpsc::Sender<Response<T>>;
+type ReplySendFn<T> = Box<dyn FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static>;
+
+/// Sender endpoint used by call handlers to return one typed reply.
+///
+/// The sender is intentionally a one-shot abstraction. External calls back it
+/// with an `mpsc` channel; task-internal suspended calls back it with a queued
+/// response message to the caller task.
+pub struct SyncReplySender<T> {
+    send: Option<ReplySendFn<T>>,
+}
+
+impl<T> SyncReplySender<T> {
+    /// Create a reply sender from a one-shot send function.
+    #[must_use]
+    pub fn new<F>(send: F) -> Self
+    where
+        F: FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static,
+    {
+        Self {
+            send: Some(Box::new(send)),
+        }
+    }
+
+    /// Send the reply payload.
+    pub fn send(mut self, response: Response<T>) -> Result<(), SendError> {
+        let send = self.send.take().expect("reply sender used after send");
+        send(response)
+    }
+}
 
 /// Receiver endpoint used by callers waiting for one typed reply.
 pub type SyncReplyReceiver<T> = mpsc::Receiver<Response<T>>;
 
-/// Create a synchronous reply channel.
+/// Create a synchronous reply channel for external blocking calls.
 #[must_use]
-pub fn sync_reply_channel<T>() -> (SyncReplySender<T>, SyncReplyReceiver<T>) {
-    mpsc::channel()
+pub fn sync_reply_channel<T: Send + 'static>() -> (SyncReplySender<T>, SyncReplyReceiver<T>) {
+    let (sender, receiver) = mpsc::channel();
+    (
+        SyncReplySender::new(move |response| {
+            sender.send(response).map_err(|_| SendError::TaskStopped)
+        }),
+        receiver,
+    )
 }

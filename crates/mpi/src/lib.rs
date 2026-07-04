@@ -8,12 +8,15 @@ pub mod session;
 pub mod stream;
 pub mod task;
 
-pub use call::{CallSession, SuspendedCall, suspended_call_channel};
+pub use call::{
+    CallResponseMessage, CallSession, QueuedCallResponse, SuspendedCall, suspended_call_channel,
+    suspended_call_waiter,
+};
 pub use error::{CallError, RecvError, SendError};
 pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
-pub use runtime::block_on;
+pub use runtime::{block_on, block_on_task};
 pub use scope::TaskScope;
 pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
