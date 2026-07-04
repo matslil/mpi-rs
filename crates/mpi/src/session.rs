@@ -110,13 +110,15 @@ impl<T> HasSessionId for Response<T> {
     }
 }
 
+type ReplySendFn<T> = Box<dyn FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static>;
+
 /// Sender endpoint used by call handlers to return one typed reply.
 ///
 /// The sender is intentionally a one-shot abstraction. External calls back it
 /// with an `mpsc` channel; task-internal suspended calls back it with a queued
 /// response message to the caller task.
 pub struct SyncReplySender<T> {
-    send: Option<Box<dyn FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static>>,
+    send: Option<ReplySendFn<T>>,
 }
 
 impl<T> SyncReplySender<T> {
