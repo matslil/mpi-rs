@@ -1,16 +1,8 @@
-//! Message-passing runtime primitives for `mpi-rs`.
-//!
-//! This crate contains the initial verifiable runtime slice for the `mpi-rs`
-//! systems-engineering baseline. It deliberately focuses on stable primitives:
-//! message placement, bounded task queues, task handles, start-message spawning,
-//! session identifiers, typed responses, stream protocol events, and stream
-//! cancellation. Full task macro code generation is a later implementation
-//! phase.
-
 pub mod error;
 pub mod message;
 pub mod queue;
 pub mod runtime;
+pub mod scope;
 pub mod session;
 pub mod stream;
 pub mod task;
@@ -20,6 +12,7 @@ pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
 pub use runtime::block_on;
+pub use scope::TaskScope;
 pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
     sync_reply_channel,
@@ -28,4 +21,4 @@ pub use stream::{
     BlockingMessageStream, BoxStreamSink, MessageStream, StreamCancel, StreamControl, StreamEvent,
     StreamEventSink, StreamPull, StreamSink,
 };
-pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, TaskScope, spawn_task};
+pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
