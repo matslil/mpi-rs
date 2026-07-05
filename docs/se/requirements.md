@@ -378,6 +378,16 @@ Verification: test
 
 Status: approved
 
+### REQ-064: Context-returning suspension primitive
+
+Task-local suspended handlers shall be implemented using a context-returning suspension primitive that does not retain mutable borrows of task state or task context while suspended.
+
+Source: SN-015, SN-021, SN-042
+
+Verification: test
+
+Status: approved
+
 ## Compile-time receive check requirements
 
 ### REQ-070: Response receive declaration
@@ -739,6 +749,16 @@ Status: approved
 The repository should organize runtime primitives and macros along the conceptual crate structure described in `docs/se/architecture.md`, unless implementation evidence justifies a different structure.
 
 Source: SN-021, SN-022
+
+Verification: inspection
+
+Status: approved
+
+### REQ-152: Reusable ctx-future crate
+
+The context-returning suspension primitive shall be provided by a separate workspace crate named `ctx-future` that is usable without depending on `mpi-rs`.
+
+Source: Human maintainer decision, SN-021, SN-022
 
 Verification: inspection
 

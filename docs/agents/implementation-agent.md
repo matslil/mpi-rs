@@ -15,6 +15,7 @@ The agent shall read:
 - `docs/se/stakeholders.md` when the change affects needs or scope
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
+- `docs/se/ctx-future.md` when changing context-returning suspension or the `ctx-future` crate
 - `docs/se/interfaces.md`
 - `docs/se/glossary.md`
 - `docs/se/traceability.md`

@@ -29,12 +29,12 @@ Use the status values from `docs/agents/process.md`:
 | SN-012 | REQ-027, REQ-028, REQ-051 | CMP-002, CMP-012 | INT-020, INT-021, INT-022 | VAL-001, VAL-003 |
 | SN-013 | REQ-021, REQ-022, REQ-023, REQ-024, REQ-090, REQ-100 | CMP-009, CMP-010 | INT-013, INT-014, INT-015 | VAL-004, VAL-007 |
 | SN-014 | REQ-012, REQ-013, REQ-014 | CMP-003, ARCH-020..ARCH-024 | INT-021, INT-100 | VAL-003 |
-| SN-015 | REQ-060, REQ-061, REQ-062, REQ-113, REQ-114, REQ-121 | CMP-006, CMP-007, ARCH-077, ARCH-078 | INT-004, INT-025, INT-076, INT-092 | VAL-004, VAL-011 |
+| SN-015 | REQ-060, REQ-061, REQ-062, REQ-064, REQ-113, REQ-114, REQ-121 | CMP-006, CMP-007, CMP-015, ARCH-044, ARCH-077, ARCH-078 | INT-004, INT-025, INT-043..INT-045, INT-076, INT-092 | VAL-004, VAL-011 |
 | SN-016 | REQ-100..REQ-105, REQ-112, REQ-113, REQ-114 | ARCH-070..ARCH-078 | INT-070..INT-081 | VAL-007, VAL-009 |
 | SN-017 | REQ-106, REQ-107 | ARCH-073, ARCH-074 | INT-073, INT-074 | VAL-008 |
 | SN-020 | REQ-020..REQ-024 | glossary | docs/se/glossary.md | documentation review |
-| SN-021 | REQ-051, REQ-110, REQ-151 | CMP-001..CMP-014 | INT-010..INT-111 | review evidence |
-| SN-022 | REQ-150, REQ-151 | implementation phases | process | review evidence |
+| SN-021 | REQ-051, REQ-110, REQ-151, REQ-152 | CMP-001..CMP-015 | INT-010..INT-111 | review evidence |
+| SN-022 | REQ-150, REQ-151, REQ-152 | implementation phases, ctx-future crate structure | process | review evidence |
 | SN-023 | REQ-070, REQ-071, REQ-072 | CMP-011 | INT-040..INT-042 | VAL-006 |
 | SN-030 | VER-001..VER-005 | verification plan | docs/agents/test-agent.md | VAL-014 |
 | SN-031 | validation scenarios | validation plan | docs/agents/validation-agent.md | VAL-001..VAL-014 |
@@ -56,7 +56,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-030..REQ-035 | SN-040, SN-042 | ARCH-020..ARCH-025 | INT-016, INT-030..INT-032 | pending | test/inspection pending | VAL-010 | approved |
 | REQ-040..REQ-043 | SN-041 | ARCH-030..ARCH-032 | INT-012, INT-017 | pending | test/inspection pending | VAL-002 | approved |
 | REQ-050..REQ-053 | SN-010, SN-012, SN-021, SN-041 | CMP-006, CMP-012 | INT-010..INT-025 | pending | test/inspection pending | VAL-001, VAL-003 | approved |
-| REQ-060..REQ-063 | SN-015, SN-042 | ARCH-040..ARCH-043 | context receive API pending | pending | test/demonstration pending | VAL-004, VAL-005 | approved |
+| REQ-060..REQ-064 | SN-015, SN-021, SN-042 | ARCH-040..ARCH-044, CMP-007, CMP-015 | INT-043..INT-045, context receive API pending | pending | test/demonstration pending | VAL-004, VAL-005 | approved |
 | REQ-070..REQ-072 | SN-011, SN-023 | CMP-011 | INT-040..INT-042 | pending | compile-fail/inspection pending | VAL-006 | approved |
 | REQ-080..REQ-084 | SN-042, SN-045 | ARCH-050..ARCH-054 | INT-050..INT-052 | pending | test/inspection pending | VAL-004, VAL-005, VAL-013 | approved |
 | REQ-090..REQ-094 | SN-013, SN-042, SN-045 | ARCH-060..ARCH-064 | INT-060..INT-063 | pending | test/inspection pending | VAL-004, VAL-005, VAL-013 | approved |
@@ -64,7 +64,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-120..REQ-121 | SN-010, SN-015 | ARCH-080..ARCH-082 | INT-090..INT-092 | pending | demonstration/inspection pending | VAL-011 | approved |
 | REQ-130..REQ-131 | SN-044 | ARCH-090..ARCH-092 | INT-110..INT-111 | pending | inspection pending | VAL-012 | approved |
 | REQ-140 | SN-045 | diagnostics | diagnostics interfaces pending | pending | inspection pending | VAL-013 | approved |
-| REQ-150..REQ-151 | SN-021, SN-022 | implementation phases, crate structure | process | pending | inspection pending | review evidence | approved |
+| REQ-150..REQ-152 | SN-021, SN-022 | implementation phases, crate structure, CMP-015 | `docs/se/ctx-future.md`, workspace crate structure pending | pending | inspection pending | review evidence | approved |
 
 ## Known initial gaps
 
@@ -77,6 +77,8 @@ GAP-003: Compile-fail test framework is not yet selected.
 GAP-004: Diagnostics interfaces are intentionally deferred beyond the initial message model baseline.
 
 GAP-005: Unix signal support is later-phase work and remains deferred for validation.
+
+GAP-006: The `ctx-future` crate is documented as an approved architecture direction, but the crate and implementation links are pending until the workspace structure is updated.
 
 ## Traceability maintenance rules
 

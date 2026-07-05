@@ -46,7 +46,7 @@ OS threads and synchronization primitives
 | CMP-004 | TaskContext | Generated handler context containing self handle, session allocation, task-local receive state, and control operations. |
 | CMP-005 | TaskMessage | Trait implemented by generated task message enums to expose receiver-declared placement. |
 | CMP-006 | Dispatch loop | Receives messages, resumes matching waiters, or dispatches messages to handlers. |
-| CMP-007 | Task-local runtime | Runs async handlers and suspended continuations without blocking the task OS thread. |
+| CMP-007 | Task-local runtime | Runs generated context-returning handler continuations without blocking the task OS thread. |
 | CMP-008 | Session subsystem | Allocates and matches `SessionId` values for calls and streams. |
 | CMP-009 | Call subsystem | Sends typed call requests and typed `Response<T>` messages. |
 | CMP-010 | Stream subsystem | Sends stream requests, stream events, stream cancellation, and stream flow-control messages. |
@@ -54,6 +54,7 @@ OS threads and synchronization primitives
 | CMP-012 | Macro crate | Generates task message enums, contexts, handles, send methods, dispatch plumbing, and protocol integration. |
 | CMP-013 | Unix signal bridge | Converts POSIX signal notifications into normal Rust messages outside signal-handler context. |
 | CMP-014 | Diagnostics subsystem | Supports tracing, timeouts, deadlock/debug support, session debugging, and queue diagnostics. |
+| CMP-015 | ctx-future crate | Provides reusable context-borrowing resumable computation primitives used by the task-local runtime. |
 
 ## Suggested crate structure
 
@@ -61,6 +62,11 @@ The initial conceptual crate structure is:
 
 ```text
 crates/
+  ctx-future/
+    src/
+      lib.rs
+      future.rs
+      poll.rs
   mpi/
     src/
       lib.rs
@@ -176,6 +182,8 @@ ARCH-042: The receive loop checks suspended waiters before normal handler dispat
 
 ARCH-043: Waiter matching uses message kind and `SessionId` for protocol messages.
 
+ARCH-044: Suspended handler continuations shall not retain mutable borrows of task state or task context while suspended; any required mutable access is reacquired when the continuation is resumed.
+
 ## Session architecture
 
 `SessionId` identifies a logical interaction that can produce future messages.
@@ -275,11 +283,12 @@ Recommended order:
 2. Task handles and generated event send methods.
 3. Start message and task spawn API, with start forced to priority and guaranteed first.
 4. Generated message enums, task context types, and dispatch loops.
-5. Async handlers run by a task-local executor.
-6. Selective receive by message kind.
-7. `SessionId`, `Response<T>`, and synchronous calls.
-8. Compile-time `CanReceive<T>` checks for responses.
-9. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
-10. Stream batching and credit-based flow control.
-11. Safe Unix signal bridge.
-12. Diagnostics, timeouts, tracing, and deadlock/debug support.
+5. `ctx-future` context-returning suspension primitives.
+6. Async handlers or generated handler continuations run by a task-local executor.
+7. Selective receive by message kind.
+8. `SessionId`, `Response<T>`, and synchronous calls.
+9. Compile-time `CanReceive<T>` checks for responses.
+10. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
+11. Stream batching and credit-based flow control.
+12. Safe Unix signal bridge.
+13. Diagnostics, timeouts, tracing, and deadlock/debug support.

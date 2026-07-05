@@ -15,6 +15,7 @@ The agent shall read:
 - `docs/se/requirements.md`
 - `docs/se/interfaces.md`
 - `docs/se/architecture.md`
+- `docs/se/ctx-future.md` when testing context-returning suspension or the `ctx-future` crate
 - `docs/se/verification-plan.md`
 - `docs/se/traceability.md`
 - existing Rust tests;
