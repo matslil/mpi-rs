@@ -8,6 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
+use crate::message::LateReplyPolicy;
 use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
 
 /// Type-erased queued call response carried by a caller task message.
@@ -17,13 +18,30 @@ pub struct QueuedCallResponse {
 
     /// Type-erased reply value.
     pub value: Box<dyn Any + Send>,
+
+    /// Policy for this reply if the session no longer has an active waiter.
+    pub late_reply_policy: LateReplyPolicy,
 }
 
 impl QueuedCallResponse {
     /// Construct a queued call response.
     #[must_use]
     pub fn new(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
-        Self { session_id, value }
+        Self::with_late_reply_policy(session_id, value, LateReplyPolicy::Report)
+    }
+
+    /// Construct a queued call response with an explicit late-reply policy.
+    #[must_use]
+    pub fn with_late_reply_policy(
+        session_id: SessionId,
+        value: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self {
+        Self {
+            session_id,
+            value,
+            late_reply_policy,
+        }
     }
 }
 
@@ -45,7 +63,16 @@ impl QueuedCallRelease {
 /// Message enums that can carry queued task-internal call responses.
 pub trait CallResponseMessage: Sized {
     /// Wrap a typed response value into this task's message enum.
-    fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self;
+    fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
+        Self::call_response_with_late_reply_policy(session_id, value, LateReplyPolicy::Report)
+    }
+
+    /// Wrap a typed response value with an explicit late-reply policy.
+    fn call_response_with_late_reply_policy(
+        session_id: SessionId,
+        value: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self;
 
     /// Extract a queued call response from this message, if it is one.
     fn into_call_response(self) -> Result<QueuedCallResponse, Self>;

@@ -23,7 +23,7 @@ impl Counter {
         self_handle.add(ctx, amount).unwrap();
     }
 
-    #[call(reply = u32)]
+    #[call(reply = u32, late_reply = "ignore")]
     async fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
         self.value
     }
@@ -102,7 +102,7 @@ impl Producer {
     #[start]
     async fn start(&mut self, _ctx: &mut ProducerContext) {}
 
-    #[stream(item = u32, error = String, batch_size = 2)]
+    #[stream(item = u32, error = String, batch_size = 2, late_reply = "ignore")]
     async fn numbers(
         &mut self,
         _ctx: &mut ProducerContext,

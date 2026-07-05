@@ -41,10 +41,10 @@ Use the status values from `docs/agents/process.md`:
 | SN-032 | traceability matrix | process | docs/agents/traceability-agent.md | VAL-014 |
 | SN-040 | REQ-030..REQ-035 | ARCH-020..ARCH-025 | INT-030..INT-032 | VAL-010 |
 | SN-041 | REQ-040..REQ-043, REQ-053 | ARCH-030..ARCH-032 | INT-012, INT-017 | VAL-002 |
-| SN-042 | REQ-080..REQ-094 | ARCH-050..ARCH-064 | INT-050..INT-063 | VAL-004, VAL-005 |
-| SN-043 | REQ-100..REQ-113 | ARCH-070..ARCH-077 | INT-070..INT-081 | VAL-008, VAL-009 |
+| SN-042 | REQ-080..REQ-095 | ARCH-050..ARCH-065 | INT-050..INT-064 | VAL-004, VAL-005 |
+| SN-043 | REQ-095, REQ-100..REQ-113 | ARCH-070..ARCH-079 | INT-070..INT-081 | VAL-008, VAL-009 |
 | SN-044 | REQ-130, REQ-131 | ARCH-090..ARCH-092 | INT-110, INT-111 | VAL-012 |
-| SN-045 | REQ-082, REQ-094, REQ-140 | diagnostics, ARCH-064 | INT-052, INT-063 | VAL-013 |
+| SN-045 | REQ-082, REQ-094, REQ-095, REQ-140 | diagnostics, ARCH-064, ARCH-065 | INT-052, INT-063, INT-064 | VAL-013 |
 
 ## Requirement group traceability
 
@@ -59,8 +59,8 @@ Use the status values from `docs/agents/process.md`:
 | REQ-060..REQ-064 | SN-015, SN-021, SN-042 | ARCH-040..ARCH-044, CMP-007, CMP-015 | INT-043..INT-045, context receive API pending | `crates/ctx-future`, `crates/mpi/src/runtime.rs::block_on_ctx_task`, `SuspendedCall` and `SuspendedStreamNext` ctx-future integration; macro-generated async handler lowering still adapted through standard `Future` | `crates/ctx-future/tests/context_borrow.rs`, `crates/mpi/tests/runtime_baseline.rs`; macro-native ctx-future handler lowering pending | VAL-004, VAL-005 | implemented |
 | REQ-070..REQ-072 | SN-011, SN-023 | CMP-011 | INT-040..INT-042 | pending | compile-fail/inspection pending | VAL-006 | approved |
 | REQ-080..REQ-084 | SN-042, SN-045 | ARCH-050..ARCH-054 | INT-050..INT-052 | pending | test/inspection pending | VAL-004, VAL-005, VAL-013 | approved |
-| REQ-090..REQ-094 | SN-013, SN-042, SN-045 | ARCH-060..ARCH-064 | INT-060..INT-063 | `Response<T>`, generated call plumbing, session-matched waiters, and `TaskContext` late call response policy surface; complete fallback policy customization pending | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`; full late-response policy customization tests pending | VAL-004, VAL-005, VAL-013 | implemented |
-| REQ-100..REQ-114 | SN-010, SN-015, SN-016, SN-017, SN-021, SN-043 | ARCH-070..ARCH-078 | INT-070..INT-081 | pending | test/inspection/demonstration pending | VAL-007, VAL-008, VAL-009 | approved |
+| REQ-090..REQ-095 | SN-013, SN-042, SN-045 | ARCH-060..ARCH-065 | INT-060..INT-064 | `Response<T>`, generated call plumbing, session-matched waiters, `LateReplyPolicy`, and `TaskContext` late call response policy surface | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | VAL-004, VAL-005, VAL-013 | implemented |
+| REQ-100..REQ-114 | SN-010, SN-015, SN-016, SN-017, SN-021, SN-043 | ARCH-070..ARCH-079 | INT-070..INT-081 | stream replies carry `LateReplyPolicy`; `TaskContext` records late stream replies by default and ignores them when declared; broader stream implementation remains partial | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`; broader stream flow-control verification still pending | VAL-007, VAL-008, VAL-009 | approved |
 | REQ-120..REQ-121 | SN-010, SN-015 | ARCH-080..ARCH-082 | INT-090..INT-092 | pending | demonstration/inspection pending | VAL-011 | approved |
 | REQ-130..REQ-131 | SN-044 | ARCH-090..ARCH-092 | INT-110..INT-111 | pending | inspection pending | VAL-012 | approved |
 | REQ-140 | SN-045 | diagnostics | diagnostics interfaces pending | pending | inspection pending | VAL-013 | approved |

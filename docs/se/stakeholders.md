@@ -77,11 +77,11 @@ SN-041: Runtime users need the start message to be the first application message
 
 SN-042: Runtime users need calls and streams to match replies by logical interaction so concurrent handlers do not receive each other's replies.
 
-SN-043: Runtime users need cancellation and late stream events to be handled safely.
+SN-043: Runtime users need cancellation and late stream replies to be handled safely without hiding ordinary protocol flaws.
 
 SN-044: Runtime users need POSIX signal integration to avoid unsafe allocation or non-async-signal-safe operations in signal handlers.
 
-SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, and stream lifecycle issues.
+SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, unknown-session replies, and stream lifecycle issues.
 
 ## Constraints
 

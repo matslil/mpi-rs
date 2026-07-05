@@ -14,7 +14,7 @@ use crate::call::{
     suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, SendError};
-use crate::message::{HasSessionId, TaskMessage};
+use crate::message::{HasSessionId, LateReplyPolicy, TaskMessage};
 use crate::queue::TaskQueue;
 use crate::scope::TaskScope;
 use crate::session::{
@@ -172,6 +172,7 @@ where
     call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
     late_call_responses: Vec<QueuedCallResponse>,
     stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
+    late_stream_events: Vec<QueuedStreamEvent>,
     stream_credits: HashMap<SessionId, u32>,
     released_calls: HashSet<SessionId>,
     stopped: bool,
@@ -217,6 +218,7 @@ where
                 call_waiters: HashMap::new(),
                 late_call_responses: Vec::new(),
                 stream_waiters: HashMap::new(),
+                late_stream_events: Vec::new(),
                 stream_credits: HashMap::new(),
                 released_calls: HashSet::new(),
                 stopped: false,
@@ -245,7 +247,9 @@ where
         match waiter {
             Some(waiter) => waiter.deliver(response),
             None => {
-                self.inner.borrow_mut().late_call_responses.push(response);
+                if response.late_reply_policy == LateReplyPolicy::Report {
+                    self.inner.borrow_mut().late_call_responses.push(response);
+                }
                 Ok(())
             }
         }
@@ -283,9 +287,50 @@ where
                     QueuedCallResponse {
                         session_id: response.session_id,
                         value,
+                        late_reply_policy: response.late_reply_policy,
                     },
                 );
                 Err(CallError::UnexpectedReplyType)
+            }
+        }
+    }
+
+    /// Return the number of late stream replies recorded by this task.
+    #[must_use]
+    pub fn late_stream_event_count(&self) -> usize {
+        self.inner.borrow().late_stream_events.len()
+    }
+
+    /// Take and downcast one late stream reply by session ID.
+    ///
+    /// If the stream payload does not match `StreamEvent<T, E>`, the event is
+    /// restored so a later policy decision can inspect it with the correct type.
+    pub fn take_late_stream_event<T: Send + 'static, E: Send + 'static>(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<StreamEvent<T, E>>, SendError> {
+        let mut state = self.inner.borrow_mut();
+        let Some(index) = state
+            .late_stream_events
+            .iter()
+            .position(|event| event.session_id == session_id)
+        else {
+            return Ok(None);
+        };
+
+        let event = state.late_stream_events.remove(index);
+        match event.event.downcast::<StreamEvent<T, E>>() {
+            Ok(value) => Ok(Some(*value)),
+            Err(value) => {
+                state.late_stream_events.insert(
+                    index,
+                    QueuedStreamEvent {
+                        session_id: event.session_id,
+                        event: value,
+                        late_reply_policy: event.late_reply_policy,
+                    },
+                );
+                Err(SendError::TaskStopped)
             }
         }
     }
@@ -344,7 +389,12 @@ where
         let mut state = self.inner.borrow_mut();
         let finished = match state.stream_waiters.get(&session_id) {
             Some(waiter) => waiter.deliver(event)?,
-            None => return Ok(()),
+            None => {
+                if event.late_reply_policy == LateReplyPolicy::Report {
+                    state.late_stream_events.push(event);
+                }
+                return Ok(());
+            }
         };
         if finished {
             state.stream_waiters.remove(&session_id);
@@ -374,6 +424,14 @@ where
 {
     /// Allocate one task-local call session and its queued reply sender.
     pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
+        self.begin_call_with_late_reply_policy(LateReplyPolicy::Report)
+    }
+
+    /// Allocate one task-local call session with an explicit late-reply policy.
+    pub fn begin_call_with_late_reply_policy<T: Send + 'static>(
+        &self,
+        late_reply_policy: LateReplyPolicy,
+    ) -> CallSession<T> {
         let session_id = self.next_session_id();
         let inner = Rc::clone(&self.inner);
         let (waiter, future) = suspended_call_waiter_with_on_drop(session_id, move |session_id| {
@@ -390,9 +448,10 @@ where
                 response.session_id, session_id,
                 "queued reply sender received response for wrong session"
             );
-            self_handle.send_message(M::call_response(
+            self_handle.send_message(M::call_response_with_late_reply_policy(
                 response.session_id,
                 Box::new(response.value) as Box<dyn Any + Send>,
+                late_reply_policy,
             ))
         });
 
@@ -408,6 +467,15 @@ where
     pub fn begin_stream<T: Send + 'static, E: Send + 'static>(
         &self,
         control: Arc<dyn StreamControl>,
+    ) -> StreamSession<T, E> {
+        self.begin_stream_with_late_reply_policy(control, LateReplyPolicy::Report)
+    }
+
+    /// Allocate one task-local stream session with an explicit late-reply policy.
+    pub fn begin_stream_with_late_reply_policy<T: Send + 'static, E: Send + 'static>(
+        &self,
+        control: Arc<dyn StreamControl>,
+        late_reply_policy: LateReplyPolicy,
     ) -> StreamSession<T, E> {
         let session_id = self.next_session_id();
         let inner = Rc::clone(&self.inner);
@@ -426,9 +494,10 @@ where
         let self_handle = self.self_handle();
         let events = StreamEventSender::new(Box::new(move |event: StreamEvent<T, E>| {
             let session_id = event.session_id();
-            self_handle.send_message(M::stream_event(
+            self_handle.send_message(M::stream_event_with_late_reply_policy(
                 session_id,
                 Box::new(event) as Box<dyn Any + Send>,
+                late_reply_policy,
             ))
         }));
 
@@ -444,11 +513,26 @@ where
         TaskContext::begin_call::<T>(self)
     }
 
+    fn begin_call_with_late_reply_policy<T: Send + 'static>(
+        &mut self,
+        late_reply_policy: LateReplyPolicy,
+    ) -> CallSession<T> {
+        TaskContext::begin_call_with_late_reply_policy::<T>(self, late_reply_policy)
+    }
+
     fn begin_stream<T: Send + 'static, E: Send + 'static>(
         &mut self,
         control: Arc<dyn StreamControl>,
     ) -> StreamSession<T, E> {
         TaskContext::begin_stream::<T, E>(self, control)
+    }
+
+    fn begin_stream_with_late_reply_policy<T: Send + 'static, E: Send + 'static>(
+        &mut self,
+        control: Arc<dyn StreamControl>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> StreamSession<T, E> {
+        TaskContext::begin_stream_with_late_reply_policy::<T, E>(self, control, late_reply_policy)
     }
 }
 
