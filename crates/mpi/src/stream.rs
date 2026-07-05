@@ -1,5 +1,6 @@
 //! Stream protocol messages and consumer/producer helpers.
 
+use ctx_future::{CtxFuture, CtxPoll};
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -553,34 +554,51 @@ impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
     type Output = Result<Option<T>, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        if let Some(value) = this.stream.stream.next_buffered()? {
-            return Poll::Ready(Ok(Some(value)));
-        }
-
-        if this.stream.stream.is_finished() {
-            this.stream.disarm_on_drop();
-            return Poll::Ready(Ok(None));
-        }
-
-        match this.stream.receiver.try_recv() {
-            Ok(event) => {
-                let result = this.stream.stream.next_from_event(event);
-                if this.stream.stream.is_finished() {
-                    this.stream.disarm_on_drop();
-                }
-                Poll::Ready(result)
-            }
-            Err(TryRecvError::Empty) => {
+        match self.get_mut().try_resume() {
+            CtxPoll::Ready(value) => Poll::Ready(value),
+            CtxPoll::Pending => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
+        }
+    }
+}
+
+impl<T, E> SuspendedStreamNext<'_, T, E> {
+    fn try_resume(&mut self) -> CtxPoll<Result<Option<T>, E>> {
+        match self.stream.stream.next_buffered() {
+            Ok(Some(value)) => return CtxPoll::Ready(Ok(Some(value))),
+            Ok(None) => {}
+            Err(error) => return CtxPoll::Ready(Err(error)),
+        }
+
+        if self.stream.stream.is_finished() {
+            self.stream.disarm_on_drop();
+            return CtxPoll::Ready(Ok(None));
+        }
+
+        match self.stream.receiver.try_recv() {
+            Ok(event) => {
+                let result = self.stream.stream.next_from_event(event);
+                if self.stream.stream.is_finished() {
+                    self.stream.disarm_on_drop();
+                }
+                CtxPoll::Ready(result)
+            }
+            Err(TryRecvError::Empty) => CtxPoll::Pending,
             Err(TryRecvError::Disconnected) => {
-                this.stream.disarm_on_drop();
-                Poll::Ready(Ok(None))
+                self.stream.disarm_on_drop();
+                CtxPoll::Ready(Ok(None))
             }
         }
+    }
+}
+
+impl<Cx, T, E> CtxFuture<Cx> for SuspendedStreamNext<'_, T, E> {
+    type Output = Result<Option<T>, E>;
+
+    fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
+        self.try_resume()
     }
 }
 
