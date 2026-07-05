@@ -1,5 +1,6 @@
 //! Task-internal suspended call futures.
 
+use ctx_future::{CtxFuture, CtxPoll};
 use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
@@ -146,22 +147,16 @@ impl<T> SuspendedCall<T> {
     fn disarm_on_drop(&mut self) {
         self.on_drop = None;
     }
-}
 
-impl<T> Future for SuspendedCall<T> {
-    type Output = Result<T, CallError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        if let Some(error) = this.failed.take() {
-            return Poll::Ready(Err(error));
+    fn try_resume(&mut self) -> CtxPoll<Result<T, CallError>> {
+        if let Some(error) = self.failed.take() {
+            return CtxPoll::Ready(Err(error));
         }
 
-        let session_id = this
+        let session_id = self
             .session_id
             .expect("suspended call polled after completion");
-        let receiver = this
+        let receiver = self
             .receiver
             .as_ref()
             .expect("suspended call receiver missing");
@@ -172,20 +167,39 @@ impl<T> Future for SuspendedCall<T> {
                     response.session_id, session_id,
                     "suspended call received response for wrong session"
                 );
-                this.session_id = None;
-                this.receiver = None;
-                this.disarm_on_drop();
-                Poll::Ready(Ok(response.value))
+                self.session_id = None;
+                self.receiver = None;
+                self.disarm_on_drop();
+                CtxPoll::Ready(Ok(response.value))
             }
-            Err(TryRecvError::Empty) => {
+            Err(TryRecvError::Empty) => CtxPoll::Pending,
+            Err(TryRecvError::Disconnected) => {
+                self.session_id = None;
+                self.receiver = None;
+                self.disarm_on_drop();
+                CtxPoll::Ready(Err(CallError::ReplyDisconnected))
+            }
+        }
+    }
+}
+
+impl<Cx, T> CtxFuture<Cx> for SuspendedCall<T> {
+    type Output = Result<T, CallError>;
+
+    fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
+        self.try_resume()
+    }
+}
+
+impl<T> Future for SuspendedCall<T> {
+    type Output = Result<T, CallError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut().try_resume() {
+            CtxPoll::Ready(value) => Poll::Ready(value),
+            CtxPoll::Pending => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
-            }
-            Err(TryRecvError::Disconnected) => {
-                this.session_id = None;
-                this.receiver = None;
-                this.disarm_on_drop();
-                Poll::Ready(Err(CallError::ReplyDisconnected))
             }
         }
     }

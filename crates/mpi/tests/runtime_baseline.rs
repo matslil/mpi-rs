@@ -1,9 +1,13 @@
+use std::any::Any;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use mpi::{
-    EndpointId, HasSessionId, MessagePlacement, MessageStream, Response, SendError, SessionId,
-    SessionIdAllocator, StreamCancel, StreamControl, StreamEvent, StreamSink, SyncReplySender,
-    TaskContext, TaskHandle, TaskMessage, TaskQueue, spawn_task,
+    CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
+    MessagePlacement, MessageStream, QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent,
+    Response, SendError, SessionId, SessionIdAllocator, StreamCancel, StreamControl, StreamEvent,
+    StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
+    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, spawn_task,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -163,6 +167,162 @@ fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
     assert_eq!(response.session_id.origin, handle.endpoint());
 
     runtime.join().unwrap();
+}
+
+enum CtxRuntimeMessage {
+    Normal(u8),
+    CallResponse {
+        session_id: SessionId,
+        value: Box<dyn Any + Send>,
+    },
+    CallRelease {
+        session_id: SessionId,
+    },
+    StreamPull {
+        session_id: SessionId,
+        credit: u32,
+    },
+    StreamEvent {
+        session_id: SessionId,
+        event: Box<dyn Any + Send>,
+    },
+}
+
+impl TaskMessage for CtxRuntimeMessage {
+    fn placement(&self) -> MessagePlacement {
+        match self {
+            Self::Normal(_) => MessagePlacement::Normal,
+            Self::CallResponse { .. }
+            | Self::CallRelease { .. }
+            | Self::StreamPull { .. }
+            | Self::StreamEvent { .. } => MessagePlacement::Priority,
+        }
+    }
+}
+
+impl CallResponseMessage for CtxRuntimeMessage {
+    fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
+        Self::CallResponse { session_id, value }
+    }
+
+    fn into_call_response(self) -> Result<QueuedCallResponse, Self> {
+        match self {
+            Self::CallResponse { session_id, value } => {
+                Ok(QueuedCallResponse::new(session_id, value))
+            }
+            other => Err(other),
+        }
+    }
+}
+
+impl CallReleaseMessage for CtxRuntimeMessage {
+    fn call_release(session_id: SessionId) -> Self {
+        Self::CallRelease { session_id }
+    }
+
+    fn into_call_release(self) -> Result<QueuedCallRelease, Self> {
+        match self {
+            Self::CallRelease { session_id } => Ok(QueuedCallRelease::new(session_id)),
+            other => Err(other),
+        }
+    }
+}
+
+impl StreamPullMessage for CtxRuntimeMessage {
+    fn stream_pull(session_id: SessionId, credit: u32) -> Self {
+        Self::StreamPull { session_id, credit }
+    }
+
+    fn into_stream_pull(self) -> Result<StreamPull, Self> {
+        match self {
+            Self::StreamPull { session_id, credit } => Ok(StreamPull::new(session_id, credit)),
+            other => Err(other),
+        }
+    }
+}
+
+impl StreamEventMessage for CtxRuntimeMessage {
+    fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
+        Self::StreamEvent { session_id, event }
+    }
+
+    fn into_stream_event(self) -> Result<QueuedStreamEvent, Self> {
+        match self {
+            Self::StreamEvent { session_id, event } => {
+                Ok(QueuedStreamEvent::new(session_id, event))
+            }
+            other => Err(other),
+        }
+    }
+}
+
+#[derive(Default)]
+struct AllocateAcrossPending {
+    first: Option<SessionId>,
+}
+
+impl CtxFuture<TaskContext<CtxRuntimeMessage, 4>> for AllocateAcrossPending {
+    type Output = (SessionId, SessionId);
+
+    fn resume(
+        &mut self,
+        ctx: &mut TaskContext<CtxRuntimeMessage, 4>,
+        (): (),
+    ) -> CtxPoll<Self::Output> {
+        match self.first {
+            Some(first) => CtxPoll::Ready((first, ctx.next_session_id())),
+            None => {
+                self.first = Some(ctx.next_session_id());
+                CtxPoll::Pending
+            }
+        }
+    }
+}
+
+#[test]
+fn req_064_block_on_ctx_task_returns_context_between_pending_resumes() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(70));
+    let mut ctx = TaskContext::new(handle.clone());
+    let mut deferred = VecDeque::new();
+
+    handle.send_message(CtxRuntimeMessage::Normal(9)).unwrap();
+
+    let (first, second) = block_on_ctx_task(
+        AllocateAcrossPending::default(),
+        &queue,
+        &mut ctx,
+        &mut deferred,
+    );
+
+    assert_eq!(first, SessionId::new(EndpointId(70), 0));
+    assert_eq!(second, SessionId::new(EndpointId(70), 1));
+    assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(70), 2));
+    assert!(matches!(
+        deferred.pop_front(),
+        Some(CtxRuntimeMessage::Normal(9))
+    ));
+}
+
+#[test]
+fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(71));
+    let mut ctx = TaskContext::new(handle.clone());
+    let mut deferred = VecDeque::new();
+    let (session_id, _reply, call) = ctx.begin_call::<u32>();
+
+    handle
+        .send_message(CtxRuntimeMessage::call_response(
+            session_id,
+            Box::new(42_u32),
+        ))
+        .unwrap();
+
+    let value = block_on_ctx_task(call, &queue, &mut ctx, &mut deferred).unwrap();
+
+    assert_eq!(value, 42);
+    assert!(deferred.is_empty());
 }
 
 #[derive(Default)]
