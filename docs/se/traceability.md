@@ -56,7 +56,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-030..REQ-035 | SN-040, SN-042 | ARCH-020..ARCH-025 | INT-016, INT-030..INT-032 | pending | test/inspection pending | VAL-010 | approved |
 | REQ-040..REQ-043 | SN-041 | ARCH-030..ARCH-032 | INT-012, INT-017 | pending | test/inspection pending | VAL-002 | approved |
 | REQ-050..REQ-053 | SN-010, SN-012, SN-021, SN-041 | CMP-006, CMP-012 | INT-010..INT-025 | pending | test/inspection pending | VAL-001, VAL-003 | approved |
-| REQ-060..REQ-064 | SN-015, SN-021, SN-042 | ARCH-040..ARCH-044, CMP-007, CMP-015 | INT-043..INT-045, context receive API pending | `crates/ctx-future`, task-local runtime integration pending | `crates/ctx-future/tests/context_borrow.rs`, task-local runtime tests pending | VAL-004, VAL-005 | approved |
+| REQ-060..REQ-064 | SN-015, SN-021, SN-042 | ARCH-040..ARCH-044, CMP-007, CMP-015 | INT-043..INT-045, context receive API pending | `crates/ctx-future`, `crates/mpi/src/runtime.rs::block_on_ctx_task`, `SuspendedCall` and `SuspendedStreamNext` ctx-future integration; macro-generated async handler lowering still adapted through standard `Future` | `crates/ctx-future/tests/context_borrow.rs`, `crates/mpi/tests/runtime_baseline.rs`; macro-native ctx-future handler lowering pending | VAL-004, VAL-005 | implemented |
 | REQ-070..REQ-072 | SN-011, SN-023 | CMP-011 | INT-040..INT-042 | pending | compile-fail/inspection pending | VAL-006 | approved |
 | REQ-080..REQ-084 | SN-042, SN-045 | ARCH-050..ARCH-054 | INT-050..INT-052 | pending | test/inspection pending | VAL-004, VAL-005, VAL-013 | approved |
 | REQ-090..REQ-094 | SN-013, SN-042, SN-045 | ARCH-060..ARCH-064 | INT-060..INT-063 | pending | test/inspection pending | VAL-004, VAL-005, VAL-013 | approved |
@@ -78,7 +78,7 @@ GAP-004: Diagnostics interfaces are intentionally deferred beyond the initial me
 
 GAP-005: Unix signal support is later-phase work and remains deferred for validation.
 
-GAP-006: The `ctx-future` crate provides the approved context-returning suspension primitive, but integration into the `mpi-rs` task-local runtime and macro-generated handler continuations remains pending.
+GAP-006: The `ctx-future` crate now has a task-local runtime integration point in `mpi`, but macro-generated async handlers are still adapted through standard `Future`; full generated lowering into native `CtxFuture` continuations remains pending.
 
 ## Traceability maintenance rules
 
