@@ -13,6 +13,7 @@ The most important baseline documents are:
 - `docs/se/stakeholders.md`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
+- `docs/se/ctx-future.md`
 - `docs/se/interfaces.md`
 - `docs/se/verification-plan.md`
 - `docs/se/validation-scenarios.md`
@@ -30,6 +31,7 @@ Before changing production code, tests, examples, or process documents, read:
 - the role-specific document under `docs/agents/`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
+- `docs/se/ctx-future.md`
 - `docs/se/interfaces.md`
 - `docs/se/verification-plan.md`
 - `docs/se/traceability.md`
