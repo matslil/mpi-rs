@@ -516,7 +516,7 @@ Status: approved
 
 ### REQ-094: Late one-shot response handling
 
-If a one-shot response arrives and no active waiter exists for its session, the runtime shall surface it to a fallback reply handler or task policy unless the response was declared with `late_reply = "ignore"`.
+If a one-shot response arrives and no active waiter exists for its session, the runtime shall invoke the receiving task's late-reply handler unless the response was declared with `late_reply = "ignore"`.
 
 Source: SN-042, SN-045
 
@@ -529,6 +529,26 @@ Status: approved
 A call or stream declaration may declare `late_reply = "ignore"` to mark unknown-session replies for that interaction as intentionally unobservable to `mpi-rs`.
 
 Source: Human maintainer decision, SN-042, SN-043, SN-045
+
+Verification: test
+
+Status: approved
+
+### REQ-096: Late reply handler action
+
+A task late-reply handler shall receive a borrowed reference to the unexpected reply and shall return either an ignore action or a terminate-task action.
+
+Source: Human maintainer decision, SN-042, SN-043, SN-045
+
+Verification: test
+
+Status: approved
+
+### REQ-097: Default late reply handler
+
+If a task does not declare a late-reply handler, the default late-reply handler shall take no action and return ignore.
+
+Source: Human maintainer decision, SN-045
 
 Verification: test
 
@@ -618,7 +638,7 @@ Status: approved
 
 ### REQ-108: Late stream event handling
 
-If a stream reply arrives and no active waiter or stream object exists for its session, the runtime shall surface it to a fallback reply handler or task policy unless the stream declaration used `late_reply = "ignore"`.
+If a stream reply arrives and no active waiter or stream object exists for its session, the runtime shall invoke the receiving task's late-reply handler unless the stream declaration used `late_reply = "ignore"`.
 
 Source: SN-043
 

@@ -74,7 +74,8 @@ The implementation shall preserve these project-level rules:
 - message placement is declared by the receiving task;
 - `SessionId` identifies logical interactions for calls and streams;
 - task-internal calls and streams suspend handlers rather than blocking OS threads;
-- late replies are surfaced to a fallback handler or task policy by default;
+- late replies are passed to a task late-reply handler by default;
+- the default late-reply handler currently returns ignore and takes no action;
 - late replies may be ignored only when their call or stream declaration uses `late_reply = "ignore"`.
 
 ## Process

@@ -166,6 +166,18 @@ A call response or stream reply that arrives after the receiving task no longer 
 
 The declaration-derived runtime policy for an unknown-session reply. The default policy is `report`; `late_reply = "ignore"` explicitly makes the unknown-session reply unobservable to `mpi-rs`.
 
+### Late reply handler
+
+An optional task handler that receives a borrowed `LateReplyRef` for a reported late reply and returns a `LateReplyAction`.
+
+### LateReplyRef
+
+A read-only borrowed view of a late reply. It exposes the reply `SessionId`, late-reply kind, and downcast access to the reply payload for the duration of the late-reply handler call.
+
+### LateReplyAction
+
+The result of a late-reply handler. `Ignore` continues the task after the late reply is dropped, and `Terminate` stops the task.
+
 ### Late stream event
 
 A stream event that arrives after the stream has been cancelled, dropped, or otherwise no longer has an active consumer session.
