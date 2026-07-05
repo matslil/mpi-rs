@@ -167,6 +167,31 @@ INT-041: A caller task shall only be able to call a task-internal streaming meth
 
 INT-042: Missing receive support should fail at compile time rather than runtime.
 
+## Context future interface
+
+The reusable `ctx-future` crate exposes a context-returning suspension interface conceptually equivalent to:
+
+```rust
+pub trait CtxFuture<Cx, Input = ()> {
+    type Output;
+
+    fn resume(&mut self, cx: &mut Cx, input: Input) -> CtxPoll<Self::Output>;
+}
+
+pub enum CtxPoll<T> {
+    Pending,
+    Ready(T),
+}
+```
+
+Interface rules:
+
+INT-043: The `ctx-future` crate shall not depend on `mpi-rs`.
+
+INT-044: `mpi-rs` generated task handlers may be lowered into `CtxFuture` implementations or equivalent context-returning state machines.
+
+INT-045: A pending `CtxFuture` used by `mpi-rs` shall not retain mutable borrows of task state or task context after `resume` returns.
+
 ## Session interface
 
 Recommended session type:

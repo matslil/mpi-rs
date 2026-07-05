@@ -128,6 +128,7 @@ Handler tests should verify:
 - waiting for replies or stream events suspends the handler continuation;
 - the task continues to receive other messages while a handler is suspended;
 - waiter matching uses message kind and `SessionId`.
+- suspended continuations do not retain mutable borrows of task state or task context while pending.
 
 Relevant requirements:
 
@@ -135,6 +136,23 @@ Relevant requirements:
 - REQ-061
 - REQ-062
 - REQ-063
+- REQ-064
+
+### Context future verification
+
+Context future tests should verify:
+
+- a ctx-future receives mutable context only during resume;
+- context can be mutably used after a ctx-future returns pending;
+- multiple pending ctx-futures can be stored while the caller continues using context;
+- a pending ctx-future can later be resumed with context;
+- `ctx-future` can be built and tested without depending on `mpi-rs`;
+- ordinary public API use does not require `unsafe`.
+
+Relevant requirements:
+
+- REQ-064
+- REQ-152
 
 ### Compile-time receive verification
 
