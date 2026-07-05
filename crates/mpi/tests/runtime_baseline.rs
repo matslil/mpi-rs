@@ -325,6 +325,45 @@ fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
     assert!(deferred.is_empty());
 }
 
+#[test]
+fn req_094_late_call_response_is_recorded_for_task_policy() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(72));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(99), 3);
+
+    ctx.deliver_call_response(QueuedCallResponse::new(session_id, Box::new(17_u32)))
+        .unwrap();
+
+    assert_eq!(ctx.late_call_response_count(), 1);
+    assert_eq!(
+        ctx.take_late_call_response::<u32>(session_id).unwrap(),
+        Some(Response::new(session_id, 17))
+    );
+    assert_eq!(ctx.late_call_response_count(), 0);
+}
+
+#[test]
+fn req_094_late_call_response_type_mismatch_preserves_response() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(73));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(100), 4);
+
+    ctx.deliver_call_response(QueuedCallResponse::new(session_id, Box::new(23_u32)))
+        .unwrap();
+
+    assert_eq!(
+        ctx.take_late_call_response::<String>(session_id),
+        Err(mpi::CallError::UnexpectedReplyType)
+    );
+    assert_eq!(ctx.late_call_response_count(), 1);
+    assert_eq!(
+        ctx.take_late_call_response::<u32>(session_id).unwrap(),
+        Some(Response::new(session_id, 23))
+    );
+}
+
 #[derive(Default)]
 struct CancelRecorder {
     cancelled: Mutex<Vec<SessionId>>,

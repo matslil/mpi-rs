@@ -170,6 +170,7 @@ where
     self_handle: TaskHandle<M, N>,
     session_ids: SessionIdAllocator,
     call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
+    late_call_responses: Vec<QueuedCallResponse>,
     stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
     stream_credits: HashMap<SessionId, u32>,
     released_calls: HashSet<SessionId>,
@@ -214,6 +215,7 @@ where
                 self_handle,
                 session_ids: SessionIdAllocator::new(endpoint),
                 call_waiters: HashMap::new(),
+                late_call_responses: Vec::new(),
                 stream_waiters: HashMap::new(),
                 stream_credits: HashMap::new(),
                 released_calls: HashSet::new(),
@@ -242,7 +244,49 @@ where
             .remove(&response.session_id);
         match waiter {
             Some(waiter) => waiter.deliver(response),
-            None => Ok(()),
+            None => {
+                self.inner.borrow_mut().late_call_responses.push(response);
+                Ok(())
+            }
+        }
+    }
+
+    /// Return the number of late one-shot call responses recorded by this task.
+    #[must_use]
+    pub fn late_call_response_count(&self) -> usize {
+        self.inner.borrow().late_call_responses.len()
+    }
+
+    /// Take and downcast one late one-shot call response by session ID.
+    ///
+    /// If the response payload does not match `T`, the response is restored so a
+    /// later policy decision can inspect it with the correct type.
+    pub fn take_late_call_response<T: Send + 'static>(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Response<T>>, CallError> {
+        let mut state = self.inner.borrow_mut();
+        let Some(index) = state
+            .late_call_responses
+            .iter()
+            .position(|response| response.session_id == session_id)
+        else {
+            return Ok(None);
+        };
+
+        let response = state.late_call_responses.remove(index);
+        match response.value.downcast::<T>() {
+            Ok(value) => Ok(Some(Response::new(response.session_id, *value))),
+            Err(value) => {
+                state.late_call_responses.insert(
+                    index,
+                    QueuedCallResponse {
+                        session_id: response.session_id,
+                        value,
+                    },
+                );
+                Err(CallError::UnexpectedReplyType)
+            }
         }
     }
 
