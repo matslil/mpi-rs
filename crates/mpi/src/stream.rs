@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 
 use crate::error::SendError;
-use crate::message::HasSessionId;
+use crate::message::{HasSessionId, LateReplyPolicy};
 use crate::scope::TaskScope;
 use crate::session::SessionId;
 
@@ -146,20 +146,46 @@ pub struct QueuedStreamEvent {
 
     /// Type-erased stream event value.
     pub event: Box<dyn Any + Send>,
+
+    /// Policy for this stream reply if the session no longer has an active waiter.
+    pub late_reply_policy: LateReplyPolicy,
 }
 
 impl QueuedStreamEvent {
     /// Construct a queued stream event.
     #[must_use]
     pub fn new(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
-        Self { session_id, event }
+        Self::with_late_reply_policy(session_id, event, LateReplyPolicy::Report)
+    }
+
+    /// Construct a queued stream event with an explicit late-reply policy.
+    #[must_use]
+    pub fn with_late_reply_policy(
+        session_id: SessionId,
+        event: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self {
+        Self {
+            session_id,
+            event,
+            late_reply_policy,
+        }
     }
 }
 
 /// Message enums that can carry queued task-internal stream events.
 pub trait StreamEventMessage: Sized {
     /// Wrap a typed stream event into this task's message enum.
-    fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self;
+    fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
+        Self::stream_event_with_late_reply_policy(session_id, event, LateReplyPolicy::Report)
+    }
+
+    /// Wrap a typed stream event with an explicit late-reply policy.
+    fn stream_event_with_late_reply_policy(
+        session_id: SessionId,
+        event: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self;
 
     /// Extract a queued stream event from this message, if it is one.
     fn into_stream_event(self) -> Result<QueuedStreamEvent, Self>;

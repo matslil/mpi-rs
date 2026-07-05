@@ -69,6 +69,8 @@ INT-015: `#[stream(item = T, error = E)]` shall identify a streaming handler wit
 
 INT-016: `priority` shall be declared on the receiver's message declaration, not at each send site.
 
+INT-019: Call and stream declarations may use `late_reply = "ignore"` to opt out of reporting unknown-session replies for that interaction; the default policy is equivalent to `late_reply = "report"`.
+
 INT-017: An explicit normal placement for a start handler shall be rejected or ignored in favor of forced priority.
 
 INT-018: A `#[task]` attribute on a struct is non-authoritative and should not be required for code generation.
@@ -241,6 +243,8 @@ INT-062: The macro or runtime shall convert the returned payload into the respon
 
 INT-063: Late one-shot responses shall be exposed to fallback reply handling or task policy rather than silently discarded by default.
 
+INT-064: A one-shot response generated for a call declared with `late_reply = "ignore"` shall not be exposed as an unknown-session condition when its session has no active waiter.
+
 ## Stream interface
 
 Conceptual stream event:
@@ -332,6 +336,10 @@ INT-075: The producer-side `StreamSink` shall hide batching, end, error, and flo
 
 INT-076: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
+INT-077: Stream replies shall be exposed to fallback reply handling or task policy by default when their session has no active waiter or stream object.
+
+INT-078: Stream replies generated for a stream declared with `late_reply = "ignore"` shall not be exposed as an unknown-session condition when their session has no active waiter or stream object.
+
 ## Stream flow-control interface
 
 Hidden control messages are conceptually:
@@ -390,7 +398,7 @@ Expected error categories include:
 - stream cancelled;
 - stream error;
 - timeout, when timeouts are implemented;
-- protocol violation or late response policy, when diagnostics are implemented.
+- protocol violation or late reply policy, when diagnostics are implemented.
 
 Interface rules:
 

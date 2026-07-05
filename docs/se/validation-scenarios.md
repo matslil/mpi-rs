@@ -157,7 +157,8 @@ Expected outcome:
 
 - the stream object attempts asynchronous cancellation;
 - drop does not await acknowledgement;
-- late stream events are safely discarded or logged-and-discarded;
+- late stream replies are reported by default when the stream declaration does not opt out;
+- late stream replies are unobserved by `mpi-rs` when the stream declaration uses `late_reply = "ignore"`;
 - ordinary application messages are not silently discarded.
 
 Evidence type: integration test
@@ -239,6 +240,7 @@ A developer investigates a timeout, late response, cancelled stream, or queue-fu
 Expected outcome:
 
 - diagnostics expose enough information to identify the affected task, session, and queue condition;
+- unknown-session replies are visible unless their call or stream declaration uses `late_reply = "ignore"`;
 - diagnostics do not require users to understand all internal macro expansion details.
 
 Evidence type: demonstration or documentation review

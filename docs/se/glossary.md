@@ -94,7 +94,7 @@ The handler for the start message. It initializes task state used by later handl
 
 A logical interaction identifier for exchanges that can produce future messages.
 
-`SessionId` is used for synchronous calls, streaming calls, cancellation, reply matching, late stream event handling, tracing, and debugging.
+`SessionId` is used for synchronous calls, streaming calls, cancellation, reply matching, late reply handling, tracing, and debugging.
 
 ### EndpointId
 
@@ -157,6 +157,14 @@ A hidden stream control message that cancels a stream by session ID.
 ### Credit-based flow control
 
 A flow-control scheme where the consumer grants item credits and the producer may send up to the granted amount.
+
+### Late reply
+
+A call response or stream reply that arrives after the receiving task no longer has an active waiter or stream object for the reply's `SessionId`.
+
+### Late reply policy
+
+The declaration-derived runtime policy for an unknown-session reply. The default policy is `report`; `late_reply = "ignore"` explicitly makes the unknown-session reply unobservable to `mpi-rs`.
 
 ### Late stream event
 
