@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use mpi::{
     CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
-    MessagePlacement, MessageStream, QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent,
-    Response, SendError, SessionId, SessionIdAllocator, StreamCancel, StreamControl, StreamEvent,
-    StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
-    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, spawn_task,
+    LateReplyPolicy, MessagePlacement, MessageStream, QueuedCallRelease, QueuedCallResponse,
+    QueuedStreamEvent, Response, SendError, SessionId, SessionIdAllocator, StreamCancel,
+    StreamControl, StreamEvent, StreamEventMessage, StreamPull, StreamPullMessage, StreamSink,
+    SyncReplySender, TaskContext, TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task,
+    spawn_task,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -174,6 +175,7 @@ enum CtxRuntimeMessage {
     CallResponse {
         session_id: SessionId,
         value: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
     },
     CallRelease {
         session_id: SessionId,
@@ -185,6 +187,7 @@ enum CtxRuntimeMessage {
     StreamEvent {
         session_id: SessionId,
         event: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
     },
 }
 
@@ -201,15 +204,29 @@ impl TaskMessage for CtxRuntimeMessage {
 }
 
 impl CallResponseMessage for CtxRuntimeMessage {
-    fn call_response(session_id: SessionId, value: Box<dyn Any + Send>) -> Self {
-        Self::CallResponse { session_id, value }
+    fn call_response_with_late_reply_policy(
+        session_id: SessionId,
+        value: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self {
+        Self::CallResponse {
+            session_id,
+            value,
+            late_reply_policy,
+        }
     }
 
     fn into_call_response(self) -> Result<QueuedCallResponse, Self> {
         match self {
-            Self::CallResponse { session_id, value } => {
-                Ok(QueuedCallResponse::new(session_id, value))
-            }
+            Self::CallResponse {
+                session_id,
+                value,
+                late_reply_policy,
+            } => Ok(QueuedCallResponse::with_late_reply_policy(
+                session_id,
+                value,
+                late_reply_policy,
+            )),
             other => Err(other),
         }
     }
@@ -242,15 +259,29 @@ impl StreamPullMessage for CtxRuntimeMessage {
 }
 
 impl StreamEventMessage for CtxRuntimeMessage {
-    fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
-        Self::StreamEvent { session_id, event }
+    fn stream_event_with_late_reply_policy(
+        session_id: SessionId,
+        event: Box<dyn Any + Send>,
+        late_reply_policy: LateReplyPolicy,
+    ) -> Self {
+        Self::StreamEvent {
+            session_id,
+            event,
+            late_reply_policy,
+        }
     }
 
     fn into_stream_event(self) -> Result<QueuedStreamEvent, Self> {
         match self {
-            Self::StreamEvent { session_id, event } => {
-                Ok(QueuedStreamEvent::new(session_id, event))
-            }
+            Self::StreamEvent {
+                session_id,
+                event,
+                late_reply_policy,
+            } => Ok(QueuedStreamEvent::with_late_reply_policy(
+                session_id,
+                event,
+                late_reply_policy,
+            )),
             other => Err(other),
         }
     }
@@ -361,6 +392,71 @@ fn req_094_late_call_response_type_mismatch_preserves_response() {
     assert_eq!(
         ctx.take_late_call_response::<u32>(session_id).unwrap(),
         Some(Response::new(session_id, 23))
+    );
+}
+
+#[test]
+fn req_094_late_call_response_with_ignore_policy_is_not_recorded() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(74));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(101), 5);
+
+    ctx.deliver_call_response(QueuedCallResponse::with_late_reply_policy(
+        session_id,
+        Box::new(29_u32),
+        LateReplyPolicy::Ignore,
+    ))
+    .unwrap();
+
+    assert_eq!(ctx.late_call_response_count(), 0);
+    assert_eq!(
+        ctx.take_late_call_response::<u32>(session_id).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn req_108_late_stream_event_is_recorded_for_task_policy_by_default() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(75));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(102), 6);
+
+    ctx.deliver_stream_event(QueuedStreamEvent::new(
+        session_id,
+        Box::new(StreamEvent::<u32, String>::end(session_id)),
+    ))
+    .unwrap();
+
+    assert_eq!(ctx.late_stream_event_count(), 1);
+    assert_eq!(
+        ctx.take_late_stream_event::<u32, String>(session_id)
+            .unwrap(),
+        Some(StreamEvent::end(session_id))
+    );
+    assert_eq!(ctx.late_stream_event_count(), 0);
+}
+
+#[test]
+fn req_108_late_stream_event_with_ignore_policy_is_not_recorded() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(76));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(103), 7);
+
+    ctx.deliver_stream_event(QueuedStreamEvent::with_late_reply_policy(
+        session_id,
+        Box::new(StreamEvent::<u32, String>::end(session_id)),
+        LateReplyPolicy::Ignore,
+    ))
+    .unwrap();
+
+    assert_eq!(ctx.late_stream_event_count(), 0);
+    assert_eq!(
+        ctx.take_late_stream_event::<u32, String>(session_id)
+            .unwrap(),
+        None
     );
 }
 

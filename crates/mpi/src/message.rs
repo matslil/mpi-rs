@@ -12,6 +12,17 @@ pub enum MessagePlacement {
     Priority,
 }
 
+/// Runtime policy for protocol replies that arrive after their session has no
+/// active waiter.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum LateReplyPolicy {
+    /// Surface the late reply to the task's fallback policy/diagnostics state.
+    Report,
+
+    /// Treat the late reply as an allowed obsolete protocol message.
+    Ignore,
+}
+
 /// Trait implemented by message enums that can be stored in a task queue.
 pub trait TaskMessage: Sized + Send + 'static {
     /// Return the receiver-declared placement for this message.
