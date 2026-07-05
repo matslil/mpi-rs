@@ -756,6 +756,17 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             pub fn is_stopped(&self) -> bool {
                 self.inner.is_stopped()
             }
+
+            pub fn late_call_response_count(&self) -> usize {
+                self.inner.late_call_response_count()
+            }
+
+            pub fn take_late_call_response<T: Send + 'static>(
+                &mut self,
+                session_id: ::mpi::SessionId,
+            ) -> Result<Option<::mpi::Response<T>>, ::mpi::CallError> {
+                self.inner.take_late_call_response::<T>(session_id)
+            }
         }
 
         impl #task_ident {
