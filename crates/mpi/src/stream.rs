@@ -536,10 +536,10 @@ impl<T, E> SuspendedMessageStream<T, E> {
 
 impl<T, E> Drop for SuspendedMessageStream<T, E> {
     fn drop(&mut self) {
-        if !self.stream.is_finished()
-            && let Some(on_drop) = self.on_drop.take()
-        {
-            on_drop(self.stream.session_id());
+        if !self.stream.is_finished() {
+            if let Some(on_drop) = self.on_drop.take() {
+                on_drop(self.stream.session_id());
+            }
         }
     }
 }
@@ -742,17 +742,24 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::<StreamEvent<u32, String>>::new()));
         let captured_events = events.clone();
         let mut sender = StreamEventSender::new(Box::new(move |event| {
-            captured_events.lock().expect("events lock poisoned").push(event);
+            captured_events
+                .lock()
+                .expect("events lock poisoned")
+                .push(event);
             Ok(())
         }));
 
-        assert!(sender
-            .send(StreamEvent::batch(session_id, vec![1]))
-            .is_err());
+        assert!(
+            sender
+                .send(StreamEvent::batch(session_id, vec![1]))
+                .is_err()
+        );
         assert!(events.lock().expect("events lock poisoned").is_empty());
 
         add_stream_credit(StreamPull::new(session_id, 1));
-        sender.send(StreamEvent::batch(session_id, vec![2])).unwrap();
+        sender
+            .send(StreamEvent::batch(session_id, vec![2]))
+            .unwrap();
         assert_eq!(stream_credit(session_id), 0);
         assert_eq!(
             events.lock().expect("events lock poisoned").as_slice(),

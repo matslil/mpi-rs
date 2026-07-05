@@ -17,6 +17,7 @@ The agent shall read:
 - `docs/se/stakeholders.md`
 - `docs/se/requirements.md`
 - `docs/se/architecture.md`
+- `docs/se/ctx-future.md`
 - `docs/se/interfaces.md`
 - `docs/se/verification-plan.md`
 - `docs/se/validation-scenarios.md`

@@ -48,6 +48,14 @@ An async function associated with a received message. Handlers process start mes
 
 The task loop that receives messages, checks suspended waiters, resumes matching continuations, or dispatches messages to handlers.
 
+### CtxFuture
+
+A future-like resumable computation that receives mutable context during resume and does not retain that context borrow after suspension.
+
+### Context-returning suspension
+
+A suspension model where a continuation returns control and mutable context access to the scheduler whenever it cannot make progress.
+
 ## Queue terms
 
 ### Queue placement
