@@ -14,7 +14,7 @@ pub use call::{
 };
 pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, resume_fn};
 pub use error::{CallError, RecvError, SendError};
-pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
+pub use message::{CanReceive, HasSessionId, LateReplyPolicy, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
 pub use runtime::{block_on, block_on_ctx_task, block_on_task};

@@ -216,6 +216,8 @@ ARCH-063: Concurrent calls with the same request and response type are disambigu
 
 ARCH-064: Late one-shot responses are surfaced to fallback reply handling or task policy rather than silently discarded by default.
 
+ARCH-065: Reply and stream-reply protocol messages carry a `late_reply` policy derived from the call or stream declaration; `Report` is the default and `Ignore` is an explicit opt-in for unknown-session replies that the application protocol considers obsolete.
+
 ## Stream architecture
 
 A stream is a request message followed by zero or more stream events and then end, error, or cancellation.
@@ -239,6 +241,8 @@ ARCH-076: Credit-based flow control is the recommended mechanism to avoid floodi
 ARCH-077: A stream producer may suspend when backpressured or waiting for stream control messages while the task continues handling other messages.
 
 ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
+
+ARCH-079: Late stream replies are surfaced to fallback reply handling or task policy by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
 
 ## External caller architecture
 
@@ -273,7 +277,7 @@ Diagnostics are not first-phase implementation, but architecture should preserve
 - stream lifecycle tracing;
 - timeout reporting;
 - deadlock/debug support;
-- late response and late stream event reporting.
+- late response and late stream reply reporting, with explicit `late_reply = "ignore"` opt-out.
 
 ## Implementation phases
 

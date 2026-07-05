@@ -444,7 +444,7 @@ Status: approved
 
 ### REQ-082: SessionId uses
 
-`SessionId` shall be used for synchronous calls, streaming calls, cancellation, reply matching, late stream event handling, tracing, and debugging.
+`SessionId` shall be used for synchronous calls, streaming calls, cancellation, reply matching, late reply handling, tracing, and debugging.
 
 Source: SN-042, SN-043, SN-045
 
@@ -516,9 +516,19 @@ Status: approved
 
 ### REQ-094: Late one-shot response handling
 
-If a one-shot response arrives and no active waiter exists for its session, the runtime shall surface it to a fallback reply handler or task policy instead of silently discarding it.
+If a one-shot response arrives and no active waiter exists for its session, the runtime shall surface it to a fallback reply handler or task policy unless the response was declared with `late_reply = "ignore"`.
 
 Source: SN-042, SN-045
+
+Verification: test
+
+Status: approved
+
+### REQ-095: Late reply ignore declaration
+
+A call or stream declaration may declare `late_reply = "ignore"` to mark unknown-session replies for that interaction as intentionally unobservable to `mpi-rs`.
+
+Source: Human maintainer decision, SN-042, SN-043, SN-045
 
 Verification: test
 
@@ -606,9 +616,9 @@ Verification: inspection
 
 Status: approved
 
-### REQ-108: Late stream event discard
+### REQ-108: Late stream event handling
 
-The receive logic may discard or log-and-discard stream events whose `SessionId` no longer has an active waiter or stream object.
+If a stream reply arrives and no active waiter or stream object exists for its session, the runtime shall surface it to a fallback reply handler or task policy unless the stream declaration used `late_reply = "ignore"`.
 
 Source: SN-043
 
@@ -618,7 +628,7 @@ Status: approved
 
 ### REQ-109: No silent discard of ordinary messages
 
-Ordinary application messages shall not be silently discarded under the late stream event rule.
+Ordinary application messages shall not be silently ignored under the late reply policy.
 
 Source: SN-040, SN-043
 
