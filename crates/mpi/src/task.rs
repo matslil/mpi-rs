@@ -16,6 +16,7 @@ use crate::call::{
 use crate::error::{CallError, SendError};
 use crate::message::{HasSessionId, TaskMessage};
 use crate::queue::TaskQueue;
+use crate::scope::TaskScope;
 use crate::session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel,
 };
@@ -388,6 +389,22 @@ where
         }));
 
         (session_id, events, stream)
+    }
+}
+
+impl<M, const N: usize> TaskScope for TaskContext<M, N>
+where
+    M: TaskMessage + CallResponseMessage + StreamEventMessage,
+{
+    fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T> {
+        TaskContext::begin_call::<T>(self)
+    }
+
+    fn begin_stream<T: Send + 'static, E: Send + 'static>(
+        &mut self,
+        control: Arc<dyn StreamControl>,
+    ) -> StreamSession<T, E> {
+        TaskContext::begin_stream::<T, E>(self, control)
     }
 }
 

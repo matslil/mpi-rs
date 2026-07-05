@@ -12,11 +12,12 @@ pub use call::{
     CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
     SuspendedCall, suspended_call_channel, suspended_call_waiter,
 };
+pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, resume_fn};
 pub use error::{CallError, RecvError, SendError};
 pub use message::{CanReceive, HasSessionId, MessagePlacement, TaskMessage};
 pub use mpi_macros::{call, event, start, stream, task};
 pub use queue::TaskQueue;
-pub use runtime::{block_on, block_on_task};
+pub use runtime::{block_on, block_on_ctx_task, block_on_task};
 pub use scope::TaskScope;
 pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
