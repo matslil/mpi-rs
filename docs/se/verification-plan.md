@@ -180,8 +180,10 @@ Session and call tests should verify:
 - responses carry the correct session ID;
 - a call has exactly one response or defined failure outcome;
 - concurrent same-type calls with out-of-order replies resume the correct handler;
-- late one-shot responses are surfaced to fallback handling or task policy by default;
-- one-shot responses declared with `late_reply = "ignore"` do not create an unknown-session fallback record.
+- late one-shot responses invoke the task late-reply handler by default;
+- the default late-reply handler returns ignore;
+- a late-reply handler receives a borrowed reply reference and may return terminate;
+- one-shot responses declared with `late_reply = "ignore"` bypass the late-reply handler.
 
 Relevant requirements:
 
@@ -196,6 +198,8 @@ Relevant requirements:
 - REQ-093
 - REQ-094
 - REQ-095
+- REQ-096
+- REQ-097
 
 ### Stream verification
 
@@ -205,8 +209,8 @@ Stream tests should verify:
 - one-item-at-a-time public `next(ctx).await` behavior;
 - local buffer draining before awaiting another batch;
 - cancellation on dropped unfinished stream;
-- late stream replies are surfaced to fallback handling or task policy by default;
-- stream replies declared with `late_reply = "ignore"` do not create an unknown-session fallback record;
+- late stream replies invoke the task late-reply handler by default;
+- stream replies declared with `late_reply = "ignore"` bypass the late-reply handler;
 - no silent discard of ordinary application messages;
 - producer remains within task model;
 - automatic end and error events;
@@ -225,6 +229,8 @@ Relevant requirements:
 - REQ-106
 - REQ-107
 - REQ-095
+- REQ-096
+- REQ-097
 - REQ-108
 - REQ-109
 - REQ-110
