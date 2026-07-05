@@ -1,5 +1,3 @@
-//! Stream protocol messages and consumer/producer helpers.
-
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -16,36 +14,29 @@ use crate::session::SessionId;
 
 const STREAM_PULL_CREDIT: u32 = 1;
 const STREAM_INITIAL_CREDIT: u32 = 64;
-
 static STREAM_CREDITS: OnceLock<Mutex<HashMap<SessionId, u32>>> = OnceLock::new();
 
 fn stream_credits() -> &'static Mutex<HashMap<SessionId, u32>> {
     STREAM_CREDITS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Add producer credit for a stream session.
 pub fn add_stream_credit(pull: StreamPull) {
-    let mut credits = stream_credits()
-        .lock()
-        .expect("stream credit table poisoned");
+    let mut credits = stream_credits().lock().expect("stream credit table poisoned");
     let credit = credits.entry(pull.session_id).or_insert(0);
     *credit = credit.saturating_add(pull.credit);
 }
 
-/// Consume producer credit for stream items before an event is sent.
 pub fn consume_stream_credit(session_id: SessionId, count: usize) -> Result<(), SendError> {
     if count == 0 {
         return Ok(());
     }
     let count = u32::try_from(count).unwrap_or(u32::MAX);
-    let mut credits = stream_credits()
-        .lock()
-        .expect("stream credit table poisoned");
+    let mut credits = stream_credits().lock().expect("stream credit table poisoned");
     let Some(available) = credits.get_mut(&session_id) else {
-        return Err(SendError::TaskStopped);
+        return Err(SendError::StreamFlowLimited);
     };
     if *available < count {
-        return Err(SendError::TaskStopped);
+        return Err(SendError::StreamFlowLimited);
     }
     *available -= count;
     if *available == 0 {
@@ -54,7 +45,6 @@ pub fn consume_stream_credit(session_id: SessionId, count: usize) -> Result<(), 
     Ok(())
 }
 
-/// Forget producer credit for a stream session.
 pub fn forget_stream_credit(session_id: SessionId) {
     stream_credits()
         .lock()
@@ -62,7 +52,6 @@ pub fn forget_stream_credit(session_id: SessionId) {
         .remove(&session_id);
 }
 
-/// Return producer credit stored for a stream session.
 #[must_use]
 pub fn stream_credit(session_id: SessionId) -> u32 {
     stream_credits()
@@ -73,55 +62,29 @@ pub fn stream_credit(session_id: SessionId) -> u32 {
         .unwrap_or(0)
 }
 
-/// Event sent from a stream producer to a stream consumer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamEvent<T, E> {
-    /// A batch of stream items for one session.
-    Batch {
-        /// Stream session.
-        session_id: SessionId,
-        /// Batched item values.
-        values: Vec<T>,
-    },
-
-    /// Normal end of stream for one session.
-    End {
-        /// Stream session.
-        session_id: SessionId,
-    },
-
-    /// Stream failure for one session.
-    Error {
-        /// Stream session.
-        session_id: SessionId,
-        /// Producer error.
-        error: E,
-    },
+    Batch { session_id: SessionId, values: Vec<T> },
+    End { session_id: SessionId },
+    Error { session_id: SessionId, error: E },
 }
 
 impl<T, E> StreamEvent<T, E> {
-    /// Construct a batch event.
     #[must_use]
     pub fn batch(session_id: SessionId, values: impl Into<Vec<T>>) -> Self {
-        Self::Batch {
-            session_id,
-            values: values.into(),
-        }
+        Self::Batch { session_id, values: values.into() }
     }
 
-    /// Construct an end event.
     #[must_use]
     pub const fn end(session_id: SessionId) -> Self {
         Self::End { session_id }
     }
 
-    /// Construct an error event.
     #[must_use]
     pub fn error(session_id: SessionId, error: E) -> Self {
         Self::Error { session_id, error }
     }
 
-    /// Return whether this event ends the stream session.
     #[must_use]
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::End { .. } | Self::Error { .. })
@@ -138,44 +101,30 @@ impl<T, E> HasSessionId for StreamEvent<T, E> {
     }
 }
 
-/// Type-erased queued stream event carried by a caller task message.
 pub struct QueuedStreamEvent {
-    /// Stream session completed or advanced by this event.
     pub session_id: SessionId,
-
-    /// Type-erased stream event value.
     pub event: Box<dyn Any + Send>,
 }
 
 impl QueuedStreamEvent {
-    /// Construct a queued stream event.
     #[must_use]
     pub fn new(session_id: SessionId, event: Box<dyn Any + Send>) -> Self {
         Self { session_id, event }
     }
 }
 
-/// Message enums that can carry queued task-internal stream events.
 pub trait StreamEventMessage: Sized {
-    /// Wrap a typed stream event into this task's message enum.
     fn stream_event(session_id: SessionId, event: Box<dyn Any + Send>) -> Self;
-
-    /// Extract a queued stream event from this message, if it is one.
     fn into_stream_event(self) -> Result<QueuedStreamEvent, Self>;
 }
 
-/// Hidden stream pull control message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamPull {
-    /// Stream session.
     pub session_id: SessionId,
-
-    /// Additional item credit granted by the consumer.
     pub credit: u32,
 }
 
 impl StreamPull {
-    /// Construct a pull control message.
     #[must_use]
     pub const fn new(session_id: SessionId, credit: u32) -> Self {
         Self { session_id, credit }
@@ -188,24 +137,17 @@ impl HasSessionId for StreamPull {
     }
 }
 
-/// Message enums that can carry queued stream pull control.
 pub trait StreamPullMessage: Sized {
-    /// Wrap stream pull control into this task's message enum.
     fn stream_pull(session_id: SessionId, credit: u32) -> Self;
-
-    /// Extract stream pull control from this message, if it is one.
     fn into_stream_pull(self) -> Result<StreamPull, Self>;
 }
 
-/// Hidden stream cancel control message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamCancel {
-    /// Stream session.
     pub session_id: SessionId,
 }
 
 impl StreamCancel {
-    /// Construct a stream cancellation message.
     #[must_use]
     pub const fn new(session_id: SessionId) -> Self {
         Self { session_id }
@@ -218,20 +160,15 @@ impl HasSessionId for StreamCancel {
     }
 }
 
-/// Sends stream lifecycle control for a live stream.
 pub trait StreamControl: Send + Sync + 'static {
-    /// Try to grant additional item credit to a stream producer.
     fn try_pull(&self, _session_id: SessionId, _credit: u32) -> Result<(), SendError> {
         Ok(())
     }
 
-    /// Try to cancel a stream session.
     fn try_cancel(&self, session_id: SessionId) -> Result<(), SendError>;
 }
 
-/// Receives producer-side stream events from a `StreamSink`.
 pub trait StreamEventSink<T, E> {
-    /// Send one stream event to the consumer side.
     fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError>;
 }
 
@@ -250,19 +187,16 @@ impl<T, E> StreamEventSink<T, E> for Box<dyn StreamEventSink<T, E> + Send> {
     }
 }
 
-/// Owned sender endpoint used by stream producers to emit events.
 pub struct StreamEventSender<T, E> {
     sink: Box<dyn StreamEventSink<T, E> + Send>,
 }
 
 impl<T, E> StreamEventSender<T, E> {
-    /// Create a stream-event sender from a sink implementation.
     #[must_use]
     pub fn new(sink: Box<dyn StreamEventSink<T, E> + Send>) -> Self {
         Self { sink }
     }
 
-    /// Send one stream event.
     pub fn send(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
         if let StreamEvent::Batch { session_id, values } = &event {
             consume_stream_credit(*session_id, values.len())?;
@@ -277,10 +211,8 @@ impl<T, E> StreamEventSender<T, E> {
     }
 }
 
-/// Boxed producer-side stream sink used by generated stream handlers.
 pub type BoxStreamSink<T, E> = StreamSink<T, E, Box<dyn StreamEventSink<T, E> + Send>>;
 
-/// Producer-side stream helper that batches items and emits end/error events.
 pub struct StreamSink<T, E, S>
 where
     S: StreamEventSink<T, E>,
@@ -297,13 +229,9 @@ impl<T, E, S> StreamSink<T, E, S>
 where
     S: StreamEventSink<T, E>,
 {
-    /// Create a stream sink with the given positive batch size.
     #[must_use]
     pub fn new(session_id: SessionId, batch_size: usize, sink: S) -> Self {
-        assert!(
-            batch_size > 0,
-            "stream batch size must be greater than zero"
-        );
+        assert!(batch_size > 0, "stream batch size must be greater than zero");
         Self {
             session_id,
             batch_size,
@@ -314,13 +242,11 @@ where
         }
     }
 
-    /// Return this stream's session identifier.
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.session_id
     }
 
-    /// Push one item, flushing a batch when the configured batch size is reached.
     pub fn push(&mut self, value: T) -> Result<(), SendError> {
         assert!(!self.finished, "cannot push to a finished stream");
         self.buffer.push(value);
@@ -330,17 +256,14 @@ where
         Ok(())
     }
 
-    /// Flush a non-empty batch.
     pub fn flush(&mut self) -> Result<(), SendError> {
         if self.buffer.is_empty() {
             return Ok(());
         }
         let values = std::mem::take(&mut self.buffer);
-        self.sink
-            .send_event(StreamEvent::batch(self.session_id, values))
+        self.sink.send_event(StreamEvent::batch(self.session_id, values))
     }
 
-    /// Flush any buffered items and send normal stream end.
     pub fn finish(&mut self) -> Result<(), SendError> {
         if self.finished {
             return Ok(());
@@ -350,19 +273,16 @@ where
         self.sink.send_event(StreamEvent::end(self.session_id))
     }
 
-    /// Flush any buffered items and send stream error.
     pub fn fail(&mut self, error: E) -> Result<(), SendError> {
         if self.finished {
             return Ok(());
         }
         self.flush()?;
         self.finished = true;
-        self.sink
-            .send_event(StreamEvent::error(self.session_id, error))
+        self.sink.send_event(StreamEvent::error(self.session_id, error))
     }
 }
 
-/// Consumer-side stream helper that hides batching.
 pub struct MessageStream<T, E> {
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
@@ -372,7 +292,6 @@ pub struct MessageStream<T, E> {
 }
 
 impl<T, E> MessageStream<T, E> {
-    /// Construct a stream object and grant the producer initial item credit.
     #[must_use]
     pub fn new(session_id: SessionId, control: Arc<dyn StreamControl>) -> Self {
         let stream = Self {
@@ -386,13 +305,11 @@ impl<T, E> MessageStream<T, E> {
         stream
     }
 
-    /// Return this stream's logical session identifier.
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.session_id
     }
 
-    /// Return whether the stream has reached end or error.
     #[must_use]
     pub const fn is_finished(&self) -> bool {
         self.finished
@@ -406,20 +323,14 @@ impl<T, E> MessageStream<T, E> {
         self.grant_credit(STREAM_PULL_CREDIT);
     }
 
-    /// Consume one incoming stream event and return at most one item.
-    ///
-    /// This is the synchronous core of the future `next(ctx).await` API. It
-    /// drains the local buffer before using another incoming event.
     pub fn next_from_event(&mut self, event: StreamEvent<T, E>) -> Result<Option<T>, E> {
         if let Some(value) = self.buffer.pop_front() {
             self.grant_one_credit();
             return Ok(Some(value));
         }
-
         if self.finished {
             return Ok(None);
         }
-
         match event {
             StreamEvent::Batch { session_id, values } => {
                 assert_eq!(session_id, self.session_id, "stream event session mismatch");
@@ -443,13 +354,11 @@ impl<T, E> MessageStream<T, E> {
         }
     }
 
-    /// Return the next buffered item, without consuming a new event.
     pub fn next_buffered(&mut self) -> Result<Option<T>, E> {
         if let Some(value) = self.buffer.pop_front() {
             self.grant_one_credit();
             return Ok(Some(value));
         }
-
         Ok(None)
     }
 }
@@ -462,7 +371,6 @@ impl<T, E> Drop for MessageStream<T, E> {
     }
 }
 
-/// Owned task-internal stream session state returned by a task context.
 pub type StreamSession<T, E> = (
     SessionId,
     StreamEventSender<T, E>,
@@ -471,7 +379,6 @@ pub type StreamSession<T, E> = (
 
 type StreamOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
 
-/// Task-internal stream consumer for generated handlers.
 pub struct SuspendedMessageStream<T, E> {
     stream: MessageStream<T, E>,
     receiver: Receiver<StreamEvent<T, E>>,
@@ -479,8 +386,6 @@ pub struct SuspendedMessageStream<T, E> {
 }
 
 impl<T, E> SuspendedMessageStream<T, E> {
-    /// Construct a task-internal stream from a stream session, cancellation
-    /// control, and a receiver for producer events routed through the task queue.
     #[must_use]
     pub fn new(
         session_id: SessionId,
@@ -494,7 +399,6 @@ impl<T, E> SuspendedMessageStream<T, E> {
         }
     }
 
-    /// Construct a task-internal stream with a drop hook.
     #[must_use]
     pub fn new_with_on_drop<F>(
         session_id: SessionId,
@@ -512,19 +416,16 @@ impl<T, E> SuspendedMessageStream<T, E> {
         }
     }
 
-    /// Return this stream's logical session identifier.
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.stream.session_id()
     }
 
-    /// Return whether the stream has reached end or error.
     #[must_use]
     pub const fn is_finished(&self) -> bool {
         self.stream.is_finished()
     }
 
-    /// Return a future for the next item, end, or stream error.
     pub fn next<'a>(&'a mut self, _ctx: &mut impl TaskScope) -> SuspendedStreamNext<'a, T, E> {
         SuspendedStreamNext { stream: self }
     }
@@ -544,7 +445,6 @@ impl<T, E> Drop for SuspendedMessageStream<T, E> {
     }
 }
 
-/// Future returned by `SuspendedMessageStream::next`.
 pub struct SuspendedStreamNext<'a, T, E> {
     stream: &'a mut SuspendedMessageStream<T, E>,
 }
@@ -554,16 +454,13 @@ impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-
         if let Some(value) = this.stream.stream.next_buffered()? {
             return Poll::Ready(Ok(Some(value)));
         }
-
         if this.stream.stream.is_finished() {
             this.stream.disarm_on_drop();
             return Poll::Ready(Ok(None));
         }
-
         match this.stream.receiver.try_recv() {
             Ok(event) => {
                 let result = this.stream.stream.next_from_event(event);
@@ -584,21 +481,15 @@ impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
     }
 }
 
-/// Create the waiter sender and suspended stream for one queued task-internal stream.
 #[must_use]
 pub fn suspended_stream_waiter<T, E>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
 ) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>) {
     let (sender, receiver) = std::sync::mpsc::channel();
-    (
-        sender,
-        SuspendedMessageStream::new(session_id, control, receiver),
-    )
+    (sender, SuspendedMessageStream::new(session_id, control, receiver))
 }
 
-/// Create the waiter sender and suspended stream for one queued task-internal
-/// stream with a hook for dropped streams.
 #[must_use]
 pub(crate) fn suspended_stream_waiter_with_on_drop<T, E, F>(
     session_id: SessionId,
@@ -615,15 +506,12 @@ where
     )
 }
 
-/// Blocking stream consumer for callers outside the task model.
 pub struct BlockingMessageStream<T, E> {
     stream: MessageStream<T, E>,
     receiver: Receiver<StreamEvent<T, E>>,
 }
 
 impl<T, E> BlockingMessageStream<T, E> {
-    /// Construct a blocking stream from a stream session, cancellation control,
-    /// and a receiver for producer events.
     #[must_use]
     pub fn new(
         session_id: SessionId,
@@ -636,29 +524,23 @@ impl<T, E> BlockingMessageStream<T, E> {
         }
     }
 
-    /// Return this stream's logical session identifier.
     #[must_use]
     pub const fn session_id(&self) -> SessionId {
         self.stream.session_id()
     }
 
-    /// Return whether the stream has reached end or error.
     #[must_use]
     pub const fn is_finished(&self) -> bool {
         self.stream.is_finished()
     }
 
-    /// Block the current OS thread until one item, end, error, or producer
-    /// disconnect is observed.
     pub fn next_blocking(&mut self) -> Result<Option<T>, E> {
         if let Some(value) = self.stream.next_buffered()? {
             return Ok(Some(value));
         }
-
         if self.stream.is_finished() {
             return Ok(None);
         }
-
         match self.receiver.recv() {
             Ok(event) => self.stream.next_from_event(event),
             Err(_) => Ok(None),
@@ -711,7 +593,6 @@ mod tests {
             control.pulls(),
             vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)],
         );
-
         assert_eq!(
             stream.next_from_event(StreamEvent::batch(session_id, vec![10, 11])),
             Ok(Some(10)),
@@ -723,7 +604,6 @@ mod tests {
                 StreamPull::new(session_id, 1),
             ],
         );
-
         assert_eq!(stream.next_buffered(), Ok(Some(11)));
         assert_eq!(
             control.pulls(),
@@ -736,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_event_sender_enforces_credit() {
+    fn stream_event_sender_enforces_flow() {
         let session_id = SessionId::new(crate::EndpointId(8), 1);
         forget_stream_credit(session_id);
         let events = Arc::new(Mutex::new(Vec::<StreamEvent<u32, String>>::new()));
@@ -746,9 +626,10 @@ mod tests {
             Ok(())
         }));
 
-        assert!(sender
-            .send(StreamEvent::batch(session_id, vec![1]))
-            .is_err());
+        assert_eq!(
+            sender.send(StreamEvent::batch(session_id, vec![1])),
+            Err(SendError::StreamFlowLimited),
+        );
         assert!(events.lock().expect("events lock poisoned").is_empty());
 
         add_stream_credit(StreamPull::new(session_id, 1));
