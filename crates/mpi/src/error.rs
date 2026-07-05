@@ -8,6 +8,9 @@ pub enum SendError {
     /// The target task queue has reached its compile-time capacity.
     QueueFull,
 
+    /// The stream producer cannot send another item yet.
+    StreamFlowLimited,
+
     /// The target task has stopped accepting messages.
     TaskStopped,
 }
@@ -16,6 +19,7 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::QueueFull => f.write_str("target task queue is full"),
+            Self::StreamFlowLimited => f.write_str("stream producer cannot send another item yet"),
             Self::TaskStopped => f.write_str("target task has stopped"),
         }
     }
