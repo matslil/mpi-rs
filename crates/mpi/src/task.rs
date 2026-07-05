@@ -14,7 +14,9 @@ use crate::call::{
     suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, SendError};
-use crate::message::{HasSessionId, LateReplyPolicy, TaskMessage};
+use crate::message::{
+    HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef, TaskMessage,
+};
 use crate::queue::TaskQueue;
 use crate::scope::TaskScope;
 use crate::session::{
@@ -170,9 +172,7 @@ where
     self_handle: TaskHandle<M, N>,
     session_ids: SessionIdAllocator,
     call_waiters: HashMap<SessionId, Box<dyn ErasedCallWaiter>>,
-    late_call_responses: Vec<QueuedCallResponse>,
     stream_waiters: HashMap<SessionId, Box<dyn ErasedStreamWaiter>>,
-    late_stream_events: Vec<QueuedStreamEvent>,
     stream_credits: HashMap<SessionId, u32>,
     released_calls: HashSet<SessionId>,
     stopped: bool,
@@ -216,9 +216,7 @@ where
                 self_handle,
                 session_ids: SessionIdAllocator::new(endpoint),
                 call_waiters: HashMap::new(),
-                late_call_responses: Vec::new(),
                 stream_waiters: HashMap::new(),
-                late_stream_events: Vec::new(),
                 stream_credits: HashMap::new(),
                 released_calls: HashSet::new(),
                 stopped: false,
@@ -238,99 +236,46 @@ where
     }
 
     /// Route a queued call response to the registered waiter, if any.
-    pub fn deliver_call_response(&self, response: QueuedCallResponse) -> Result<(), CallError> {
+    pub fn deliver_call_response(
+        &self,
+        response: QueuedCallResponse,
+    ) -> Result<LateReplyAction, CallError> {
+        self.deliver_call_response_with_late_reply_handler(response, |_| LateReplyAction::Ignore)
+    }
+
+    /// Route a queued call response using an explicit late-reply handler.
+    pub fn deliver_call_response_with_late_reply_handler<F>(
+        &self,
+        response: QueuedCallResponse,
+        handler: F,
+    ) -> Result<LateReplyAction, CallError>
+    where
+        F: FnOnce(LateReplyRef<'_>) -> LateReplyAction,
+    {
         let waiter = self
             .inner
             .borrow_mut()
             .call_waiters
             .remove(&response.session_id);
         match waiter {
-            Some(waiter) => waiter.deliver(response),
+            Some(waiter) => {
+                waiter.deliver(response)?;
+                Ok(LateReplyAction::Ignore)
+            }
+            None if response.late_reply_policy == LateReplyPolicy::Ignore => {
+                Ok(LateReplyAction::Ignore)
+            }
             None => {
-                if response.late_reply_policy == LateReplyPolicy::Report {
-                    self.inner.borrow_mut().late_call_responses.push(response);
+                let reply = LateReplyRef::new(
+                    response.session_id,
+                    LateReplyKind::CallResponse,
+                    response.value.as_ref(),
+                );
+                let action = handler(reply);
+                if action == LateReplyAction::Terminate {
+                    self.stop();
                 }
-                Ok(())
-            }
-        }
-    }
-
-    /// Return the number of late one-shot call responses recorded by this task.
-    #[must_use]
-    pub fn late_call_response_count(&self) -> usize {
-        self.inner.borrow().late_call_responses.len()
-    }
-
-    /// Take and downcast one late one-shot call response by session ID.
-    ///
-    /// If the response payload does not match `T`, the response is restored so a
-    /// later policy decision can inspect it with the correct type.
-    pub fn take_late_call_response<T: Send + 'static>(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<Response<T>>, CallError> {
-        let mut state = self.inner.borrow_mut();
-        let Some(index) = state
-            .late_call_responses
-            .iter()
-            .position(|response| response.session_id == session_id)
-        else {
-            return Ok(None);
-        };
-
-        let response = state.late_call_responses.remove(index);
-        match response.value.downcast::<T>() {
-            Ok(value) => Ok(Some(Response::new(response.session_id, *value))),
-            Err(value) => {
-                state.late_call_responses.insert(
-                    index,
-                    QueuedCallResponse {
-                        session_id: response.session_id,
-                        value,
-                        late_reply_policy: response.late_reply_policy,
-                    },
-                );
-                Err(CallError::UnexpectedReplyType)
-            }
-        }
-    }
-
-    /// Return the number of late stream replies recorded by this task.
-    #[must_use]
-    pub fn late_stream_event_count(&self) -> usize {
-        self.inner.borrow().late_stream_events.len()
-    }
-
-    /// Take and downcast one late stream reply by session ID.
-    ///
-    /// If the stream payload does not match `StreamEvent<T, E>`, the event is
-    /// restored so a later policy decision can inspect it with the correct type.
-    pub fn take_late_stream_event<T: Send + 'static, E: Send + 'static>(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<StreamEvent<T, E>>, SendError> {
-        let mut state = self.inner.borrow_mut();
-        let Some(index) = state
-            .late_stream_events
-            .iter()
-            .position(|event| event.session_id == session_id)
-        else {
-            return Ok(None);
-        };
-
-        let event = state.late_stream_events.remove(index);
-        match event.event.downcast::<StreamEvent<T, E>>() {
-            Ok(value) => Ok(Some(*value)),
-            Err(value) => {
-                state.late_stream_events.insert(
-                    index,
-                    QueuedStreamEvent {
-                        session_id: event.session_id,
-                        event: value,
-                        late_reply_policy: event.late_reply_policy,
-                    },
-                );
-                Err(SendError::TaskStopped)
+                Ok(action)
             }
         }
     }
@@ -384,16 +329,38 @@ where
     }
 
     /// Route a queued stream event to the registered stream waiter, if any.
-    pub fn deliver_stream_event(&self, event: QueuedStreamEvent) -> Result<(), SendError> {
+    pub fn deliver_stream_event(
+        &self,
+        event: QueuedStreamEvent,
+    ) -> Result<LateReplyAction, SendError> {
+        self.deliver_stream_event_with_late_reply_handler(event, |_| LateReplyAction::Ignore)
+    }
+
+    /// Route a queued stream event using an explicit late-reply handler.
+    pub fn deliver_stream_event_with_late_reply_handler<F>(
+        &self,
+        event: QueuedStreamEvent,
+        handler: F,
+    ) -> Result<LateReplyAction, SendError>
+    where
+        F: FnOnce(LateReplyRef<'_>) -> LateReplyAction,
+    {
         let session_id = event.session_id;
         let mut state = self.inner.borrow_mut();
         let finished = match state.stream_waiters.get(&session_id) {
             Some(waiter) => waiter.deliver(event)?,
+            None if event.late_reply_policy == LateReplyPolicy::Ignore => {
+                return Ok(LateReplyAction::Ignore);
+            }
             None => {
-                if event.late_reply_policy == LateReplyPolicy::Report {
-                    state.late_stream_events.push(event);
+                drop(state);
+                let reply =
+                    LateReplyRef::new(session_id, LateReplyKind::StreamEvent, event.event.as_ref());
+                let action = handler(reply);
+                if action == LateReplyAction::Terminate {
+                    self.stop();
                 }
-                return Ok(());
+                return Ok(action);
             }
         };
         if finished {
@@ -401,7 +368,7 @@ where
             state.stream_credits.remove(&session_id);
             forget_stream_credit(session_id);
         }
-        Ok(())
+        Ok(LateReplyAction::Ignore)
     }
 
     /// Request that the task dispatch loop stops.

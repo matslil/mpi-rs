@@ -124,7 +124,7 @@ The Test Agent should pay special attention to:
 - stream `Batch`, `End`, and `Error` behavior;
 - stream buffering so public `next(ctx).await` returns one item at a time;
 - cancellation on dropped stream handle;
-- default reporting and explicit `late_reply = "ignore"` handling for late replies;
+- default no-op late-reply handling, custom late-reply handlers, and explicit `late_reply = "ignore"` handling for late replies;
 - task-internal calls and streams not blocking the OS thread.
 
 ## Required checks

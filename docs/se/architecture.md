@@ -214,9 +214,13 @@ ARCH-062: A call handler can return the reply payload; runtime or macro plumbing
 
 ARCH-063: Concurrent calls with the same request and response type are disambiguated by `SessionId`.
 
-ARCH-064: Late one-shot responses are surfaced to fallback reply handling or task policy rather than silently discarded by default.
+ARCH-064: Late one-shot responses are passed to the receiving task's late-reply handler rather than silently discarded by default.
 
 ARCH-065: Reply and stream-reply protocol messages carry a `late_reply` policy derived from the call or stream declaration; `Report` is the default and `Ignore` is an explicit opt-in for unknown-session replies that the application protocol considers obsolete.
+
+ARCH-066: Reported late replies are passed by borrowed reference to the receiving task's late-reply handler, which returns either `Ignore` or `Terminate`.
+
+ARCH-067: A task without a declared late-reply handler uses a default no-op handler that returns `Ignore`; future diagnostics or logging infrastructure may change the default handler implementation without changing the task declaration model.
 
 ## Stream architecture
 
@@ -242,7 +246,7 @@ ARCH-077: A stream producer may suspend when backpressured or waiting for stream
 
 ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
-ARCH-079: Late stream replies are surfaced to fallback reply handling or task policy by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
+ARCH-079: Late stream replies are passed to the receiving task's late-reply handler by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
 
 ## External caller architecture
 
@@ -277,7 +281,7 @@ Diagnostics are not first-phase implementation, but architecture should preserve
 - stream lifecycle tracing;
 - timeout reporting;
 - deadlock/debug support;
-- late response and late stream reply reporting, with explicit `late_reply = "ignore"` opt-out.
+- late response and late stream reply reporting through task late-reply handlers, with explicit `late_reply = "ignore"` opt-out.
 
 ## Implementation phases
 

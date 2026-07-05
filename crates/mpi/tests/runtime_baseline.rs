@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use mpi::{
     CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
-    LateReplyPolicy, MessagePlacement, MessageStream, QueuedCallRelease, QueuedCallResponse,
-    QueuedStreamEvent, Response, SendError, SessionId, SessionIdAllocator, StreamCancel,
-    StreamControl, StreamEvent, StreamEventMessage, StreamPull, StreamPullMessage, StreamSink,
-    SyncReplySender, TaskContext, TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task,
-    spawn_task,
+    LateReplyAction, LateReplyKind, LateReplyPolicy, MessagePlacement, MessageStream,
+    QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent, Response, SendError, SessionId,
+    SessionIdAllocator, StreamCancel, StreamControl, StreamEvent, StreamEventMessage, StreamPull,
+    StreamPullMessage, StreamSink, SyncReplySender, TaskContext, TaskHandle, TaskMessage,
+    TaskQueue, block_on_ctx_task, spawn_task,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -357,107 +357,146 @@ fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
 }
 
 #[test]
-fn req_094_late_call_response_is_recorded_for_task_policy() {
+fn req_094_late_call_response_default_handler_ignores() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(72));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(99), 3);
 
-    ctx.deliver_call_response(QueuedCallResponse::new(session_id, Box::new(17_u32)))
-        .unwrap();
-
-    assert_eq!(ctx.late_call_response_count(), 1);
     assert_eq!(
-        ctx.take_late_call_response::<u32>(session_id).unwrap(),
-        Some(Response::new(session_id, 17))
+        ctx.deliver_call_response(QueuedCallResponse::new(session_id, Box::new(17_u32)))
+            .unwrap(),
+        LateReplyAction::Ignore
     );
-    assert_eq!(ctx.late_call_response_count(), 0);
+    assert!(!ctx.is_stopped());
 }
 
 #[test]
-fn req_094_late_call_response_type_mismatch_preserves_response() {
+fn req_094_late_call_response_handler_receives_borrowed_reply() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(73));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(100), 4);
-
-    ctx.deliver_call_response(QueuedCallResponse::new(session_id, Box::new(23_u32)))
-        .unwrap();
+    let mut observed = None;
 
     assert_eq!(
-        ctx.take_late_call_response::<String>(session_id),
-        Err(mpi::CallError::UnexpectedReplyType)
+        ctx.deliver_call_response_with_late_reply_handler(
+            QueuedCallResponse::new(session_id, Box::new(23_u32)),
+            |reply| {
+                assert_eq!(reply.session_id(), session_id);
+                assert_eq!(reply.kind(), LateReplyKind::CallResponse);
+                observed = reply.downcast_ref::<u32>().copied();
+                LateReplyAction::Ignore
+            },
+        )
+        .unwrap(),
+        LateReplyAction::Ignore
     );
-    assert_eq!(ctx.late_call_response_count(), 1);
-    assert_eq!(
-        ctx.take_late_call_response::<u32>(session_id).unwrap(),
-        Some(Response::new(session_id, 23))
-    );
+    assert_eq!(observed, Some(23));
+    assert!(!ctx.is_stopped());
 }
 
 #[test]
-fn req_094_late_call_response_with_ignore_policy_is_not_recorded() {
+fn req_094_late_call_response_with_ignore_policy_bypasses_handler() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(74));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(101), 5);
+    let mut called = false;
 
-    ctx.deliver_call_response(QueuedCallResponse::with_late_reply_policy(
-        session_id,
-        Box::new(29_u32),
-        LateReplyPolicy::Ignore,
-    ))
-    .unwrap();
-
-    assert_eq!(ctx.late_call_response_count(), 0);
     assert_eq!(
-        ctx.take_late_call_response::<u32>(session_id).unwrap(),
-        None
+        ctx.deliver_call_response_with_late_reply_handler(
+            QueuedCallResponse::with_late_reply_policy(
+                session_id,
+                Box::new(29_u32),
+                LateReplyPolicy::Ignore,
+            ),
+            |_| {
+                called = true;
+                LateReplyAction::Terminate
+            },
+        )
+        .unwrap(),
+        LateReplyAction::Ignore
     );
+    assert!(!called);
+    assert!(!ctx.is_stopped());
 }
 
 #[test]
-fn req_108_late_stream_event_is_recorded_for_task_policy_by_default() {
+fn req_094_late_call_response_handler_can_terminate_task() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(75));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(102), 6);
 
-    ctx.deliver_stream_event(QueuedStreamEvent::new(
-        session_id,
-        Box::new(StreamEvent::<u32, String>::end(session_id)),
-    ))
-    .unwrap();
-
-    assert_eq!(ctx.late_stream_event_count(), 1);
     assert_eq!(
-        ctx.take_late_stream_event::<u32, String>(session_id)
-            .unwrap(),
-        Some(StreamEvent::end(session_id))
+        ctx.deliver_call_response_with_late_reply_handler(
+            QueuedCallResponse::new(session_id, Box::new(31_u32)),
+            |_| LateReplyAction::Terminate,
+        )
+        .unwrap(),
+        LateReplyAction::Terminate
     );
-    assert_eq!(ctx.late_stream_event_count(), 0);
+    assert!(ctx.is_stopped());
 }
 
 #[test]
-fn req_108_late_stream_event_with_ignore_policy_is_not_recorded() {
+fn req_108_late_stream_event_handler_receives_borrowed_reply() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(76));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(103), 7);
+    let mut observed_end = false;
 
-    ctx.deliver_stream_event(QueuedStreamEvent::with_late_reply_policy(
-        session_id,
-        Box::new(StreamEvent::<u32, String>::end(session_id)),
-        LateReplyPolicy::Ignore,
-    ))
-    .unwrap();
-
-    assert_eq!(ctx.late_stream_event_count(), 0);
     assert_eq!(
-        ctx.take_late_stream_event::<u32, String>(session_id)
-            .unwrap(),
-        None
+        ctx.deliver_stream_event_with_late_reply_handler(
+            QueuedStreamEvent::new(
+                session_id,
+                Box::new(StreamEvent::<u32, String>::end(session_id)),
+            ),
+            |reply| {
+                assert_eq!(reply.session_id(), session_id);
+                assert_eq!(reply.kind(), LateReplyKind::StreamEvent);
+                observed_end = matches!(
+                    reply.downcast_ref(),
+                    Some(StreamEvent::<u32, String>::End { .. })
+                );
+                LateReplyAction::Ignore
+            },
+        )
+        .unwrap(),
+        LateReplyAction::Ignore
     );
+    assert!(observed_end);
+    assert!(!ctx.is_stopped());
+}
+
+#[test]
+fn req_108_late_stream_event_with_ignore_policy_bypasses_handler() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(77));
+    let ctx = TaskContext::new(handle);
+    let session_id = SessionId::new(EndpointId(104), 8);
+    let mut called = false;
+
+    assert_eq!(
+        ctx.deliver_stream_event_with_late_reply_handler(
+            QueuedStreamEvent::with_late_reply_policy(
+                session_id,
+                Box::new(StreamEvent::<u32, String>::end(session_id)),
+                LateReplyPolicy::Ignore,
+            ),
+            |_| {
+                called = true;
+                LateReplyAction::Terminate
+            },
+        )
+        .unwrap(),
+        LateReplyAction::Ignore
+    );
+    assert!(!called);
+    assert!(!ctx.is_stopped());
 }
 
 #[derive(Default)]

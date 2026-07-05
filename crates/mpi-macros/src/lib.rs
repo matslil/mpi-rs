@@ -153,6 +153,7 @@ enum HandlerKind {
         batch_size: TokenStream2,
         late_reply_policy: TokenStream2,
     },
+    LateReply,
 }
 
 struct Handler {
@@ -174,6 +175,8 @@ fn special_attr_name(attr: &Attribute) -> Option<&'static str> {
         Some("call")
     } else if attr.path().is_ident("stream") {
         Some("stream")
+    } else if attr.path().is_ident("late_reply") {
+        Some("late_reply")
     } else {
         None
     }
@@ -215,6 +218,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                     late_reply_policy: args.late_reply_policy,
                 }
             }
+            "late_reply" => HandlerKind::LateReply,
             _ => unreachable!(),
         });
     }
@@ -355,6 +359,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         Ok(args) => args,
                         Err(error) => return compile_error(error),
                     };
+                    if matches!(kind, HandlerKind::LateReply) && args.len() != 1 {
+                        return compile_error(syn::Error::new_spanned(
+                            &method.sig,
+                            "late reply handler must take exactly one late reply argument after the context",
+                        ));
+                    }
                     strip_handler_attrs(&mut method);
                     handlers.push(Handler { kind, method, args });
                 } else {
@@ -375,6 +385,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             "#[task] requires exactly one #[start] handler",
         ));
     }
+    let late_reply_count = handlers
+        .iter()
+        .filter(|handler| matches!(handler.kind, HandlerKind::LateReply))
+        .count();
+    if late_reply_count > 1 {
+        return compile_error(syn::Error::new_spanned(
+            &task_ident,
+            "#[task] supports at most one #[late_reply] handler",
+        ));
+    }
 
     let mut original_items = stripped_items;
     original_items.extend(
@@ -390,6 +410,56 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut handle_methods = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
+    let late_reply_method = handlers
+        .iter()
+        .find(|handler| matches!(handler.kind, HandlerKind::LateReply))
+        .map(|handler| handler.method.sig.ident.clone());
+    let deliver_call_response = if let Some(method_ident) = &late_reply_method {
+        quote! {
+            let __ctx_inner = ctx.inner.clone();
+            let _ = __ctx_inner.deliver_call_response_with_late_reply_handler(
+                ::mpi::QueuedCallResponse::with_late_reply_policy(
+                    session_id,
+                    value,
+                    late_reply_policy,
+                ),
+                |late_reply| state.#method_ident(&mut ctx, late_reply),
+            );
+        }
+    } else {
+        quote! {
+            let _ = ctx.inner.deliver_call_response(
+                ::mpi::QueuedCallResponse::with_late_reply_policy(
+                    session_id,
+                    value,
+                    late_reply_policy,
+                ),
+            );
+        }
+    };
+    let deliver_stream_event = if let Some(method_ident) = &late_reply_method {
+        quote! {
+            let __ctx_inner = ctx.inner.clone();
+            let _ = __ctx_inner.deliver_stream_event_with_late_reply_handler(
+                ::mpi::QueuedStreamEvent::with_late_reply_policy(
+                    session_id,
+                    event,
+                    late_reply_policy,
+                ),
+                |late_reply| state.#method_ident(&mut ctx, late_reply),
+            );
+        }
+    } else {
+        quote! {
+            let _ = ctx.inner.deliver_stream_event(
+                ::mpi::QueuedStreamEvent::with_late_reply_policy(
+                    session_id,
+                    event,
+                    late_reply_policy,
+                ),
+            );
+        }
+    };
 
     variants.push(quote! { __StreamCancel { session_id: ::mpi::SessionId } });
     placements.push(quote! { Self::__StreamCancel { .. } => ::mpi::MessagePlacement::Priority });
@@ -405,13 +475,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     placements.push(quote! { Self::__CallResponse { .. } => ::mpi::MessagePlacement::Priority });
     dispatch_arms.push(quote! {
         #message_ident::__CallResponse { session_id, value, late_reply_policy } => {
-            let _ = ctx.inner.deliver_call_response(
-                ::mpi::QueuedCallResponse::with_late_reply_policy(
-                    session_id,
-                    value,
-                    late_reply_policy,
-                ),
-            );
+            #deliver_call_response
         }
     });
 
@@ -441,13 +505,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     placements.push(quote! { Self::__StreamEvent { .. } => ::mpi::MessagePlacement::Priority });
     dispatch_arms.push(quote! {
         #message_ident::__StreamEvent { session_id, event, late_reply_policy } => {
-            let _ = ctx.inner.deliver_stream_event(
-                ::mpi::QueuedStreamEvent::with_late_reply_policy(
-                    session_id,
-                    event,
-                    late_reply_policy,
-                ),
-            );
+            #deliver_stream_event
         }
     });
 
@@ -674,6 +732,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
+            HandlerKind::LateReply => {}
         }
     }
 
@@ -873,27 +932,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self.inner.is_stopped()
             }
 
-            pub fn late_call_response_count(&self) -> usize {
-                self.inner.late_call_response_count()
-            }
-
-            pub fn late_stream_event_count(&self) -> usize {
-                self.inner.late_stream_event_count()
-            }
-
-            pub fn take_late_call_response<T: Send + 'static>(
-                &mut self,
-                session_id: ::mpi::SessionId,
-            ) -> Result<Option<::mpi::Response<T>>, ::mpi::CallError> {
-                self.inner.take_late_call_response::<T>(session_id)
-            }
-
-            pub fn take_late_stream_event<T: Send + 'static, E: Send + 'static>(
-                &mut self,
-                session_id: ::mpi::SessionId,
-            ) -> Result<Option<::mpi::StreamEvent<T, E>>, ::mpi::SendError> {
-                self.inner.take_late_stream_event::<T, E>(session_id)
-            }
         }
 
         impl #task_ident {
@@ -969,5 +1007,11 @@ pub fn call(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marks a streaming call handler.
 #[proc_macro_attribute]
 pub fn stream(attr: TokenStream, item: TokenStream) -> TokenStream {
+    passthrough(attr, item)
+}
+
+/// Marks the optional handler for reported late replies.
+#[proc_macro_attribute]
+pub fn late_reply(attr: TokenStream, item: TokenStream) -> TokenStream {
     passthrough(attr, item)
 }

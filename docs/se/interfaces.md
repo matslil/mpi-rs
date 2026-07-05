@@ -46,6 +46,15 @@ impl ServerTask {
         }
     }
 
+    #[late_reply]
+    fn late_reply(
+        &mut self,
+        ctx: &mut ServerTaskContext,
+        reply: mpi::LateReplyRef<'_>,
+    ) -> mpi::LateReplyAction {
+        mpi::LateReplyAction::Ignore
+    }
+
     #[event(priority)]
     async fn shutdown(&mut self, ctx: &mut ServerTaskContext) {
         ctx.stop();
@@ -70,6 +79,8 @@ INT-015: `#[stream(item = T, error = E)]` shall identify a streaming handler wit
 INT-016: `priority` shall be declared on the receiver's message declaration, not at each send site.
 
 INT-019: Call and stream declarations may use `late_reply = "ignore"` to opt out of reporting unknown-session replies for that interaction; the default policy is equivalent to `late_reply = "report"`.
+
+INT-019A: `#[late_reply]` shall identify an optional task handler for reported late replies.
 
 INT-017: An explicit normal placement for a start handler shall be rejected or ignored in favor of forced priority.
 
@@ -241,9 +252,17 @@ INT-061: User call handlers may return the reply payload rather than manually co
 
 INT-062: The macro or runtime shall convert the returned payload into the response message.
 
-INT-063: Late one-shot responses shall be exposed to fallback reply handling or task policy rather than silently discarded by default.
+INT-063: Late one-shot responses shall be passed to the receiving task's late-reply handler rather than silently discarded by default.
 
 INT-064: A one-shot response generated for a call declared with `late_reply = "ignore"` shall not be exposed as an unknown-session condition when its session has no active waiter.
+
+INT-065: A late-reply handler shall receive `LateReplyRef<'_>` and return `LateReplyAction`.
+
+INT-066: `LateReplyRef<'_>` shall expose the late reply's `SessionId`, late-reply kind, and read-only downcast access to the reply payload.
+
+INT-067: `LateReplyAction` shall include `Ignore` and `Terminate`.
+
+INT-068: If no late-reply handler is declared, the default late-reply handler shall return `Ignore`.
 
 ## Stream interface
 
@@ -336,7 +355,7 @@ INT-075: The producer-side `StreamSink` shall hide batching, end, error, and flo
 
 INT-076: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
-INT-077: Stream replies shall be exposed to fallback reply handling or task policy by default when their session has no active waiter or stream object.
+INT-077: Stream replies shall be passed to the receiving task's late-reply handler by default when their session has no active waiter or stream object.
 
 INT-078: Stream replies generated for a stream declared with `late_reply = "ignore"` shall not be exposed as an unknown-session condition when their session has no active waiter or stream object.
 

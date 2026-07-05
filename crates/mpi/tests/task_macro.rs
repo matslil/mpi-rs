@@ -64,11 +64,6 @@ impl Client {
     }
 
     #[event]
-    async fn observe_late_reply_surface(&mut self, ctx: &mut ClientContext) {
-        self.observed = ctx.late_call_response_count() as u32;
-    }
-
-    #[event]
     async fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
         let mut sum = 0;
@@ -76,6 +71,37 @@ impl Client {
             sum += value;
         }
         self.observed = sum;
+    }
+
+    #[event]
+    async fn drop_reported_stream(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+        let stream = producer.fail_after_one(ctx).unwrap();
+        drop(stream);
+    }
+
+    #[event]
+    async fn simulate_late_reply_handler(&mut self, ctx: &mut ClientContext) {
+        let value = 5_u32;
+        let reply = mpi::LateReplyRef::new(
+            mpi::SessionId::new(mpi::EndpointId(1), 1),
+            mpi::LateReplyKind::CallResponse,
+            &value,
+        );
+        let _ = self.unexpected_reply(ctx, reply);
+    }
+
+    #[late_reply]
+    fn unexpected_reply(
+        &mut self,
+        _ctx: &mut ClientContext,
+        reply: mpi::LateReplyRef<'_>,
+    ) -> mpi::LateReplyAction {
+        if reply.kind() == mpi::LateReplyKind::CallResponse
+            && reply.downcast_ref::<u32>() == Some(&5)
+        {
+            self.observed += 100;
+        }
+        mpi::LateReplyAction::Ignore
     }
 
     #[event(priority)]
@@ -210,17 +236,6 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
 }
 
 #[test]
-fn req_094_generated_context_exposes_late_response_policy_surface() {
-    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
-
-    client.observe_late_reply_surface_blocking().unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 0);
-
-    client.stop_blocking().unwrap();
-    client_runtime.join().unwrap();
-}
-
-#[test]
 fn req_101_req_102_req_103_generated_stream_hides_batches() {
     let (producer, runtime) = Producer::spawn(Producer).unwrap();
     let mut stream = producer.numbers_blocking(3).unwrap();
@@ -233,6 +248,17 @@ fn req_101_req_102_req_103_generated_stream_hides_batches() {
 
     producer.stop_blocking().unwrap();
     runtime.join().unwrap();
+}
+
+#[test]
+fn req_094_generated_late_reply_handler_can_inspect_reply() {
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.simulate_late_reply_handler_blocking().unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 100);
+
+    client.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
 }
 
 #[test]
