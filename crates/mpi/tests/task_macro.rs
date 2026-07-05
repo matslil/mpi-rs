@@ -64,6 +64,11 @@ impl Client {
     }
 
     #[event]
+    async fn observe_late_reply_surface(&mut self, ctx: &mut ClientContext) {
+        self.observed = ctx.late_call_response_count() as u32;
+    }
+
+    #[event]
     async fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
         let mut sum = 0;
@@ -202,6 +207,17 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
     counter.stop_blocking().unwrap();
     client_runtime.join().unwrap();
     counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_094_generated_context_exposes_late_response_policy_surface() {
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.observe_late_reply_surface_blocking().unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 0);
+
+    client.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
 }
 
 #[test]
