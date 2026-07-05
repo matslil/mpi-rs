@@ -709,19 +709,19 @@ mod tests {
 
         assert_eq!(
             control.pulls(),
-            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)]
+            vec![StreamPull::new(session_id, STREAM_INITIAL_CREDIT)],
         );
 
         assert_eq!(
             stream.next_from_event(StreamEvent::batch(session_id, vec![10, 11])),
-            Ok(Some(10))
+            Ok(Some(10)),
         );
         assert_eq!(
             control.pulls(),
             vec![
                 StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
-                StreamPull::new(session_id, 1)
-            ]
+                StreamPull::new(session_id, 1),
+            ],
         );
 
         assert_eq!(stream.next_buffered(), Ok(Some(11)));
@@ -730,8 +730,8 @@ mod tests {
             vec![
                 StreamPull::new(session_id, STREAM_INITIAL_CREDIT),
                 StreamPull::new(session_id, 1),
-                StreamPull::new(session_id, 1)
-            ]
+                StreamPull::new(session_id, 1),
+            ],
         );
     }
 
@@ -756,7 +756,7 @@ mod tests {
         assert_eq!(stream_credit(session_id), 0);
         assert_eq!(
             events.lock().expect("events lock poisoned").as_slice(),
-            &[StreamEvent::batch(session_id, vec![2])]
+            &[StreamEvent::batch(session_id, vec![2])],
         );
     }
 }
