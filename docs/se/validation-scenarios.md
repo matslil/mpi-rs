@@ -263,3 +263,25 @@ Expected outcome:
 - human approval remains required.
 
 Evidence type: process demonstration through pull request evidence
+
+## VAL-015: Share protocol across separate binaries
+
+Status: proposed
+
+Stakeholder needs: SN-018, SN-023, SN-024
+
+Two separately built Rust applications depend on the same exported protocol
+declaration and use a namespace-qualified protocol message for a typed call or
+stream.
+
+Expected outcome:
+
+- both applications refer to the same namespace-qualified protocol message;
+- request, reply, stream item, and stream error types are determined by the protocol declaration;
+- a caller task cannot await an undeclared protocol reply or stream event;
+- receive declarations match the protocol-qualified reply or stream event and its declared Rust type;
+- generated send, call, or stream methods are derived from the protocol or from a protocol-instance binding to the task that implements it;
+- two protocols may reuse the same short message name without conflict;
+- an incompatible message contract change is represented by a new protocol name.
+
+Evidence type: compile-fail test, API walkthrough, or multi-crate example

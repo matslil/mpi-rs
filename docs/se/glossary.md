@@ -90,6 +90,41 @@ The handler for the start message. It initializes task state used by later handl
 
 ## Protocol terms
 
+### Protocol
+
+A named, exported message contract that defines protocol messages and their
+explicit payload, reply, stream item, or stream error types.
+
+### Protocol namespace
+
+The Rust module or crate path that qualifies a protocol declaration.
+
+### Protocol message identity
+
+The namespace-qualified identity of a protocol message, formed from protocol
+namespace, protocol name, and message name.
+
+### Protocol-instance binding
+
+A generated or declared binding from a protocol message contract to the concrete
+task, endpoint, or handle that implements that protocol instance.
+
+### Protocol-derived send surface
+
+Generated send, call, or stream methods whose message identity and Rust types
+come from a protocol declaration, optionally through a protocol-instance
+binding.
+
+### Append-only protocol
+
+A published protocol that may add new message declarations but does not change
+or remove existing protocol message declarations or their associated types.
+
+### Breaking protocol change
+
+An incompatible change to a protocol message declaration or its associated
+types. A breaking protocol change requires a new protocol name.
+
 ### SessionId
 
 A logical interaction identifier for exchanges that can produce future messages.

@@ -23,7 +23,7 @@ Conceptually:
 ```text
 Rust application
   |
-  | declares tasks, handlers, events, calls, streams
+  | declares protocols, tasks, handlers, events, calls, streams
   v
 mpi-rs macros
   |
@@ -55,6 +55,7 @@ OS threads and synchronization primitives
 | CMP-013 | Unix signal bridge | Converts POSIX signal notifications into normal Rust messages outside signal-handler context. |
 | CMP-014 | Diagnostics subsystem | Supports tracing, timeouts, deadlock/debug support, session debugging, and queue diagnostics. |
 | CMP-015 | ctx-future crate | Provides reusable context-borrowing resumable computation primitives used by the task-local runtime. |
+| CMP-016 | Protocol definition subsystem | Defines namespace-qualified message contracts used by generated APIs and compile-time receive checks. |
 
 ## Suggested crate structure
 
@@ -83,6 +84,7 @@ crates/
     src/
       lib.rs
       task_macro.rs
+      protocol_macro.rs
       message_macro.rs
 examples/
   ping_pong.rs
@@ -114,6 +116,35 @@ ARCH-012: Each task has a generated context type passed to handlers.
 ARCH-013: Each task has a generated handle type exposing send methods.
 
 ARCH-014: Task initialization is performed through the start message; there is no separate normal out-of-band initialization path.
+
+## Protocol architecture
+
+A protocol declaration is the reusable contract for user-visible events, calls,
+streams, replies, stream events, and stream errors. Generated task APIs and
+compile-time receive checks are derived from protocol message declarations or
+from derivatives that bind a protocol to concrete implementing task endpoints.
+
+Architecture rules:
+
+ARCH-100: A protocol definition has a namespace-qualified identity.
+
+ARCH-101: A protocol message identity includes the namespace, protocol name, and message name.
+
+ARCH-102: Protocol message declarations explicitly bind request, reply, stream item, and stream error Rust types as applicable.
+
+ARCH-103: Compatible protocol evolution is append-only.
+
+ARCH-104: Incompatible protocol evolution uses a new protocol name rather than changing or removing an existing protocol message declaration.
+
+ARCH-105: The compile-time receive check subsystem uses protocol-declared response and stream event types as its type-level source of truth.
+
+ARCH-106: The baseline does not require a protocol fingerprint; remote capability discovery may still be added for separate-binary deployments.
+
+ARCH-107: A task receive declaration matches a protocol reply or stream event by protocol message identity and declared Rust type.
+
+ARCH-108: Generated send, call, and stream APIs are derived from protocol declarations or protocol-instance bindings that preserve the protocol message identity and declared Rust types.
+
+ARCH-109: A protocol-instance binding identifies the concrete task, endpoint, or handle that implements a protocol message without redefining the message contract.
 
 ## Queue architecture
 
@@ -295,7 +326,7 @@ Recommended order:
 6. Async handlers or generated handler continuations run by a task-local executor.
 7. Selective receive by message kind.
 8. `SessionId`, `Response<T>`, and synchronous calls.
-9. Compile-time `CanReceive<T>` checks for responses.
+9. Protocol declarations and compile-time `CanReceive<T>` checks for responses.
 10. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
 11. Stream batching and credit-based flow control.
 12. Safe Unix signal bridge.

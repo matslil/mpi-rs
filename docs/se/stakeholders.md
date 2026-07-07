@@ -51,6 +51,9 @@ SN-016: Rust developers need stream consumption to avoid one queued message per 
 
 SN-017: Rust developers need cancellation of dropped streams to be automatic and non-blocking.
 
+SN-018: Rust developers need reusable protocol declarations so independently
+built applications can share typed message contracts across separate binaries.
+
 ### Contributor needs
 
 SN-020: Contributors need stable terminology for message, event, call, stream, task, placement, priority, response, and session.
@@ -60,6 +63,9 @@ SN-021: Contributors need clear architecture and interface boundaries between ru
 SN-022: Contributors need a practical implementation order that allows incremental development and review.
 
 SN-023: Contributors need compile-time receive checks to prevent handlers from waiting for undeclared response or stream event messages.
+
+SN-024: Contributors need protocol compatibility rules that distinguish
+compatible additions from incompatible message contract changes.
 
 ### Testing and validation needs
 
