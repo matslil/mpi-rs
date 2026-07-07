@@ -24,8 +24,8 @@ use crate::session::{
 };
 use crate::stream::{
     QueuedStreamEvent, StreamCancel, StreamControl, StreamEvent, StreamEventMessage,
-    StreamEventSender, StreamPull, StreamSession, add_stream_credit, forget_stream_credit,
-    suspended_stream_waiter_with_on_drop,
+    StreamEventSender, StreamPull, StreamSession, add_stream_credit, cancel_stream,
+    forget_stream_credit, suspended_stream_waiter_with_on_drop,
 };
 
 static NEXT_ENDPOINT_ID: AtomicU64 = AtomicU64::new(1);
@@ -295,7 +295,9 @@ where
 
     /// Record additional item credit for a stream producer.
     pub fn record_stream_pull(&self, pull: StreamPull) {
-        add_stream_credit(pull);
+        if !add_stream_credit(pull) {
+            return;
+        }
         let mut state = self.inner.borrow_mut();
         let credit = state.stream_credits.entry(pull.session_id).or_insert(0);
         *credit = credit.saturating_add(pull.credit);
@@ -307,7 +309,7 @@ where
             .borrow_mut()
             .stream_credits
             .remove(&cancel.session_id);
-        forget_stream_credit(cancel.session_id);
+        cancel_stream(cancel.session_id);
     }
 
     /// Consume one stream item credit if any has been granted.
