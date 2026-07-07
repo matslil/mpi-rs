@@ -404,6 +404,20 @@ where
         Ok(())
     }
 
+    /// Send buffered items plus one new item, then yield the producer
+    /// continuation back to the task-local runtime.
+    pub fn yield_item(&mut self, value: T) -> StreamYield<'_, T, E, S> {
+        self.buffer.push(value);
+        StreamYield::new(self)
+    }
+
+    /// Send buffered items plus a batch of new items, then yield the producer
+    /// continuation back to the task-local runtime.
+    pub fn yield_batch(&mut self, values: impl IntoIterator<Item = T>) -> StreamYield<'_, T, E, S> {
+        self.buffer.extend(values);
+        StreamYield::new(self)
+    }
+
     /// Flush a non-empty batch.
     pub fn flush(&mut self) -> Result<(), SendError> {
         if self.buffer.is_empty() {
@@ -433,6 +447,92 @@ where
         self.finished = true;
         self.sink
             .send_event(StreamEvent::error(self.session_id, error))
+    }
+}
+
+enum StreamYieldState {
+    Send,
+    Yield,
+    Done,
+}
+
+/// Context-returning producer-side stream yield operation.
+///
+/// The first resume sends one batch stream reply and returns `Pending`; the next
+/// resume returns `Ready`. This lets native `CtxFuture` stream producers emit an
+/// item or batch and then give the task scheduler a chance to route cancellation,
+/// flow-control, or ordinary messages before the producer continues.
+pub struct StreamYield<'a, T, E, S>
+where
+    S: StreamEventSink<T, E>,
+{
+    sink: &'a mut StreamSink<T, E, S>,
+    state: StreamYieldState,
+}
+
+impl<'a, T, E, S> StreamYield<'a, T, E, S>
+where
+    S: StreamEventSink<T, E>,
+{
+    fn new(sink: &'a mut StreamSink<T, E, S>) -> Self {
+        Self {
+            sink,
+            state: StreamYieldState::Send,
+        }
+    }
+
+    fn try_resume(&mut self) -> CtxPoll<Result<(), SendError>> {
+        match self.state {
+            StreamYieldState::Send => match self.sink.flush() {
+                Ok(()) => {
+                    self.state = StreamYieldState::Yield;
+                    CtxPoll::Pending
+                }
+                Err(error) => {
+                    self.state = StreamYieldState::Done;
+                    CtxPoll::Ready(Err(error))
+                }
+            },
+            StreamYieldState::Yield => {
+                self.state = StreamYieldState::Done;
+                CtxPoll::Ready(Ok(()))
+            }
+            StreamYieldState::Done => {
+                panic!("stream yield resumed after completion");
+            }
+        }
+    }
+}
+
+impl<Cx, T, E, S> CtxFuture<Cx> for StreamYield<'_, T, E, S>
+where
+    S: StreamEventSink<T, E>,
+{
+    type Output = Result<(), SendError>;
+
+    fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
+        self.try_resume()
+    }
+}
+
+/// Compatibility bridge for Rust `.await` syntax. Native stream producer
+/// continuations should drive this operation through `CtxFuture`.
+impl<T, E, S> Future for StreamYield<'_, T, E, S>
+where
+    T: Unpin,
+    E: Unpin,
+    S: StreamEventSink<T, E> + Unpin,
+{
+    type Output = Result<(), SendError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut().try_resume() {
+            CtxPoll::Ready(value) => Poll::Ready(value),
+            CtxPoll::Pending => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
     }
 }
 
