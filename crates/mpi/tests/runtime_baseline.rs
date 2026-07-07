@@ -8,7 +8,8 @@ use mpi::{
     QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent, Response, SendError, SessionId,
     SessionIdAllocator, StreamCancel, StreamCancelMessage, StreamControl, StreamEvent,
     StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
-    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, spawn_task, stream_credit,
+    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, block_on_ctx_task_with_dispatch,
+    spawn_task, stream_credit,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -465,6 +466,41 @@ fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
 
     assert_eq!(value, 42);
     assert!(deferred.is_empty());
+}
+
+#[test]
+fn req_062_block_on_ctx_task_dispatches_ordinary_message_while_suspended() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(81));
+    let mut ctx = TaskContext::new(handle.clone());
+    let (session_id, _reply, call) = ctx.begin_call::<u32>();
+    let mut handled = Vec::new();
+
+    handle.send_message(CtxRuntimeMessage::Normal(7)).unwrap();
+    let reply_handle = handle.clone();
+    let reply_thread = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        reply_handle
+            .send_message(CtxRuntimeMessage::call_response(
+                session_id,
+                Box::new(42_u32),
+            ))
+            .unwrap();
+    });
+
+    let value =
+        block_on_ctx_task_with_dispatch(call, &queue, &mut ctx, |message, ctx| match message {
+            CtxRuntimeMessage::Normal(value) => {
+                handled.push((value, ctx.next_session_id()));
+            }
+            _ => panic!("unexpected protocol message dispatched as ordinary"),
+        })
+        .unwrap();
+
+    reply_thread.join().unwrap();
+    assert_eq!(value, 42);
+    assert_eq!(handled, vec![(7, SessionId::new(EndpointId(81), 1))]);
+    assert_eq!(ctx.next_session_id(), SessionId::new(EndpointId(81), 2));
 }
 
 #[test]

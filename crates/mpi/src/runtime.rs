@@ -10,10 +10,10 @@ use crate::queue::TaskQueue;
 use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
 use crate::task::TaskContext;
 
-fn route_task_message<M, const N: usize>(
+fn route_task_message_with_dispatch<M, D, const N: usize>(
     message: M,
-    ctx: &TaskContext<M, N>,
-    deferred: &mut VecDeque<M>,
+    ctx: &mut TaskContext<M, N>,
+    dispatch: &mut D,
 ) where
     M: TaskMessage
         + CallResponseMessage
@@ -21,6 +21,7 @@ fn route_task_message<M, const N: usize>(
         + StreamPullMessage
         + StreamCancelMessage
         + StreamEventMessage,
+    D: FnMut(M, &mut TaskContext<M, N>),
 {
     match message.into_call_response() {
         Ok(response) => {
@@ -42,12 +43,29 @@ fn route_task_message<M, const N: usize>(
                         Ok(event) => {
                             let _ = ctx.deliver_stream_event(event);
                         }
-                        Err(message) => deferred.push_back(message),
+                        Err(message) => dispatch(message, ctx),
                     },
                 },
             },
         },
     }
+}
+
+fn route_task_message<M, const N: usize>(
+    message: M,
+    ctx: &mut TaskContext<M, N>,
+    deferred: &mut VecDeque<M>,
+) where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage,
+{
+    route_task_message_with_dispatch(message, ctx, &mut |message, _ctx| {
+        deferred.push_back(message);
+    });
 }
 
 /// Run a context-returning task-local computation while routing queued protocol
@@ -77,6 +95,41 @@ where
             CtxPoll::Ready(value) => return value,
             CtxPoll::Pending => match queue.recv() {
                 Ok(message) => route_task_message(message, ctx, deferred),
+                Err(_) => std::thread::yield_now(),
+            },
+        }
+    }
+}
+
+/// Run a context-returning task-local computation while dispatching ordinary
+/// messages between pending resume steps.
+///
+/// Protocol messages are still routed to task-local waiters and control state
+/// before ordinary dispatch. Messages that are not protocol replies or control
+/// messages are passed to `dispatch` while the suspended computation is pending.
+/// This is the runtime building block for task loops whose handlers have been
+/// lowered into native `CtxFuture` continuations.
+pub fn block_on_ctx_task_with_dispatch<M, F, D, const N: usize>(
+    mut future: F,
+    queue: &Arc<TaskQueue<M, N>>,
+    ctx: &mut TaskContext<M, N>,
+    mut dispatch: D,
+) -> F::Output
+where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage,
+    F: CtxFuture<TaskContext<M, N>>,
+    D: FnMut(M, &mut TaskContext<M, N>),
+{
+    loop {
+        match future.resume(ctx, ()) {
+            CtxPoll::Ready(value) => return value,
+            CtxPoll::Pending => match queue.recv() {
+                Ok(message) => route_task_message_with_dispatch(message, ctx, &mut dispatch),
                 Err(_) => std::thread::yield_now(),
             },
         }
