@@ -1,4 +1,37 @@
-use mpi::task;
+use mpi::{protocol, task};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AddRequest {
+    amount: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GetRequest;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GetReply {
+    value: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NumbersRequest {
+    count: u32,
+}
+
+type NumbersError = String;
+
+protocol! {
+    pub protocol CounterProtocolV1 {
+        event Add(AddRequest);
+        call Get(GetRequest) -> GetReply;
+    }
+}
+
+protocol! {
+    pub protocol ProducerProtocolV1 {
+        stream Numbers(NumbersRequest) -> u32 error NumbersError;
+    }
+}
 
 #[derive(Default)]
 struct Counter {
@@ -35,11 +68,42 @@ impl Counter {
 }
 
 #[derive(Default)]
+struct ProtocolCounter {
+    value: u32,
+}
+
+#[task(queue_size = 8)]
+impl ProtocolCounter {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ProtocolCounterContext, initial: u32) {
+        self.value = initial;
+    }
+
+    #[event(protocol = CounterProtocolV1::Add)]
+    async fn add(&mut self, _ctx: &mut ProtocolCounterContext, request: AddRequest) {
+        self.value += request.amount;
+    }
+
+    #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
+    async fn get(&mut self, _ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
+        GetReply { value: self.value }
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ProtocolCounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
 struct Client {
     observed: u32,
 }
 
-#[task(queue_size = 8)]
+#[task(
+    queue_size = 8,
+    receives(CounterProtocolV1::Get::Reply, ProducerProtocolV1::Numbers::Event)
+)]
 impl Client {
     #[start]
     async fn start(&mut self, _ctx: &mut ClientContext) {}
@@ -66,6 +130,30 @@ impl Client {
     #[event]
     async fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
+        let mut sum = 0;
+        while let Some(value) = stream.next(ctx).await.unwrap() {
+            sum += value;
+        }
+        self.observed = sum;
+    }
+
+    #[event]
+    async fn ask_protocol_counter(
+        &mut self,
+        ctx: &mut ClientContext,
+        counter: CounterProtocolV1::Binding<ProtocolCounterHandle>,
+    ) {
+        let reply = counter.get(ctx, GetRequest).await.unwrap();
+        self.observed = reply.value;
+    }
+
+    #[event]
+    async fn sum_protocol_numbers(
+        &mut self,
+        ctx: &mut ClientContext,
+        producer: ProducerProtocolV1::Binding<ProtocolProducerHandle>,
+    ) {
+        let mut stream = producer.numbers(ctx, NumbersRequest { count: 4 }).unwrap();
         let mut sum = 0;
         while let Some(value) = stream.next(ctx).await.unwrap() {
             sum += value;
@@ -158,6 +246,38 @@ impl Producer {
 
     #[event(priority)]
     async fn stop(&mut self, ctx: &mut ProducerContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct ProtocolProducer;
+
+#[task(queue_size = 8)]
+impl ProtocolProducer {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ProtocolProducerContext) {}
+
+    #[stream(
+        protocol = ProducerProtocolV1::Numbers,
+        item = u32,
+        error = String,
+        batch_size = 2
+    )]
+    async fn numbers(
+        &mut self,
+        _ctx: &mut ProtocolProducerContext,
+        out: &mut mpi::BoxStreamSink<u32, String>,
+        request: NumbersRequest,
+    ) -> Result<(), String> {
+        for value in 0..request.count {
+            out.push(value).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ProtocolProducerContext) {
         ctx.stop();
     }
 }
@@ -315,4 +435,55 @@ fn req_105_req_111_generated_stream_error_is_reported_after_buffered_items() {
 
     producer.stop_blocking().unwrap();
     runtime.join().unwrap();
+}
+
+#[test]
+fn req_160_req_163_req_169_protocol_binding_uses_declared_message_types() {
+    let (counter, counter_runtime) =
+        ProtocolCounter::spawn(ProtocolCounter::default(), 10).unwrap();
+    let counter_protocol = CounterProtocolV1::bind(counter.clone());
+
+    counter_protocol
+        .add_blocking(AddRequest { amount: 7 })
+        .unwrap();
+    assert_eq!(
+        counter_protocol.get_blocking(GetRequest).unwrap(),
+        GetReply { value: 17 }
+    );
+
+    counter.stop_blocking().unwrap();
+    counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_166_req_168_protocol_receive_declaration_allows_task_internal_waits() {
+    let (counter, counter_runtime) =
+        ProtocolCounter::spawn(ProtocolCounter::default(), 33).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .ask_protocol_counter_blocking(CounterProtocolV1::bind(counter.clone()))
+        .unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 33);
+
+    client.stop_blocking().unwrap();
+    counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_166_req_168_protocol_stream_receive_declaration_allows_task_internal_waits() {
+    let (producer, producer_runtime) = ProtocolProducer::spawn(ProtocolProducer).unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .sum_protocol_numbers_blocking(ProducerProtocolV1::bind(producer.clone()))
+        .unwrap();
+    assert_eq!(client.observed_blocking().unwrap(), 6);
+
+    client.stop_blocking().unwrap();
+    producer.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    producer_runtime.join().unwrap();
 }

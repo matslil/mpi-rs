@@ -72,6 +72,22 @@ fn assert_fails_task_scope(name: &str, source: &str, expected_method: &str) {
     );
 }
 
+fn assert_fails_contains(name: &str, source: &str, expected: &[&str]) {
+    let output = cargo_check_fixture(name, source);
+    assert!(
+        !output.status.success(),
+        "fixture `{name}` unexpectedly compiled successfully"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for expected_fragment in expected {
+        assert!(
+            stderr.contains(expected_fragment),
+            "fixture `{name}` did not mention `{expected_fragment}`; stderr:\n{stderr}"
+        );
+    }
+}
+
 #[test]
 fn req_027_event_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
@@ -189,5 +205,72 @@ fn main() {
 }
 "#,
         "numbers",
+    );
+}
+
+#[test]
+fn req_070_req_168_protocol_call_rejects_missing_receive_declaration() {
+    assert_fails_contains(
+        "protocol_call_receive",
+        r#"
+use mpi::{protocol, task};
+
+#[derive(Clone)]
+struct GetRequest;
+
+#[derive(Clone)]
+struct GetReply;
+
+protocol! {
+    pub protocol CounterProtocolV1 {
+        call Get(GetRequest) -> GetReply;
+    }
+}
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    async fn start(&mut self, _ctx: &mut CounterContext) {}
+
+    #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
+    async fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+        GetReply
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client;
+
+#[task(queue_size = 4)]
+impl Client {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    async fn ask(
+        &mut self,
+        ctx: &mut ClientContext,
+        counter: CounterProtocolV1::Binding<CounterHandle>,
+    ) {
+        let _reply = counter.get(ctx, GetRequest).await.unwrap();
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["CanReceive", "CounterProtocolV1", "Reply"],
     );
 }
