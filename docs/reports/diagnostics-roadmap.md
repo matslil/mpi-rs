@@ -7,13 +7,13 @@ diagnostics, timeouts, tracing, and deadlock/debug support. This report records
 the current roadmap and the implementation hooks that already preserve room for
 that work.
 
-This is roadmap evidence only. It does not claim that timeout handling,
-structured tracing, deadlock detection, or full queue/session diagnostics are
-implemented.
+This is partial diagnostics evidence. Queue and task-context snapshots are now
+implemented; timeout handling, structured tracing, deadlock detection, and full
+session lifecycle diagnostics are not implemented.
 
 ## Current Diagnostic Hooks
 
-The current runtime already exposes or preserves these diagnostic anchors:
+The current runtime exposes or preserves these diagnostic anchors:
 
 - `SessionId` contains an origin endpoint and sequence, and implements
   `Display`, `Debug`, equality, ordering, and hashing.
@@ -30,12 +30,17 @@ The current runtime already exposes or preserves these diagnostic anchors:
 - `TaskQueue` exposes capacity, length, empty, and full state.
 - `TaskContext` tracks task-local call waiters, stream waiters, stream credit,
   released calls, and stopped state.
+- `TaskQueueSnapshot` exposes a read-only queue diagnostic snapshot.
+- `TaskDiagnosticsSnapshot` exposes read-only task-local session, stream-credit,
+  release, endpoint, and stopped-state diagnostics.
+- Generated task contexts expose `diagnostics_snapshot()` so user code does not
+  need to understand macro internals to inspect task-local diagnostic state.
 
 ## Roadmap Slices
 
 ### Queue Diagnostics
 
-Future queue diagnostics should expose a read-only snapshot for a task queue:
+Queue diagnostics now expose a read-only snapshot for a task queue:
 
 - configured capacity;
 - current total length;
@@ -47,13 +52,15 @@ at send sites.
 
 ### Session Diagnostics
 
-Future session diagnostics should use `SessionId` as the stable key and expose:
+Current task diagnostics use `SessionId` as the stable key for active call
+waiters, active stream waiters, stream credit, and released calls. Future richer
+session diagnostics may also expose:
 
 - origin endpoint;
 - sequence number;
 - protocol kind, such as call or stream;
 - active, completed, cancelled, late, or released state;
-- optional task-local waiter state.
+- optional task-local waiter state beyond the current active-waiter lists.
 
 Diagnostics must not require user code to construct protocol messages manually.
 
@@ -103,16 +110,15 @@ without a documented human-approved decision.
 
 The following remain implementation gaps:
 
-- public diagnostic snapshot types;
 - timeout APIs and timeout tests;
 - tracing integration;
 - deadlock or blocked-progress analysis;
-- validation evidence for VAL-013 beyond late-reply handling and explicit error
-  categories.
+- richer session lifecycle diagnostics;
+- validation evidence for VAL-013 beyond snapshots, late-reply handling, and
+  explicit error categories.
 
 ## Human Decisions Needed
 
-- Choose the public shape, if any, for queue and task diagnostic snapshots.
 - Decide whether tracing should use `tracing`, a feature-gated dependency, or a
   dependency-free callback interface.
 - Define timeout syntax for generated call and stream APIs before implementing
