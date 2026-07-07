@@ -2,7 +2,7 @@
 
 use ctx_future::{CtxFuture, CtxPoll};
 use std::any::Any;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -19,18 +19,32 @@ const STREAM_PULL_CREDIT: u32 = 1;
 const STREAM_INITIAL_CREDIT: u32 = 64;
 
 static STREAM_CREDITS: OnceLock<Mutex<HashMap<SessionId, u32>>> = OnceLock::new();
+static STREAM_CANCELLED: OnceLock<Mutex<HashSet<SessionId>>> = OnceLock::new();
 
 fn stream_credits() -> &'static Mutex<HashMap<SessionId, u32>> {
     STREAM_CREDITS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn stream_cancelled() -> &'static Mutex<HashSet<SessionId>> {
+    STREAM_CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
 /// Add producer credit for a stream session.
-pub fn add_stream_credit(pull: StreamPull) {
+pub fn add_stream_credit(pull: StreamPull) -> bool {
+    if stream_cancelled()
+        .lock()
+        .expect("stream cancellation table poisoned")
+        .contains(&pull.session_id)
+    {
+        return false;
+    }
+
     let mut credits = stream_credits()
         .lock()
         .expect("stream credit table poisoned");
     let credit = credits.entry(pull.session_id).or_insert(0);
     *credit = credit.saturating_add(pull.credit);
+    true
 }
 
 /// Consume producer credit for stream items before an event is sent.
@@ -38,15 +52,23 @@ pub fn consume_stream_credit(session_id: SessionId, count: usize) -> Result<(), 
     if count == 0 {
         return Ok(());
     }
+    if stream_cancelled()
+        .lock()
+        .expect("stream cancellation table poisoned")
+        .contains(&session_id)
+    {
+        return Err(SendError::StreamCancelled);
+    }
+
     let count = u32::try_from(count).unwrap_or(u32::MAX);
     let mut credits = stream_credits()
         .lock()
         .expect("stream credit table poisoned");
     let Some(available) = credits.get_mut(&session_id) else {
-        return Err(SendError::TaskStopped);
+        return Err(SendError::StreamFlowLimited);
     };
     if *available < count {
-        return Err(SendError::TaskStopped);
+        return Err(SendError::StreamFlowLimited);
     }
     *available -= count;
     if *available == 0 {
@@ -61,6 +83,22 @@ pub fn forget_stream_credit(session_id: SessionId) {
         .lock()
         .expect("stream credit table poisoned")
         .remove(&session_id);
+    stream_cancelled()
+        .lock()
+        .expect("stream cancellation table poisoned")
+        .remove(&session_id);
+}
+
+/// Record producer-side cancellation for a stream session.
+pub(crate) fn cancel_stream(session_id: SessionId) {
+    stream_credits()
+        .lock()
+        .expect("stream credit table poisoned")
+        .remove(&session_id);
+    stream_cancelled()
+        .lock()
+        .expect("stream cancellation table poisoned")
+        .insert(session_id);
 }
 
 /// Return producer credit stored for a stream session.
@@ -802,10 +840,9 @@ mod tests {
             Ok(())
         }));
 
-        assert!(
-            sender
-                .send(StreamEvent::batch(session_id, vec![1]))
-                .is_err()
+        assert_eq!(
+            sender.send(StreamEvent::batch(session_id, vec![1])),
+            Err(SendError::StreamFlowLimited)
         );
         assert!(events.lock().expect("events lock poisoned").is_empty());
 
@@ -818,5 +855,22 @@ mod tests {
             events.lock().expect("events lock poisoned").as_slice(),
             &[StreamEvent::batch(session_id, vec![2])],
         );
+    }
+
+    #[test]
+    fn stream_event_sender_reports_cancelled_session() {
+        let session_id = SessionId::new(crate::EndpointId(9), 1);
+        forget_stream_credit(session_id);
+        add_stream_credit(StreamPull::new(session_id, 1));
+        cancel_stream(session_id);
+        let mut sender = StreamEventSender::new(Box::new(|_| Ok(())));
+
+        assert_eq!(
+            sender.send(StreamEvent::<u32, String>::batch(session_id, vec![1])),
+            Err(SendError::StreamCancelled)
+        );
+        assert!(!add_stream_credit(StreamPull::new(session_id, 1)));
+
+        forget_stream_credit(session_id);
     }
 }

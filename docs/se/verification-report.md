@@ -50,7 +50,7 @@ without contacting the network.
 | Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters; ordinary messages are still deferred while the active handler waits. |
 | Compile-time receive checks | inspection | `crates/mpi/src/message.rs`, `crates/mpi-macros/src/lib.rs` | gap | `CanReceive<T>` exists as a trait, but generated receive declarations and bounds are not implemented. |
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session IDs, typed responses, external blocking calls, and late replies are covered; full receive-check coverage is pending. |
-| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, and late stream replies are covered; producer suspension under backpressure remains incomplete. |
+| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | partial | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, and late stream replies are covered; producer suspension under backpressure remains incomplete. |
 | External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
 | Unix signal bridge | inspection | no implementation files | deferred | Later-phase work. |
 | Diagnostics | inspection | SE roadmap | deferred | Later-phase work. |
@@ -65,7 +65,7 @@ supporting implementation is not present yet:
 - REQ-061 and REQ-062 for full task-local scheduling of ordinary messages while
   handlers are suspended;
 - REQ-070, REQ-071, and REQ-072 for compile-time receive declaration checks;
-- REQ-112 and REQ-113 for stream flow-control suspension;
+- REQ-113 for stream flow-control suspension;
 - REQ-130 and REQ-131 for Unix signal support.
 
 ## Deferred Verification
@@ -81,6 +81,5 @@ The following areas remain later-phase or explicitly incomplete:
 
 - Define the task declaration syntax for response and stream-event receive
   declarations before implementing REQ-070 through REQ-072.
-- Decide whether the current stream backpressure behavior should be treated as
-  a temporary error-returning limitation or replaced immediately by producer
-  suspension.
+- Decide whether the current stream backpressure behavior should remain an
+  explicit error-returning limitation while full producer suspension is pending.

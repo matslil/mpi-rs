@@ -11,6 +11,9 @@ pub enum SendError {
     /// The stream producer cannot send another item yet.
     StreamFlowLimited,
 
+    /// The stream session has been cancelled by the consumer.
+    StreamCancelled,
+
     /// The target task has stopped accepting messages.
     TaskStopped,
 }
@@ -20,6 +23,7 @@ impl fmt::Display for SendError {
         match self {
             Self::QueueFull => f.write_str("target task queue is full"),
             Self::StreamFlowLimited => f.write_str("stream producer cannot send another item yet"),
+            Self::StreamCancelled => f.write_str("stream session has been cancelled"),
             Self::TaskStopped => f.write_str("target task has stopped"),
         }
     }
