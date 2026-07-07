@@ -598,7 +598,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
         self.stream.is_finished()
     }
 
-    /// Return a future for the next item, end, or stream error.
+    /// Return a context-returning computation for the next item, end, or stream error.
     pub fn next<'a>(&'a mut self, _ctx: &mut impl TaskScope) -> SuspendedStreamNext<'a, T, E> {
         SuspendedStreamNext { stream: self }
     }
@@ -618,11 +618,13 @@ impl<T, E> Drop for SuspendedMessageStream<T, E> {
     }
 }
 
-/// Future returned by `SuspendedMessageStream::next`.
+/// Context-returning computation returned by `SuspendedMessageStream::next`.
 pub struct SuspendedStreamNext<'a, T, E> {
     stream: &'a mut SuspendedMessageStream<T, E>,
 }
 
+/// Compatibility bridge for Rust `.await` syntax in user-authored async
+/// handlers. The task-local runtime drives the same state through `CtxFuture`.
 impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
     type Output = Result<Option<T>, E>;
 

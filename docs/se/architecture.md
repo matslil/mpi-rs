@@ -10,7 +10,7 @@ ARCH-001: `mpi-rs` shall provide message passing while exposing an idiomatic Rus
 
 ARCH-002: The architecture shall separate runtime primitives from proc-macro generated task plumbing.
 
-ARCH-003: The architecture shall support incremental implementation of queues, task handles, start messages, dispatch, async handlers, sessions, calls, streams, flow control, Unix signal bridging, and diagnostics.
+ARCH-003: The architecture shall support incremental implementation of queues, task handles, start messages, dispatch, suspending handlers, sessions, calls, streams, flow control, Unix signal bridging, and diagnostics.
 
 ARCH-004: The architecture shall keep streams within the current task model rather than creating separate tasks merely to produce stream items.
 
@@ -189,7 +189,10 @@ ARCH-032: FIFO ordering within priority messages guarantees the start message is
 
 ## Handler execution and selective receive architecture
 
-Handlers are intended to be async functions executed by a task-local runtime.
+Handlers are declared as ordinary Rust functions on the task impl. The task
+macro owns the lowering into task-local suspended execution so the declaration
+syntax does not expose whether the runtime uses compiler futures, `CtxFuture`
+state machines, or another compatible implementation strategy.
 
 When a handler awaits a reply or stream event:
 

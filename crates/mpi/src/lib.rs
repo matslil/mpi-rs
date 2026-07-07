@@ -12,7 +12,7 @@ pub use call::{
     CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
     SuspendedCall, suspended_call_channel, suspended_call_waiter,
 };
-pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, resume_fn};
+pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, StdFutureCtx, from_std_future, resume_fn};
 pub use error::{CallError, RecvError, SendError};
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
@@ -20,7 +20,7 @@ pub use message::{
 };
 pub use mpi_macros::{call, event, late_reply, protocol, start, stream, task};
 pub use queue::{TaskQueue, TaskQueueSnapshot};
-pub use runtime::{block_on, block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_task};
+pub use runtime::{block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_task};
 pub use scope::TaskScope;
 pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,

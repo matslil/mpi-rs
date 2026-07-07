@@ -411,6 +411,14 @@ fn strip_handler_attrs(method: &mut ImplItemFn) {
         .retain(|attr| special_attr_name(attr).is_none());
 }
 
+fn normalize_handler_method(method: &mut ImplItemFn, kind: &HandlerKind) {
+    strip_handler_attrs(method);
+
+    if !matches!(kind, HandlerKind::LateReply) {
+        method.sig.asyncness = Some(Default::default());
+    }
+}
+
 fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<HandlerArg>> {
     let mut inputs = method.sig.inputs.iter();
 
@@ -800,7 +808,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             "late reply handler must take exactly one late reply argument after the context",
                         ));
                     }
-                    strip_handler_attrs(&mut method);
+                    normalize_handler_method(&mut method, &kind);
                     handlers.push(Handler { kind, method, args });
                 } else {
                     stripped_items.push(ImplItem::Fn(method));
@@ -972,7 +980,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
                         ::mpi::block_on_task(
-                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            ::mpi::from_std_future(
+                                state.#method_ident(&mut ctx, #(#arg_idents),*)
+                            ),
                             inner_handle.queue(),
                             &__ctx_inner,
                             &mut deferred,
@@ -995,7 +1005,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
                         ::mpi::block_on_task(
-                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            ::mpi::from_std_future(
+                                state.#method_ident(&mut ctx, #(#arg_idents),*)
+                            ),
                             inner_handle.queue(),
                             &__ctx_inner,
                             &mut deferred,
@@ -1059,7 +1071,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         if !ctx.inner.take_call_released(session_id) {
                             let __ctx_inner = ctx.inner.clone();
                             let value = ::mpi::block_on_task(
-                                state.#method_ident(&mut ctx, #(#arg_idents),*),
+                                ::mpi::from_std_future(
+                                    state.#method_ident(&mut ctx, #(#arg_idents),*)
+                                ),
                                 inner_handle.queue(),
                                 &__ctx_inner,
                                 &mut deferred,
@@ -1184,10 +1198,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         );
                         let __ctx_inner = ctx.inner.clone();
                         let result = ::mpi::block_on_task(
-                            state.#method_ident(
-                                &mut ctx,
-                                &mut out,
-                                #(#arg_idents),*
+                            ::mpi::from_std_future(
+                                state.#method_ident(
+                                    &mut ctx,
+                                    &mut out,
+                                    #(#arg_idents),*
+                                )
                             ),
                             inner_handle.queue(),
                             &__ctx_inner,

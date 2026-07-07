@@ -151,7 +151,8 @@ Relevant requirements:
 
 Handler tests should verify:
 
-- handlers can be async functions;
+- handler declarations support the approved task syntax while preserving
+  suspending behavior;
 - waiting for replies or stream events suspends the handler continuation;
 - the task continues to receive other messages while a handler is suspended;
 - waiter matching uses message kind and `SessionId`.

@@ -92,11 +92,12 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- ordinary messages are still deferred while a standard async handler waits for
-  a protocol message, even though the runtime now has a native `CtxFuture`
-  dispatch hook for ordinary messages during suspension;
-- macro-generated async handlers are still adapted through `Future` rather than
-  lowered into native `CtxFuture` continuations;
+- ordinary messages are still deferred while an active handler waits for a
+  protocol message through generated dispatch, even though the runtime now has
+  a native `CtxFuture` dispatch hook for ordinary messages during suspension;
+- handler declarations use ordinary `fn` syntax and are adapted into
+  `CtxFuture` at the task runtime boundary; native lowering of arbitrary
+  handler bodies directly into `CtxFuture` continuations remains pending;
 - producer-side stream suspension under backpressure remains partial.
 
 These gaps should remain visible in traceability and verification reports until

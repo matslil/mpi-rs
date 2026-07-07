@@ -92,7 +92,7 @@ pub type CallSession<T> = (SessionId, SyncReplySender<T>, SuspendedCall<T>);
 
 type CallOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
 
-/// Future returned by a task-internal call.
+/// Context-returning computation returned by a task-internal call.
 ///
 /// The task context allocates the `SessionId` and constructs this owned future
 /// before the request is enqueued. The future does not borrow the task context,
@@ -218,6 +218,8 @@ impl<Cx, T> CtxFuture<Cx> for SuspendedCall<T> {
     }
 }
 
+/// Compatibility bridge for Rust `.await` syntax in user-authored async
+/// handlers. The task-local runtime drives the same state through `CtxFuture`.
 impl<T> Future for SuspendedCall<T> {
     type Output = Result<T, CallError>;
 
