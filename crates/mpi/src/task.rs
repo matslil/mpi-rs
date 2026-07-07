@@ -178,6 +178,38 @@ where
     stopped: bool,
 }
 
+/// Read-only diagnostic snapshot of stream credit for one session.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct StreamCreditSnapshot {
+    /// Stream session that currently has recorded credit.
+    pub session_id: SessionId,
+
+    /// Recorded item credit.
+    pub credit: u32,
+}
+
+/// Read-only diagnostic snapshot of task-local runtime state.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TaskDiagnosticsSnapshot {
+    /// Endpoint represented by this task context.
+    pub endpoint: EndpointId,
+
+    /// Whether the task has been asked to stop.
+    pub stopped: bool,
+
+    /// Sessions with active call waiters.
+    pub active_call_waiters: Vec<SessionId>,
+
+    /// Sessions with active stream waiters.
+    pub active_stream_waiters: Vec<SessionId>,
+
+    /// Recorded producer credit by stream session.
+    pub stream_credits: Vec<StreamCreditSnapshot>,
+
+    /// Released call sessions that have not yet been observed by the callee.
+    pub released_calls: Vec<SessionId>,
+}
+
 /// Generated handler context state shared by task handlers.
 ///
 /// The context uses task-local interior mutability. Generated handlers and the
@@ -337,6 +369,36 @@ where
             .get(&session_id)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Return a read-only diagnostic snapshot of task-local runtime state.
+    #[must_use]
+    pub fn diagnostics_snapshot(&self) -> TaskDiagnosticsSnapshot {
+        let state = self.inner.borrow();
+        let mut active_call_waiters = state.call_waiters.keys().copied().collect::<Vec<_>>();
+        active_call_waiters.sort_unstable();
+        let mut active_stream_waiters = state.stream_waiters.keys().copied().collect::<Vec<_>>();
+        active_stream_waiters.sort_unstable();
+        let mut stream_credits = state
+            .stream_credits
+            .iter()
+            .map(|(session_id, credit)| StreamCreditSnapshot {
+                session_id: *session_id,
+                credit: *credit,
+            })
+            .collect::<Vec<_>>();
+        stream_credits.sort_unstable_by_key(|entry| entry.session_id);
+        let mut released_calls = state.released_calls.iter().copied().collect::<Vec<_>>();
+        released_calls.sort_unstable();
+
+        TaskDiagnosticsSnapshot {
+            endpoint: state.self_handle.endpoint(),
+            stopped: state.stopped,
+            active_call_waiters,
+            active_stream_waiters,
+            stream_credits,
+            released_calls,
+        }
     }
 
     /// Route a queued stream event to the registered stream waiter, if any.
