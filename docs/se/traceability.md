@@ -63,7 +63,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-100..REQ-114 | SN-010, SN-015, SN-016, SN-017, SN-021, SN-043 | ARCH-070..ARCH-079 | INT-070..INT-081 | stream events, consumer buffering, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, sink batching/end/error, late stream policy; producer suspension under backpressure remains partial | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests; REQ-113 pending | VAL-007, VAL-008, VAL-009 | implemented |
 | REQ-120..REQ-121 | SN-010, SN-015 | ARCH-080..ARCH-082 | INT-090..INT-092 | generated `_blocking` methods and context-aware task-internal methods | `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs`, `crates/mpi/examples/ping_pong.rs`, `crates/mpi/examples/synchronous_call.rs` | VAL-011 | verified |
 | REQ-130..REQ-131 | SN-044 | ARCH-090..ARCH-092 | INT-110..INT-111 | pending | inspection pending | VAL-012 | approved |
-| REQ-140 | SN-045 | diagnostics | diagnostics interfaces pending | pending | inspection pending | VAL-013 | approved |
+| REQ-140 | SN-045 | diagnostics | diagnostics interfaces pending | diagnostics roadmap in `docs/reports/diagnostics-roadmap.md`; existing `SessionId`, `LateReplyRef`, explicit errors, queue state accessors, and stream control state preserve future diagnostic hooks | `docs/reports/diagnostics-roadmap.md` inspection; concrete diagnostics tests pending | VAL-013 | implemented |
 | REQ-150..REQ-152 | SN-021, SN-022 | implementation phases, crate structure, CMP-015 | `docs/se/ctx-future.md`, `crates/ctx-future` | `crates/ctx-future` | `crates/ctx-future/tests/context_borrow.rs`, inspection | review evidence | approved |
 
 ## Known initial gaps
@@ -74,7 +74,7 @@ GAP-002: Validation examples now exist for simple task declaration, predictable 
 
 GAP-003: The current compile-fail tests use temporary Cargo fixtures. A dedicated compile-fail framework may still be useful before expanding receive-declaration tests.
 
-GAP-004: Diagnostics interfaces are intentionally deferred beyond the initial message model baseline.
+GAP-004: A diagnostics roadmap now exists for REQ-140. Public diagnostics interfaces, timeout APIs, tracing integration, and deadlock/debug support remain intentionally deferred beyond the initial message model baseline.
 
 GAP-005: Unix signal support is later-phase work and remains deferred for validation.
 
