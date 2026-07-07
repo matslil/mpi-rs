@@ -418,6 +418,59 @@ fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
 }
 
 #[test]
+fn req_063_req_092_out_of_order_call_responses_match_session_ids() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(79));
+    let mut ctx = TaskContext::new(handle.clone());
+    let mut deferred = VecDeque::new();
+    let (first_session, _first_reply, first_call) = ctx.begin_call::<u32>();
+    let (second_session, _second_reply, second_call) = ctx.begin_call::<u32>();
+
+    handle
+        .send_message(CtxRuntimeMessage::call_response(
+            second_session,
+            Box::new(2_u32),
+        ))
+        .unwrap();
+    handle
+        .send_message(CtxRuntimeMessage::call_response(
+            first_session,
+            Box::new(1_u32),
+        ))
+        .unwrap();
+
+    let second = block_on_ctx_task(second_call, &queue, &mut ctx, &mut deferred).unwrap();
+    let first = block_on_ctx_task(first_call, &queue, &mut ctx, &mut deferred).unwrap();
+
+    assert_eq!(second, 2);
+    assert_eq!(first, 1);
+    assert!(deferred.is_empty());
+}
+
+#[test]
+fn req_109_block_on_ctx_task_defers_ordinary_messages_instead_of_discarding() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(80));
+    let mut ctx = TaskContext::new(handle.clone());
+    let mut deferred = VecDeque::new();
+
+    handle.send_message(CtxRuntimeMessage::Normal(7)).unwrap();
+
+    let _ = block_on_ctx_task(
+        AllocateAcrossPending::default(),
+        &queue,
+        &mut ctx,
+        &mut deferred,
+    );
+
+    assert!(matches!(
+        deferred.pop_front(),
+        Some(CtxRuntimeMessage::Normal(7))
+    ));
+    assert!(deferred.is_empty());
+}
+
+#[test]
 fn req_094_late_call_response_default_handler_ignores() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(72));
