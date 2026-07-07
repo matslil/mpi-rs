@@ -181,7 +181,7 @@ fn req_053_macro_forces_start_message_to_priority() {
 }
 
 #[test]
-fn req_123_generated_event_send_requires_task_scope_for_non_blocking_api() {
+fn req_027_generated_event_send_requires_task_scope_for_non_blocking_api() {
     let (counter, runtime) = Counter::spawn(Counter::default(), 1).unwrap();
 
     counter.add_from_handler_blocking(4).unwrap();

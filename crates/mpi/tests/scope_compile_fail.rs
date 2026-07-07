@@ -19,6 +19,12 @@ fn cargo_check_fixture(name: &str, source: &str) -> std::process::Output {
 
     fs::create_dir_all(dir.join("src")).expect("create temporary fixture directory");
     let dep_path = manifest_dir.to_string_lossy().replace('\\', "\\\\");
+    let workspace_lock = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("mpi crate should be inside the workspace")
+        .join("Cargo.lock");
+    fs::copy(workspace_lock, dir.join("Cargo.lock")).expect("copy workspace lockfile");
     fs::write(
         dir.join("Cargo.toml"),
         format!(
@@ -38,6 +44,7 @@ mpi = {{ path = "{dep_path}" }}
     let output = Command::new("cargo")
         .arg("check")
         .arg("--quiet")
+        .arg("--offline")
         .current_dir(&dir)
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
@@ -66,7 +73,7 @@ fn assert_fails_task_scope(name: &str, source: &str, expected_method: &str) {
 }
 
 #[test]
-fn req_122_req_123_event_api_rejects_non_task_scope_context() {
+fn req_027_event_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
         "event",
         r#"
@@ -102,7 +109,7 @@ fn main() {
 }
 
 #[test]
-fn req_120_req_123_call_api_rejects_non_task_scope_context() {
+fn req_120_req_121_call_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
         "call",
         r#"
@@ -140,7 +147,7 @@ fn main() {
 }
 
 #[test]
-fn req_101_req_123_stream_api_rejects_non_task_scope_context() {
+fn req_101_req_121_stream_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
         "stream",
         r#"
