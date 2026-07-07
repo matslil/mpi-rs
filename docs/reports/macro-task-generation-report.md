@@ -83,8 +83,8 @@ Remaining gaps include:
 
 ## Design note
 
-The implementation uses a minimal `mpi::block_on` function for generated async handlers. This supports async handler syntax for handlers that complete without waiting on external task-local receive operations. It does not yet provide the full suspended-continuation task-local runtime described by REQ-061 through REQ-063.
+Generated async handlers are adapted into `CtxFuture` at the task-runtime boundary and driven by `mpi::block_on_task`, which routes task-local call responses, stream events, and stream control messages between resume steps. This supports async handler syntax while keeping the task driver centered on `CtxFuture`. It does not yet provide concurrent ordinary-message handler progress while another handler waits, as described by REQ-062.
 
 ## Conclusion
 
-The revised interface shape is implementable. The branch demonstrates working generated task plumbing for start, event, and call handlers. Full stream generation and task-internal suspended receive remain future work.
+The revised interface shape is implementable. The branch demonstrates working generated task plumbing for start, event, call, and stream handlers. Concurrent ordinary-handler progress while another handler is suspended remains future work.

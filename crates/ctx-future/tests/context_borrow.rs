@@ -1,4 +1,4 @@
-use ctx_future::{CtxFuture, CtxPoll, resume_fn};
+use ctx_future::{CtxFuture, CtxPoll, from_std_future, resume_fn};
 
 #[derive(Default)]
 struct TestContext {
@@ -110,4 +110,18 @@ fn req_152_ctx_future_is_standalone_public_api() {
     let mut cx = 0;
 
     assert_eq!(drive_once(&mut future, &mut cx), CtxPoll::Ready(1));
+}
+
+#[test]
+fn ctx_req_001_std_future_adapter_does_not_retain_context() {
+    let mut cx = TestContext::default();
+    let mut future = from_std_future(async { 11 });
+
+    assert_eq!(future.resume(&mut cx, ()), CtxPoll::Ready(11));
+
+    cx.total = 12;
+    cx.log.push("context-still-owned");
+
+    assert_eq!(cx.total, 12);
+    assert_eq!(cx.log, ["context-still-owned"]);
 }
