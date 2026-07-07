@@ -36,6 +36,25 @@ where
     available: Condvar,
 }
 
+/// Read-only diagnostic snapshot of a task queue.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct TaskQueueSnapshot {
+    /// Compile-time total queue capacity.
+    pub capacity: usize,
+
+    /// Total number of queued messages.
+    pub total_len: usize,
+
+    /// Number of queued priority messages.
+    pub priority_len: usize,
+
+    /// Number of queued normal messages.
+    pub normal_len: usize,
+
+    /// Whether the queue has been closed.
+    pub closed: bool,
+}
+
 impl<M, const N: usize> Default for TaskQueue<M, N>
 where
     M: TaskMessage,
@@ -81,6 +100,21 @@ where
     #[must_use]
     pub fn is_full(&self) -> bool {
         self.len() == N
+    }
+
+    /// Return a read-only diagnostic snapshot of the queue state.
+    #[must_use]
+    pub fn snapshot(&self) -> TaskQueueSnapshot {
+        let state = self.state.lock().expect("queue mutex poisoned");
+        let priority_len = state.priority.len();
+        let normal_len = state.normal.len();
+        TaskQueueSnapshot {
+            capacity: N,
+            total_len: priority_len + normal_len,
+            priority_len,
+            normal_len,
+            closed: state.closed,
+        }
     }
 
     /// Close the queue and wake blocked receivers.

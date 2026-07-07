@@ -42,6 +42,27 @@ fn req_012_req_013_req_014_queue_capacity_is_static_shared_and_explicit() {
 }
 
 #[test]
+fn req_140_queue_snapshot_reports_read_only_queue_diagnostics() {
+    let queue = TaskQueue::<TestMessage, 4>::new();
+    queue.try_send(TestMessage::Normal(1)).unwrap();
+    queue.try_send(TestMessage::Priority(2)).unwrap();
+
+    assert_eq!(
+        queue.snapshot(),
+        mpi::TaskQueueSnapshot {
+            capacity: 4,
+            total_len: 2,
+            priority_len: 1,
+            normal_len: 1,
+            closed: false,
+        }
+    );
+
+    queue.close();
+    assert!(queue.snapshot().closed);
+}
+
+#[test]
 fn req_032_normal_messages_are_fifo() {
     let queue = TaskQueue::<TestMessage, 4>::new();
     queue.try_send(TestMessage::Normal(1)).unwrap();
@@ -120,6 +141,35 @@ fn req_084_task_context_allocates_task_local_session_ids() {
         ctx.self_handle().send_message(TestMessage::Normal(1)),
         Err(SendError::TaskStopped)
     );
+}
+
+#[test]
+fn req_140_task_context_snapshot_reports_session_and_stream_state() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 8>::new());
+    let handle = TaskHandle::with_endpoint(queue, EndpointId(56));
+    let ctx = TaskContext::new(handle);
+    let (call_session, _reply, _call) = ctx.begin_call::<u32>();
+    let (stream_session, _events, _stream) =
+        ctx.begin_stream::<u8, &'static str>(Arc::new(CancelRecorder::default()));
+    let released_session = SessionId::new(EndpointId(99), 9);
+
+    ctx.record_stream_pull(StreamPull::new(stream_session, 5));
+    ctx.record_call_release(QueuedCallRelease::new(released_session));
+
+    let snapshot = ctx.diagnostics_snapshot();
+
+    assert_eq!(snapshot.endpoint, EndpointId(56));
+    assert!(!snapshot.stopped);
+    assert_eq!(snapshot.active_call_waiters, vec![call_session]);
+    assert_eq!(snapshot.active_stream_waiters, vec![stream_session]);
+    assert_eq!(
+        snapshot.stream_credits,
+        vec![mpi::StreamCreditSnapshot {
+            session_id: stream_session,
+            credit: 5,
+        }]
+    );
+    assert_eq!(snapshot.released_calls, vec![released_session]);
 }
 
 #[test]

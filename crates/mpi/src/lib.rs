@@ -19,7 +19,7 @@ pub use message::{
     MessagePlacement, TaskMessage,
 };
 pub use mpi_macros::{call, event, late_reply, start, stream, task};
-pub use queue::TaskQueue;
+pub use queue::{TaskQueue, TaskQueueSnapshot};
 pub use runtime::{block_on, block_on_ctx_task, block_on_task};
 pub use scope::TaskScope;
 pub use session::{
@@ -27,4 +27,7 @@ pub use session::{
     sync_reply_channel,
 };
 pub use stream::*;
-pub use task::{TaskContext, TaskHandle, TaskJoinError, TaskRuntime, spawn_task};
+pub use task::{
+    StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskHandle, TaskJoinError,
+    TaskRuntime, spawn_task,
+};
