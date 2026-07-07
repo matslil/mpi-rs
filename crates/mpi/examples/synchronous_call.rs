@@ -8,17 +8,17 @@ struct Store {
 #[task(queue_size = 8)]
 impl Store {
     #[start]
-    async fn start(&mut self, _ctx: &mut StoreContext, value: u32) {
+    fn start(&mut self, _ctx: &mut StoreContext, value: u32) {
         self.value = value;
     }
 
     #[call(reply = u32)]
-    async fn get(&mut self, _ctx: &mut StoreContext) -> u32 {
+    fn get(&mut self, _ctx: &mut StoreContext) -> u32 {
         self.value
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut StoreContext) {
+    fn stop(&mut self, ctx: &mut StoreContext) {
         ctx.stop();
     }
 }
@@ -31,20 +31,20 @@ struct Client {
 #[task(queue_size = 8, receives(mpi::Response<u32>))]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn fetch(&mut self, ctx: &mut ClientContext, store: StoreHandle) {
+    fn fetch(&mut self, ctx: &mut ClientContext, store: StoreHandle) {
         self.observed = store.get(ctx).await.unwrap();
     }
 
     #[call(reply = u32)]
-    async fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
+    fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
         self.observed
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }

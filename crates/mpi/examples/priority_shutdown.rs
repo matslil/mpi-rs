@@ -9,18 +9,18 @@ struct Worker {
 #[task(queue_size = 8)]
 impl Worker {
     #[start]
-    async fn start(&mut self, _ctx: &mut WorkerContext, log: Arc<Mutex<Vec<&'static str>>>) {
+    fn start(&mut self, _ctx: &mut WorkerContext, log: Arc<Mutex<Vec<&'static str>>>) {
         log.lock().unwrap().push("start");
         self.log = Some(log);
     }
 
     #[event]
-    async fn work(&mut self, _ctx: &mut WorkerContext) {
+    fn work(&mut self, _ctx: &mut WorkerContext) {
         self.log.as_ref().unwrap().lock().unwrap().push("work");
     }
 
     #[event(priority)]
-    async fn shutdown(&mut self, ctx: &mut WorkerContext) {
+    fn shutdown(&mut self, ctx: &mut WorkerContext) {
         self.log.as_ref().unwrap().lock().unwrap().push("shutdown");
         ctx.stop();
     }

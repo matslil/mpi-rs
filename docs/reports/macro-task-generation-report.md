@@ -36,7 +36,8 @@ This attempt adds implementation and test evidence for:
 - REQ-051: generated artifacts;
 - REQ-052: handler dispatch;
 - REQ-053: start handler priority handling;
-- REQ-060: async handlers are expressible;
+- REQ-060: suspending handlers are expressible with implementation-neutral
+  `fn` declarations;
 - REQ-091: one typed external blocking call response;
 - REQ-093: call handler return conversion;
 - REQ-120: explicit external blocking API.
@@ -83,7 +84,7 @@ Remaining gaps include:
 
 ## Design note
 
-Generated async handlers are adapted into `CtxFuture` at the task-runtime boundary and driven by `mpi::block_on_task`, which routes task-local call responses, stream events, and stream control messages between resume steps. This supports async handler syntax while keeping the task driver centered on `CtxFuture`. It does not yet provide concurrent ordinary-message handler progress while another handler waits, as described by REQ-062.
+Generated handler declarations use ordinary `fn` syntax. The macro normalizes start, event, call, and stream handlers into internal async methods and adapts them into `CtxFuture` at the task-runtime boundary, where `mpi::block_on_task` routes task-local call responses, stream events, and stream control messages between resume steps. This keeps the public declaration syntax independent of the current runtime lowering strategy. It does not yet provide concurrent ordinary-message handler progress while another handler waits, as described by REQ-062.
 
 ## Conclusion
 

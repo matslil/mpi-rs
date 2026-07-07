@@ -411,6 +411,14 @@ fn strip_handler_attrs(method: &mut ImplItemFn) {
         .retain(|attr| special_attr_name(attr).is_none());
 }
 
+fn normalize_handler_method(method: &mut ImplItemFn, kind: &HandlerKind) {
+    strip_handler_attrs(method);
+
+    if !matches!(kind, HandlerKind::LateReply) {
+        method.sig.asyncness = Some(Default::default());
+    }
+}
+
 fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<HandlerArg>> {
     let mut inputs = method.sig.inputs.iter();
 
@@ -800,7 +808,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             "late reply handler must take exactly one late reply argument after the context",
                         ));
                     }
-                    strip_handler_attrs(&mut method);
+                    normalize_handler_method(&mut method, &kind);
                     handlers.push(Handler { kind, method, args });
                 } else {
                     stripped_items.push(ImplItem::Fn(method));

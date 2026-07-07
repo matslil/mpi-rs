@@ -101,13 +101,13 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(&mut self, _ctx: &mut CounterContext) {}
 
     #[event]
-    async fn add(&mut self, _ctx: &mut CounterContext, _amount: u32) {}
+    fn add(&mut self, _ctx: &mut CounterContext, _amount: u32) {}
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -137,15 +137,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(&mut self, _ctx: &mut CounterContext) {}
 
     #[call(reply = u32)]
-    async fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
         1
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -175,15 +175,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(&mut self, _ctx: &mut CounterContext) {}
 
     #[call(reply = u32)]
-    async fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
         1
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -194,15 +194,15 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
         let _reply = counter.get(ctx).await.unwrap();
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -226,10 +226,10 @@ struct Producer;
 #[task(queue_size = 4)]
 impl Producer {
     #[start]
-    async fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(&mut self, _ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    async fn numbers(
+    fn numbers(
         &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -242,7 +242,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(&mut self, ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -272,10 +272,10 @@ struct Producer;
 #[task(queue_size = 4)]
 impl Producer {
     #[start]
-    async fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(&mut self, _ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    async fn numbers(
+    fn numbers(
         &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -285,7 +285,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(&mut self, ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -296,16 +296,16 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn ask(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn ask(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx).unwrap();
         let _ = stream.next(ctx).await.unwrap();
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -341,15 +341,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(&mut self, _ctx: &mut CounterContext) {}
 
     #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
-    async fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+    fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -360,10 +360,10 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn ask(
+    fn ask(
         &mut self,
         ctx: &mut ClientContext,
         counter: CounterProtocolV1::Binding<CounterHandle>,
@@ -372,7 +372,7 @@ impl Client {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -414,15 +414,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(&mut self, _ctx: &mut CounterContext) {}
 
     #[call(protocol = OtherCounterProtocolV1::Get, reply = GetReply)]
-    async fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+    fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -433,10 +433,10 @@ struct Client;
 #[task(queue_size = 4, receives(CounterProtocolV1::Get::Reply))]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn ask(
+    fn ask(
         &mut self,
         ctx: &mut ClientContext,
         counter: OtherCounterProtocolV1::Binding<CounterHandle>,
@@ -445,7 +445,7 @@ impl Client {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }

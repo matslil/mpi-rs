@@ -41,28 +41,28 @@ struct Counter {
 #[task(queue_size = 8)]
 impl Counter {
     #[start]
-    async fn start(&mut self, _ctx: &mut CounterContext, initial: u32) {
+    fn start(&mut self, _ctx: &mut CounterContext, initial: u32) {
         self.value = initial;
     }
 
     #[event(priority)]
-    async fn add(&mut self, _ctx: &mut CounterContext, amount: u32) {
+    fn add(&mut self, _ctx: &mut CounterContext, amount: u32) {
         self.value += amount;
     }
 
     #[event(priority)]
-    async fn add_from_handler(&mut self, ctx: &mut CounterContext, amount: u32) {
+    fn add_from_handler(&mut self, ctx: &mut CounterContext, amount: u32) {
         let self_handle = ctx.self_handle();
         self_handle.add(ctx, amount).unwrap();
     }
 
     #[call(reply = u32, late_reply = "ignore")]
-    async fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
         self.value
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(&mut self, ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -75,22 +75,22 @@ struct ProtocolCounter {
 #[task(queue_size = 8)]
 impl ProtocolCounter {
     #[start]
-    async fn start(&mut self, _ctx: &mut ProtocolCounterContext, initial: u32) {
+    fn start(&mut self, _ctx: &mut ProtocolCounterContext, initial: u32) {
         self.value = initial;
     }
 
     #[event(protocol = CounterProtocolV1::Add)]
-    async fn add(&mut self, _ctx: &mut ProtocolCounterContext, request: AddRequest) {
+    fn add(&mut self, _ctx: &mut ProtocolCounterContext, request: AddRequest) {
         self.value += request.amount;
     }
 
     #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
-    async fn get(&mut self, _ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
+    fn get(&mut self, _ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
         GetReply { value: self.value }
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ProtocolCounterContext) {
+    fn stop(&mut self, ctx: &mut ProtocolCounterContext) {
         ctx.stop();
     }
 }
@@ -111,29 +111,29 @@ struct Client {
 )]
 impl Client {
     #[start]
-    async fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(&mut self, _ctx: &mut ClientContext) {}
 
     #[event]
-    async fn ask_counter(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
         self.observed = counter.get(ctx).await.unwrap();
     }
 
     #[event]
-    async fn ask_counter_twice(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter_twice(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
         let first = counter.get(ctx);
         let second = counter.get(ctx);
         self.observed = first.await.unwrap() + second.await.unwrap();
     }
 
     #[event]
-    async fn ask_counter_then_mark(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter_then_mark(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
         let self_handle = ctx.self_handle();
         self_handle.mark(ctx, 1).unwrap();
         self.observed = counter.get(ctx).await.unwrap();
     }
 
     #[event]
-    async fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
         let mut sum = 0;
         while let Some(value) = stream.next(ctx).await.unwrap() {
@@ -143,7 +143,7 @@ impl Client {
     }
 
     #[event]
-    async fn ask_protocol_counter(
+    fn ask_protocol_counter(
         &mut self,
         ctx: &mut ClientContext,
         counter: CounterProtocolV1::Binding<ProtocolCounterHandle>,
@@ -153,7 +153,7 @@ impl Client {
     }
 
     #[event]
-    async fn sum_protocol_numbers(
+    fn sum_protocol_numbers(
         &mut self,
         ctx: &mut ClientContext,
         producer: ProducerProtocolV1::Binding<ProtocolProducerHandle>,
@@ -167,13 +167,13 @@ impl Client {
     }
 
     #[event]
-    async fn drop_reported_stream(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn drop_reported_stream(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let stream = producer.fail_after_one(ctx).unwrap();
         drop(stream);
     }
 
     #[event]
-    async fn simulate_late_reply_handler(&mut self, ctx: &mut ClientContext) {
+    fn simulate_late_reply_handler(&mut self, ctx: &mut ClientContext) {
         let value = 5_u32;
         let reply = mpi::LateReplyRef::new(
             mpi::SessionId::new(mpi::EndpointId(1), 1),
@@ -184,7 +184,7 @@ impl Client {
     }
 
     #[event]
-    async fn record_diagnostic_endpoint(&mut self, ctx: &mut ClientContext) {
+    fn record_diagnostic_endpoint(&mut self, ctx: &mut ClientContext) {
         self.observed = ctx.diagnostics_snapshot().endpoint.0 as u32;
     }
 
@@ -203,17 +203,17 @@ impl Client {
     }
 
     #[event(priority)]
-    async fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
+    fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
         self.observed += amount;
     }
 
     #[call(reply = u32)]
-    async fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
+    fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
         self.observed
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(&mut self, ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -224,10 +224,10 @@ struct Producer;
 #[task(queue_size = 8)]
 impl Producer {
     #[start]
-    async fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(&mut self, _ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2, late_reply = "ignore")]
-    async fn numbers(
+    fn numbers(
         &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -240,7 +240,7 @@ impl Producer {
     }
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    async fn fail_after_one(
+    fn fail_after_one(
         &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -250,7 +250,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(&mut self, ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -261,7 +261,7 @@ struct ProtocolProducer;
 #[task(queue_size = 8)]
 impl ProtocolProducer {
     #[start]
-    async fn start(&mut self, _ctx: &mut ProtocolProducerContext) {}
+    fn start(&mut self, _ctx: &mut ProtocolProducerContext) {}
 
     #[stream(
         protocol = ProducerProtocolV1::Numbers,
@@ -269,7 +269,7 @@ impl ProtocolProducer {
         error = String,
         batch_size = 2
     )]
-    async fn numbers(
+    fn numbers(
         &mut self,
         _ctx: &mut ProtocolProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -282,7 +282,7 @@ impl ProtocolProducer {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut ProtocolProducerContext) {
+    fn stop(&mut self, ctx: &mut ProtocolProducerContext) {
         ctx.stop();
     }
 }
