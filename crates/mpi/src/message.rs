@@ -2,7 +2,9 @@
 
 use std::any::Any;
 
-use crate::session::SessionId;
+use crate::call::CallResponseMessage;
+use crate::session::{Response, SessionId};
+use crate::stream::{StreamEvent, StreamEventMessage};
 
 /// Placement class for a message in the receiving task's queue.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -96,6 +98,40 @@ pub trait TaskMessage: Sized + Send + 'static {
 pub trait CanReceive<T>: TaskMessage {
     /// Wrap a received protocol value into the task's message enum.
     fn wrap(value: T) -> Self;
+}
+
+/// Protocol receive values that can be wrapped into a generated task message.
+pub trait ProtocolReceive: Send + 'static {
+    /// Wrap this protocol receive value into a task message.
+    fn into_task_message<M>(self) -> M
+    where
+        M: TaskMessage + CallResponseMessage + StreamEventMessage;
+}
+
+impl<T> ProtocolReceive for Response<T>
+where
+    T: Send + 'static,
+{
+    fn into_task_message<M>(self) -> M
+    where
+        M: TaskMessage + CallResponseMessage + StreamEventMessage,
+    {
+        M::call_response(self.session_id, Box::new(self.value) as Box<dyn Any + Send>)
+    }
+}
+
+impl<T, E> ProtocolReceive for StreamEvent<T, E>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    fn into_task_message<M>(self) -> M
+    where
+        M: TaskMessage + CallResponseMessage + StreamEventMessage,
+    {
+        let session_id = self.session_id();
+        M::stream_event(session_id, Box::new(self) as Box<dyn Any + Send>)
+    }
 }
 
 /// Trait for protocol messages that belong to a logical session.
