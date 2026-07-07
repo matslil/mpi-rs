@@ -244,6 +244,7 @@ Stream tests should verify:
 - automatic end and error events;
 - credit-based flow control or documented interim limitation;
 - producer suspension under backpressure or stream-control waiting;
+- producer-side native stream yield operations return context to the task-local runtime after sending stream replies;
 - future standard stream compatibility does not violate task-local receive-state constraints.
 
 Relevant requirements:

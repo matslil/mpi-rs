@@ -392,6 +392,12 @@ fn query(
 }
 ```
 
+Producer-side stream code that is lowered into a native `CtxFuture`
+continuation may instead use `yield_item(value)` or `yield_batch(values)`.
+Those operations send a stream reply and then return `Pending` once so the
+task-local runtime can route stream cancellation, flow-control, replies, or
+ordinary messages before the producer continuation resumes.
+
 Interface rules:
 
 INT-070: The public stream consumer API shall return one item at a time.
@@ -405,6 +411,10 @@ INT-073: The stream object shall attempt asynchronous cancellation when dropped 
 INT-074: Stream cancellation shall not require awaiting acknowledgement during drop.
 
 INT-075: The producer-side `StreamSink` shall hide batching, end, error, and flow-control details where possible.
+
+INT-075A: The producer-side `StreamSink` shall provide a native `CtxFuture`
+yield operation for stream producers that send a stream reply and return
+context to the task-local runtime before producer continuation.
 
 INT-076: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
