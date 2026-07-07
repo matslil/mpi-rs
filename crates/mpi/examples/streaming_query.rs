@@ -6,10 +6,10 @@ struct QueryServer;
 #[task(queue_size = 8)]
 impl QueryServer {
     #[start]
-    async fn start(&mut self, _ctx: &mut QueryServerContext) {}
+    fn start(&mut self, _ctx: &mut QueryServerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    async fn query(
+    fn query(
         &mut self,
         _ctx: &mut QueryServerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
@@ -22,7 +22,7 @@ impl QueryServer {
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut QueryServerContext) {
+    fn stop(&mut self, ctx: &mut QueryServerContext) {
         ctx.stop();
     }
 }
@@ -35,10 +35,10 @@ struct QueryClient {
 #[task(queue_size = 8, receives(mpi::StreamEvent<u32, String>))]
 impl QueryClient {
     #[start]
-    async fn start(&mut self, _ctx: &mut QueryClientContext) {}
+    fn start(&mut self, _ctx: &mut QueryClientContext) {}
 
     #[event]
-    async fn run_query(&mut self, ctx: &mut QueryClientContext, server: QueryServerHandle) {
+    fn run_query(&mut self, ctx: &mut QueryClientContext, server: QueryServerHandle) {
         let mut rows = server.query(ctx, 5).unwrap();
         let mut sum = 0;
         while let Some(row) = rows.next(ctx).await.unwrap() {
@@ -48,12 +48,12 @@ impl QueryClient {
     }
 
     #[call(reply = u32)]
-    async fn sum(&mut self, _ctx: &mut QueryClientContext) -> u32 {
+    fn sum(&mut self, _ctx: &mut QueryClientContext) -> u32 {
         self.sum
     }
 
     #[event(priority)]
-    async fn stop(&mut self, ctx: &mut QueryClientContext) {
+    fn stop(&mut self, ctx: &mut QueryClientContext) {
         ctx.stop();
     }
 }

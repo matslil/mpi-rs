@@ -71,17 +71,17 @@ struct ServerTask {
 #[task(queue_size = 32)]
 impl ServerTask {
     #[start]
-    async fn start(&mut self, ctx: &mut ServerTaskContext, config: ServerConfig) {
+    fn start(&mut self, ctx: &mut ServerTaskContext, config: ServerConfig) {
         self.state = ServerState::new(config);
     }
 
     #[event]
-    async fn set(&mut self, ctx: &mut ServerTaskContext, key: String, value: Vec<u8>) {
+    fn set(&mut self, ctx: &mut ServerTaskContext, key: String, value: Vec<u8>) {
         self.state.insert(key, value);
     }
 
     #[call(reply = GetReply)]
-    async fn get(&mut self, ctx: &mut ServerTaskContext, key: String) -> GetReply {
+    fn get(&mut self, ctx: &mut ServerTaskContext, key: String) -> GetReply {
         GetReply {
             value: self.state.get(&key).cloned(),
         }
@@ -97,11 +97,17 @@ impl ServerTask {
     }
 
     #[event(priority)]
-    async fn shutdown(&mut self, ctx: &mut ServerTaskContext) {
+    fn shutdown(&mut self, ctx: &mut ServerTaskContext) {
         ctx.stop();
     }
 }
 ```
+
+Handler declarations use ordinary Rust `fn` syntax. The `#[task]` macro owns the
+lowering into task-local suspended execution, so users do not need to spell the
+current implementation strategy in the handler signature. Handler bodies may
+still use `.await` with task-internal call and stream APIs when they need to
+suspend.
 
 Interface rules:
 
@@ -126,6 +132,8 @@ INT-019A: `#[late_reply]` shall identify an optional task handler for reported l
 INT-017: An explicit normal placement for a start handler shall be rejected or ignored in favor of forced priority.
 
 INT-018: A `#[task]` attribute on a struct is non-authoritative and should not be required for code generation.
+
+INT-018A: Handler declarations should use ordinary Rust `fn` syntax; the task macro owns any async or `CtxFuture` lowering needed to execute them.
 
 ## Generated task handle interface
 
@@ -370,14 +378,14 @@ Producer API:
 
 ```rust
 #[stream(item = Row, error = QueryError, batch_size = 64)]
-async fn query(
+fn query(
     &mut self,
     ctx: &mut DatabaseContext,
     mut out: StreamSink<Row, QueryError>,
     sql: String,
 ) -> Result<(), QueryError> {
     for row in self.state.execute(sql)? {
-        out.push(row).await?;
+        out.push(row)?;
     }
 
     Ok(())
