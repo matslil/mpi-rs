@@ -53,6 +53,9 @@ Generated handle evidence:
 - each stream handler receives a context-aware method returning
   `SuspendedMessageStream<T, E>` and an explicit `_blocking` method returning
   `BlockingMessageStream<T, E>`;
+- context-aware call and stream methods require the caller context's generated
+  message enum to implement `CanReceive<T>` for the expected response or stream
+  event type;
 - generated methods enqueue the generated message enum directly through
   `TaskHandle::send_message` or `TaskHandle::call_blocking`.
 
@@ -66,6 +69,12 @@ Generated context and dispatch evidence:
   message variant;
 - dispatch routes generated protocol variants to task-local call, stream, and
   late-reply handling.
+- `#[task(..., receives(...))]` emits `CanReceive<T>` impls for declared raw
+  response and stream event types and for protocol-qualified reply/event wrapper
+  types.
+- Protocol-generated reply and stream event receive types are unique wrappers,
+  so receive declarations can distinguish protocol message identity even when
+  two protocols use the same Rust payload, item, or error types.
 
 ## Verification Evidence
 
@@ -83,7 +92,6 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- generated `CanReceive<T>` declarations and bounds are not implemented;
 - ordinary messages are still deferred while a standard async handler waits for
   a protocol message;
 - macro-generated async handlers are still adapted through `Future` rather than

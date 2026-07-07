@@ -102,7 +102,12 @@ struct Client {
 
 #[task(
     queue_size = 8,
-    receives(CounterProtocolV1::Get::Reply, ProducerProtocolV1::Numbers::Event)
+    receives(
+        mpi::Response<u32>,
+        mpi::StreamEvent<u32, String>,
+        CounterProtocolV1::Get::Reply,
+        ProducerProtocolV1::Numbers::Event
+    )
 )]
 impl Client {
     #[start]

@@ -32,7 +32,7 @@ struct QueryClient {
     sum: u32,
 }
 
-#[task(queue_size = 8)]
+#[task(queue_size = 8, receives(mpi::StreamEvent<u32, String>))]
 impl QueryClient {
     #[start]
     async fn start(&mut self, _ctx: &mut QueryClientContext) {}
