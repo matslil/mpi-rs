@@ -820,6 +820,45 @@ fn req_102_req_111_stream_sink_batches_and_sends_end() {
 }
 
 #[test]
+fn req_113_stream_sink_yield_item_returns_context_after_sending_batch() {
+    let session_id = SessionId::new(EndpointId(4), 2);
+    let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
+    let captured_events = events.clone();
+
+    let mut sink = StreamSink::new(session_id, 8, move |event| {
+        captured_events.lock().unwrap().push(event);
+        Ok(())
+    });
+    sink.push(1).unwrap();
+
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(82));
+    let mut ctx = TaskContext::new(handle.clone());
+    let dispatched = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let captured_dispatched = dispatched.clone();
+
+    handle.send_message(CtxRuntimeMessage::Normal(7)).unwrap();
+
+    block_on_ctx_task_with_dispatch(
+        sink.yield_item(2),
+        &queue,
+        &mut ctx,
+        move |message, _ctx| {
+            if let CtxRuntimeMessage::Normal(value) = message {
+                captured_dispatched.lock().unwrap().push(value);
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        &[StreamEvent::batch(session_id, vec![1, 2])]
+    );
+    assert_eq!(dispatched.lock().unwrap().as_slice(), &[7]);
+}
+
+#[test]
 fn req_105_req_111_stream_sink_flushes_before_error() {
     let session_id = SessionId::new(EndpointId(4), 1);
     let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
