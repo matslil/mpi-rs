@@ -951,6 +951,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self.inner.is_stopped()
             }
 
+            pub fn diagnostics_snapshot(&self) -> ::mpi::TaskDiagnosticsSnapshot {
+                self.inner.diagnostics_snapshot()
+            }
+
         }
 
         impl #task_ident {

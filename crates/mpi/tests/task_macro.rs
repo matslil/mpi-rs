@@ -90,6 +90,11 @@ impl Client {
         let _ = self.unexpected_reply(ctx, reply);
     }
 
+    #[event]
+    async fn record_diagnostic_endpoint(&mut self, ctx: &mut ClientContext) {
+        self.observed = ctx.diagnostics_snapshot().endpoint.0 as u32;
+    }
+
     #[late_reply]
     fn unexpected_reply(
         &mut self,
@@ -269,6 +274,17 @@ fn req_094_generated_late_reply_handler_can_inspect_reply() {
 
     client.simulate_late_reply_handler_blocking().unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 100);
+
+    client.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+}
+
+#[test]
+fn req_140_generated_context_exposes_diagnostics_snapshot() {
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client.record_diagnostic_endpoint_blocking().unwrap();
+    assert_ne!(client.observed_blocking().unwrap(), 0);
 
     client.stop_blocking().unwrap();
     client_runtime.join().unwrap();
