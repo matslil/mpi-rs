@@ -596,7 +596,21 @@ pub fn protocol(input: TokenStream) -> TokenStream {
 
                         pub type Request = #request;
                         pub type ReplyPayload = #reply;
-                        pub type Reply = ::mpi::Response<ReplyPayload>;
+
+                        pub struct Reply(pub ::mpi::Response<ReplyPayload>);
+
+                        impl ::mpi::ProtocolReceive for Reply {
+                            fn into_task_message<M>(self) -> M
+                            where
+                                M: ::mpi::TaskMessage + ::mpi::CallResponseMessage + ::mpi::StreamEventMessage,
+                            {
+                                let response = self.0;
+                                M::call_response(
+                                    response.session_id,
+                                    Box::new(response.value) as Box<dyn ::std::any::Any + Send>,
+                                )
+                            }
+                        }
 
                         pub trait Target: Clone {
                             fn #method_ident<C>(
@@ -653,7 +667,22 @@ pub fn protocol(input: TokenStream) -> TokenStream {
                         pub type Request = #request;
                         pub type Item = #item;
                         pub type Error = #error;
-                        pub type Event = ::mpi::StreamEvent<Item, Error>;
+
+                        pub struct Event(pub ::mpi::StreamEvent<Item, Error>);
+
+                        impl ::mpi::ProtocolReceive for Event {
+                            fn into_task_message<M>(self) -> M
+                            where
+                                M: ::mpi::TaskMessage + ::mpi::CallResponseMessage + ::mpi::StreamEventMessage,
+                            {
+                                let event = self.0;
+                                let session_id = ::mpi::HasSessionId::session_id(&event);
+                                M::stream_event(
+                                    session_id,
+                                    Box::new(event) as Box<dyn ::std::any::Any + Send>,
+                                )
+                            }
+                        }
 
                         pub trait Target: Clone {
                             fn #method_ident<C>(
@@ -1040,11 +1069,15 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
-                    pub fn #method_ident(
+                    pub fn #method_ident<C>(
                         &self,
-                        ctx: &mut impl ::mpi::TaskScope,
+                        ctx: &mut C,
                         #(#arg_idents: #arg_tys),*
-                    ) -> ::mpi::SuspendedCall<#reply> {
+                    ) -> ::mpi::SuspendedCall<#reply>
+                    where
+                        C: ::mpi::TaskScope,
+                        C::Message: ::mpi::CanReceive<::mpi::Response<#reply>>,
+                    {
                         let (session_id, reply, future) =
                             ctx.begin_call_with_late_reply_policy::<#reply>(#late_reply_policy);
                         match self.inner.send_message(#message_ident::#variant_ident {
@@ -1091,7 +1124,23 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Reply>,
                             {
-                                self.#method_ident(ctx, request)
+                                let (session_id, reply, future) =
+                                    ctx.begin_call_with_late_reply_policy::<#protocol::ReplyPayload>(#late_reply_policy);
+                                match self.inner.send_message(#message_ident::#variant_ident {
+                                    session_id,
+                                    reply
+                                    #(, #arg_idents: request)*
+                                }) {
+                                    Ok(()) => {
+                                        let __call_lifecycle = self.inner.clone();
+                                        future.with_additional_on_drop(move |session_id| {
+                                            let _ = __call_lifecycle.send_message(
+                                                #message_ident::__CallRelease { session_id }
+                                            );
+                                        })
+                                    }
+                                    Err(error) => ::mpi::SuspendedCall::failed(error.into()),
+                                }
                             }
 
                             fn #protocol_blocking_method(
@@ -1155,11 +1204,15 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
                 handle_methods.push(quote! {
-                    pub fn #method_ident(
+                    pub fn #method_ident<C>(
                         &self,
-                        ctx: &mut impl ::mpi::TaskScope,
+                        ctx: &mut C,
                         #(#arg_idents: #arg_tys),*
-                    ) -> Result<::mpi::SuspendedMessageStream<#item, #error>, ::mpi::SendError> {
+                    ) -> Result<::mpi::SuspendedMessageStream<#item, #error>, ::mpi::SendError>
+                    where
+                        C: ::mpi::TaskScope,
+                        C::Message: ::mpi::CanReceive<::mpi::StreamEvent<#item, #error>>,
+                    {
                         let control = ::std::sync::Arc::new(#stream_control_ident {
                             inner: self.inner.clone(),
                         });
@@ -1215,7 +1268,20 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Event>,
                             {
-                                self.#method_ident(ctx, request)
+                                let control = ::std::sync::Arc::new(#stream_control_ident {
+                                    inner: self.inner.clone(),
+                                });
+                                let (session_id, events, stream) =
+                                    ctx.begin_stream_with_late_reply_policy::<#protocol::Item, #protocol::Error>(
+                                        control,
+                                        #late_reply_policy,
+                                    );
+                                self.inner.send_message(#message_ident::#variant_ident {
+                                    session_id,
+                                    events
+                                    #(, #arg_idents: request)*
+                                })?;
+                                Ok(stream)
                             }
 
                             fn #protocol_blocking_method(
