@@ -15,7 +15,7 @@ Remaining blocking or major gaps are tracked explicitly:
   are suspended;
 - compile-time receive declarations and `CanReceive<T>` enforcement for
   task-internal calls and streams;
-- producer-side stream cancellation and suspension under stream backpressure;
+- producer-side suspension under stream backpressure;
 - Unix signal bridge and diagnostics work, which remain later-phase/deferred
   areas in the baseline.
 
@@ -50,7 +50,7 @@ without contacting the network.
 | Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters; ordinary messages are still deferred while the active handler waits. |
 | Compile-time receive checks | inspection | `crates/mpi/src/message.rs`, `crates/mpi-macros/src/lib.rs` | gap | `CanReceive<T>` exists as a trait, but generated receive declarations and bounds are not implemented. |
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session IDs, typed responses, external blocking calls, and late replies are covered; full receive-check coverage is pending. |
-| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Batch hiding, end, error, drop cancellation attempt, and late stream replies are covered; producer cancellation and suspension under backpressure remain incomplete. |
+| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, and late stream replies are covered; producer suspension under backpressure remains incomplete. |
 | External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
 | Unix signal bridge | inspection | no implementation files | deferred | Later-phase work. |
 | Diagnostics | inspection | SE roadmap | deferred | Later-phase work. |

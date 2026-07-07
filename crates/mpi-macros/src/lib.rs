@@ -463,7 +463,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     variants.push(quote! { __StreamCancel { session_id: ::mpi::SessionId } });
     placements.push(quote! { Self::__StreamCancel { .. } => ::mpi::MessagePlacement::Priority });
-    dispatch_arms.push(quote! { #message_ident::__StreamCancel { session_id: _ } => {} });
+    dispatch_arms.push(quote! {
+        #message_ident::__StreamCancel { session_id } => {
+            ctx.inner.record_stream_cancel(::mpi::StreamCancel::new(session_id));
+        }
+    });
 
     variants.push(quote! {
         __CallResponse {
@@ -810,6 +814,21 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 match self {
                     Self::__StreamPull { session_id, credit } => {
                         Ok(::mpi::StreamPull::new(session_id, credit))
+                    }
+                    other => Err(other),
+                }
+            }
+        }
+
+        impl ::mpi::StreamCancelMessage for #message_ident {
+            fn stream_cancel(session_id: ::mpi::SessionId) -> Self {
+                Self::__StreamCancel { session_id }
+            }
+
+            fn into_stream_cancel(self) -> Result<::mpi::StreamCancel, Self> {
+                match self {
+                    Self::__StreamCancel { session_id } => {
+                        Ok(::mpi::StreamCancel::new(session_id))
                     }
                     other => Err(other),
                 }

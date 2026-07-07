@@ -6,9 +6,9 @@ use mpi::{
     CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
     LateReplyAction, LateReplyKind, LateReplyPolicy, MessagePlacement, MessageStream,
     QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent, Response, SendError, SessionId,
-    SessionIdAllocator, StreamCancel, StreamControl, StreamEvent, StreamEventMessage, StreamPull,
-    StreamPullMessage, StreamSink, SyncReplySender, TaskContext, TaskHandle, TaskMessage,
-    TaskQueue, block_on_ctx_task, spawn_task,
+    SessionIdAllocator, StreamCancel, StreamCancelMessage, StreamControl, StreamEvent,
+    StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
+    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, spawn_task, stream_credit,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -184,6 +184,9 @@ enum CtxRuntimeMessage {
         session_id: SessionId,
         credit: u32,
     },
+    StreamCancel {
+        session_id: SessionId,
+    },
     StreamEvent {
         session_id: SessionId,
         event: Box<dyn Any + Send>,
@@ -198,6 +201,7 @@ impl TaskMessage for CtxRuntimeMessage {
             Self::CallResponse { .. }
             | Self::CallRelease { .. }
             | Self::StreamPull { .. }
+            | Self::StreamCancel { .. }
             | Self::StreamEvent { .. } => MessagePlacement::Priority,
         }
     }
@@ -258,6 +262,19 @@ impl StreamPullMessage for CtxRuntimeMessage {
     }
 }
 
+impl StreamCancelMessage for CtxRuntimeMessage {
+    fn stream_cancel(session_id: SessionId) -> Self {
+        Self::StreamCancel { session_id }
+    }
+
+    fn into_stream_cancel(self) -> Result<StreamCancel, Self> {
+        match self {
+            Self::StreamCancel { session_id } => Ok(StreamCancel::new(session_id)),
+            other => Err(other),
+        }
+    }
+}
+
 impl StreamEventMessage for CtxRuntimeMessage {
     fn stream_event_with_late_reply_policy(
         session_id: SessionId,
@@ -310,6 +327,28 @@ impl CtxFuture<TaskContext<CtxRuntimeMessage, 4>> for AllocateAcrossPending {
     }
 }
 
+#[derive(Default)]
+struct PendingTwice {
+    pending_count: u8,
+}
+
+impl CtxFuture<TaskContext<CtxRuntimeMessage, 4>> for PendingTwice {
+    type Output = ();
+
+    fn resume(
+        &mut self,
+        _ctx: &mut TaskContext<CtxRuntimeMessage, 4>,
+        (): (),
+    ) -> CtxPoll<Self::Output> {
+        if self.pending_count < 2 {
+            self.pending_count += 1;
+            CtxPoll::Pending
+        } else {
+            CtxPoll::Ready(())
+        }
+    }
+}
+
 #[test]
 fn req_064_block_on_ctx_task_returns_context_between_pending_resumes() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
@@ -333,6 +372,28 @@ fn req_064_block_on_ctx_task_returns_context_between_pending_resumes() {
         deferred.pop_front(),
         Some(CtxRuntimeMessage::Normal(9))
     ));
+}
+
+#[test]
+fn req_106_req_107_block_on_ctx_task_routes_stream_cancel() {
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(78));
+    let mut ctx = TaskContext::new(handle.clone());
+    let mut deferred = VecDeque::new();
+    let session_id = SessionId::new(EndpointId(200), 1);
+
+    handle
+        .send_message(CtxRuntimeMessage::stream_pull(session_id, 3))
+        .unwrap();
+    handle
+        .send_message(CtxRuntimeMessage::stream_cancel(session_id))
+        .unwrap();
+
+    block_on_ctx_task(PendingTwice::default(), &queue, &mut ctx, &mut deferred);
+
+    assert_eq!(ctx.stream_credit(session_id), 0);
+    assert_eq!(stream_credit(session_id), 0);
+    assert!(deferred.is_empty());
 }
 
 #[test]
