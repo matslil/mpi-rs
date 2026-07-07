@@ -793,7 +793,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_consumer_grants_credit_on_create_and_item_consumption() {
+    fn req_112_stream_consumer_grants_credit_on_create_and_item_consumption() {
         let session_id = SessionId::new(crate::EndpointId(7), 3);
         let control = Arc::new(RecordingControl::default());
         let mut stream = MessageStream::<u32, String>::new(session_id, control.clone());
@@ -827,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_event_sender_enforces_credit() {
+    fn req_112_stream_event_sender_enforces_credit() {
         let session_id = SessionId::new(crate::EndpointId(8), 1);
         forget_stream_credit(session_id);
         let events = Arc::new(Mutex::new(Vec::<StreamEvent<u32, String>>::new()));
@@ -847,18 +847,25 @@ mod tests {
         assert!(events.lock().expect("events lock poisoned").is_empty());
 
         add_stream_credit(StreamPull::new(session_id, 1));
+        assert_eq!(
+            sender.send(StreamEvent::batch(session_id, vec![2, 3])),
+            Err(SendError::StreamFlowLimited)
+        );
+        assert!(events.lock().expect("events lock poisoned").is_empty());
+        assert_eq!(stream_credit(session_id), 1);
+
         sender
-            .send(StreamEvent::batch(session_id, vec![2]))
+            .send(StreamEvent::batch(session_id, vec![4]))
             .unwrap();
         assert_eq!(stream_credit(session_id), 0);
         assert_eq!(
             events.lock().expect("events lock poisoned").as_slice(),
-            &[StreamEvent::batch(session_id, vec![2])],
+            &[StreamEvent::batch(session_id, vec![4])],
         );
     }
 
     #[test]
-    fn stream_event_sender_reports_cancelled_session() {
+    fn req_106_req_112_stream_event_sender_reports_cancelled_session() {
         let session_id = SessionId::new(crate::EndpointId(9), 1);
         forget_stream_credit(session_id);
         add_stream_credit(StreamPull::new(session_id, 1));
