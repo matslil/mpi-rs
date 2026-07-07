@@ -16,6 +16,47 @@ INT-004: Task-internal synchronous and streaming APIs should require an explicit
 
 INT-005: External blocking APIs should be explicit and visually distinct from task-internal APIs.
 
+## Protocol declaration interface
+
+A protocol declaration defines a namespace-qualified message contract. The exact
+macro syntax remains subject to implementation design, but the conceptual shape
+is:
+
+```rust
+protocol! {
+    pub protocol InventoryV1 {
+        event Reindex(ReindexRequest);
+        call GetItem(GetItemRequest) -> GetItemReply;
+        stream WatchStock(WatchStockRequest) -> StockEvent error WatchStockError;
+    }
+}
+```
+
+Interface rules:
+
+INT-006: Protocol declarations shall produce namespace-qualified protocol message identities.
+
+INT-007: Protocol declarations shall explicitly identify payload, reply, stream item, and stream error types as applicable.
+
+INT-008: Generated send, call, and stream APIs shall be typed from protocol message declarations.
+
+INT-009: The interface baseline shall not require users to provide or compare generated protocol fingerprints.
+
+INT-009A: A receive declaration shall identify a protocol-qualified reply or stream event and shall use the Rust type declared by that protocol item.
+
+INT-009B: Generated send, call, and stream methods shall be produced from a protocol declaration or from a protocol-instance binding that identifies the concrete implementing task handle.
+
+Conceptual protocol-instance binding:
+
+```rust
+let inventory = InventoryV1::bind(inventory_task);
+let reply = inventory.get_item(ctx, request).await?;
+```
+
+In this shape, `InventoryV1::GetItem` defines the message identity and Rust
+types, while `inventory_task` identifies the concrete task instance that
+implements that protocol message.
+
 ## Task declaration interface
 
 The task state is a normal Rust struct. The `#[task]` attribute is applied to the `impl` block that contains the task handlers. The `impl` attribute shall contain the queue-size configuration so that one macro invocation has all information needed to generate the task message enum, context type, handle type, send methods, spawn helper, placement implementation, and dispatch plumbing.
@@ -163,6 +204,8 @@ INT-032: Start messages shall report priority placement.
 ## Compile-time receive check interface
 
 A task must declare the response and stream event messages it can receive.
+Those declarations are derived from protocol-declared response and stream event
+types.
 
 The mechanism may be equivalent to:
 
@@ -179,6 +222,8 @@ INT-040: A caller task shall only be able to call a task-internal synchronous me
 INT-041: A caller task shall only be able to call a task-internal streaming method when its message enum can receive the corresponding stream event type.
 
 INT-042: Missing receive support should fail at compile time rather than runtime.
+
+INT-042A: Receive declarations should refer to protocol-qualified response or stream event identities and their protocol-declared Rust types rather than unqualified message names.
 
 ## Context future interface
 

@@ -190,6 +190,118 @@ Verification: inspection
 
 Status: approved
 
+## Protocol requirements
+
+### REQ-160: Protocol declaration
+
+A protocol shall define a named, exported set of message declarations.
+
+Source: SN-018, SN-024
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-161: Protocol namespace
+
+A protocol shall belong to a namespace represented by the Rust module or crate path that exports it.
+
+Source: SN-018
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-162: Protocol message identity
+
+A protocol message identity shall include the protocol namespace, protocol name, and message name.
+
+Source: SN-018, SN-024
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-163: Explicit protocol message types
+
+Each protocol message declaration shall explicitly identify all Rust types carried by the protocol message interaction, including event payload, call request, call reply, stream request, stream item, and stream error types as applicable.
+
+Source: SN-018, SN-023
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-164: Append-only protocol compatibility
+
+A published protocol shall be compatible only with additions of new message declarations.
+
+Source: SN-018, SN-024
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-165: Breaking protocol changes
+
+Changing or removing an existing protocol message declaration or its associated types shall require a new protocol name.
+
+Source: SN-018, SN-024
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-166: Protocol-based receive checks
+
+Compile-time receive checks shall be based on protocol-declared response and stream event types.
+
+Source: SN-018, SN-023
+
+Verification: test
+
+Status: proposed
+
+### REQ-167: Protocol fingerprint not required
+
+The baseline shall not require a generated protocol fingerprint for compile-time receive checks.
+
+Source: Human maintainer decision, SN-018
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-168: Receive declaration match
+
+A receive declaration shall match a protocol reply or stream event by protocol message identity and by the Rust type declared for that reply or stream event.
+
+Source: SN-018, SN-023
+
+Verification: test
+
+Status: proposed
+
+### REQ-169: Protocol-derived send surface
+
+Generated send, call, and stream APIs shall be derived from a protocol declaration or from a derivative that preserves the protocol message identities and declared types.
+
+Source: SN-012, SN-018
+
+Verification: inspection
+
+Status: proposed
+
+### REQ-170: Protocol implementation binding
+
+A protocol derivative may bind a protocol declaration to the concrete task, endpoint, or handle that implements a specific protocol instance.
+
+Source: SN-018
+
+Verification: inspection
+
+Status: proposed
+
 ## Queue placement requirements
 
 ### REQ-030: Receiver-declared placement

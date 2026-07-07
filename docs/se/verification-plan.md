@@ -120,6 +120,33 @@ Relevant requirements:
 - REQ-051
 - REQ-052
 
+### Protocol verification
+
+Protocol verification should inspect:
+
+- namespace-qualified protocol identities;
+- protocol message identities;
+- explicit payload, reply, stream item, and stream error type declarations;
+- receive declarations matching protocol-qualified identities and declared types;
+- generated send surfaces derived from protocol declarations or protocol-instance bindings;
+- append-only compatibility rules;
+- incompatible-change guidance requiring a new protocol name;
+- compile-time receive checks derived from protocol-declared reply and stream event types.
+
+Relevant requirements:
+
+- REQ-160
+- REQ-161
+- REQ-162
+- REQ-163
+- REQ-164
+- REQ-165
+- REQ-166
+- REQ-167
+- REQ-168
+- REQ-169
+- REQ-170
+
 ### Handler and selective receive verification
 
 Handler tests should verify:
