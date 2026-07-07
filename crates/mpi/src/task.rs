@@ -23,8 +23,8 @@ use crate::session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel,
 };
 use crate::stream::{
-    QueuedStreamEvent, StreamControl, StreamEvent, StreamEventMessage, StreamEventSender,
-    StreamPull, StreamSession, add_stream_credit, forget_stream_credit,
+    QueuedStreamEvent, StreamCancel, StreamControl, StreamEvent, StreamEventMessage,
+    StreamEventSender, StreamPull, StreamSession, add_stream_credit, forget_stream_credit,
     suspended_stream_waiter_with_on_drop,
 };
 
@@ -299,6 +299,15 @@ where
         let mut state = self.inner.borrow_mut();
         let credit = state.stream_credits.entry(pull.session_id).or_insert(0);
         *credit = credit.saturating_add(pull.credit);
+    }
+
+    /// Record that a stream consumer has cancelled the session.
+    pub fn record_stream_cancel(&self, cancel: StreamCancel) {
+        self.inner
+            .borrow_mut()
+            .stream_credits
+            .remove(&cancel.session_id);
+        forget_stream_credit(cancel.session_id);
     }
 
     /// Consume one stream item credit if any has been granted.

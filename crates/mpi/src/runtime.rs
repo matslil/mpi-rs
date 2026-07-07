@@ -10,7 +10,7 @@ use std::task::{Context, Poll, Waker};
 use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
-use crate::stream::{StreamEventMessage, StreamPullMessage};
+use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
 use crate::task::TaskContext;
 
 struct StdFutureCtx<F> {
@@ -71,6 +71,7 @@ fn route_task_message<M, const N: usize>(
         + CallResponseMessage
         + CallReleaseMessage
         + StreamPullMessage
+        + StreamCancelMessage
         + StreamEventMessage,
 {
     match message.into_call_response() {
@@ -85,11 +86,16 @@ fn route_task_message<M, const N: usize>(
                 Ok(pull) => {
                     ctx.record_stream_pull(pull);
                 }
-                Err(message) => match message.into_stream_event() {
-                    Ok(event) => {
-                        let _ = ctx.deliver_stream_event(event);
+                Err(message) => match message.into_stream_cancel() {
+                    Ok(cancel) => {
+                        ctx.record_stream_cancel(cancel);
                     }
-                    Err(message) => deferred.push_back(message),
+                    Err(message) => match message.into_stream_event() {
+                        Ok(event) => {
+                            let _ = ctx.deliver_stream_event(event);
+                        }
+                        Err(message) => deferred.push_back(message),
+                    },
                 },
             },
         },
@@ -114,6 +120,7 @@ where
         + CallResponseMessage
         + CallReleaseMessage
         + StreamPullMessage
+        + StreamCancelMessage
         + StreamEventMessage,
     F: CtxFuture<TaskContext<M, N>>,
 {
@@ -145,6 +152,7 @@ where
         + CallResponseMessage
         + CallReleaseMessage
         + StreamPullMessage
+        + StreamCancelMessage
         + StreamEventMessage,
     F: Future,
 {

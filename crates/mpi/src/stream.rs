@@ -245,6 +245,15 @@ impl HasSessionId for StreamCancel {
     }
 }
 
+/// Message enums that can carry queued stream cancellation control.
+pub trait StreamCancelMessage: Sized {
+    /// Wrap stream cancellation control into this task's message enum.
+    fn stream_cancel(session_id: SessionId) -> Self;
+
+    /// Extract stream cancellation control from this message, if it is one.
+    fn into_stream_cancel(self) -> Result<StreamCancel, Self>;
+}
+
 /// Sends stream lifecycle control for a live stream.
 pub trait StreamControl: Send + Sync + 'static {
     /// Try to grant additional item credit to a stream producer.
