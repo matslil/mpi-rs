@@ -251,6 +251,19 @@ fn req_101_req_102_req_103_generated_stream_hides_batches() {
 }
 
 #[test]
+fn req_106_req_107_generated_stream_cancel_clears_producer_credit() {
+    let (producer, runtime) = Producer::spawn(Producer).unwrap();
+    let stream = producer.numbers_blocking(1).unwrap();
+    let session_id = stream.session_id();
+
+    drop(stream);
+    producer.stop_blocking().unwrap();
+    runtime.join().unwrap();
+
+    assert_eq!(mpi::stream_credit(session_id), 0);
+}
+
+#[test]
 fn req_094_generated_late_reply_handler_can_inspect_reply() {
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
