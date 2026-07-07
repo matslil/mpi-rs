@@ -1,41 +1,113 @@
-//! Procedural macros for `mpi` task declarations.
+//! Procedural macros for `mpi` task and protocol declarations.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 use syn::{
-    Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Pat, PatType, Token, Type,
-    parse_macro_input,
+    Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Pat, PatType, Path, Token,
+    Type, Visibility, braced, parenthesized, parse_macro_input,
 };
+
+mod kw {
+    syn::custom_keyword!(protocol);
+    syn::custom_keyword!(event);
+    syn::custom_keyword!(call);
+    syn::custom_keyword!(stream);
+    syn::custom_keyword!(error);
+}
 
 struct TaskArgs {
     queue_size: TokenStream2,
+    receives: Vec<Type>,
 }
 
 impl Parse for TaskArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let key: Ident = input.parse()?;
-        if key != "queue_size" {
-            return Err(syn::Error::new_spanned(key, "expected `queue_size`"));
+        let mut queue_size = None;
+        let mut receives = Vec::new();
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            if key == "queue_size" {
+                input.parse::<Token![=]>()?;
+                let value: syn::Expr = input.parse()?;
+                queue_size = Some(value.into_token_stream());
+            } else if key == "receives" {
+                let content;
+                parenthesized!(content in input);
+                receives = Punctuated::<Type, Token![,]>::parse_terminated(&content)?
+                    .into_iter()
+                    .collect();
+            } else {
+                return Err(syn::Error::new_spanned(
+                    key,
+                    "expected `queue_size` or `receives`",
+                ));
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
         }
-        input.parse::<Token![=]>()?;
-        let value: syn::Expr = input.parse()?;
+
+        let queue_size = queue_size.ok_or_else(|| input.error("missing `queue_size`"))?;
         Ok(Self {
-            queue_size: value.into_token_stream(),
+            queue_size,
+            receives,
         })
+    }
+}
+
+struct EventArgs {
+    priority: bool,
+    protocol: Option<Path>,
+}
+
+impl Parse for EventArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut priority = false;
+        let mut protocol = None;
+
+        while !input.is_empty() {
+            if input.peek(Ident) {
+                let key: Ident = input.parse()?;
+                if key == "priority" {
+                    priority = true;
+                } else if key == "protocol" {
+                    input.parse::<Token![=]>()?;
+                    protocol = Some(input.parse()?);
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        "expected `priority` or `protocol`",
+                    ));
+                }
+            } else {
+                return Err(input.error("expected `priority` or `protocol`"));
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        Ok(Self { priority, protocol })
     }
 }
 
 struct CallArgs {
     reply: Type,
     late_reply_policy: TokenStream2,
+    protocol: Option<Path>,
 }
 
 impl Parse for CallArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut reply = None;
         let mut late_reply_policy = None;
+        let mut protocol = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -45,10 +117,12 @@ impl Parse for CallArgs {
                 reply = Some(input.parse()?);
             } else if key == "late_reply" {
                 late_reply_policy = Some(parse_late_reply_policy(input.parse()?)?);
+            } else if key == "protocol" {
+                protocol = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `reply` or `late_reply`",
+                    "expected `reply`, `late_reply`, or `protocol`",
                 ));
             }
 
@@ -63,6 +137,7 @@ impl Parse for CallArgs {
         Ok(Self {
             reply,
             late_reply_policy,
+            protocol,
         })
     }
 }
@@ -72,6 +147,7 @@ struct StreamArgs {
     error: Type,
     batch_size: TokenStream2,
     late_reply_policy: TokenStream2,
+    protocol: Option<Path>,
 }
 
 impl Parse for StreamArgs {
@@ -80,6 +156,7 @@ impl Parse for StreamArgs {
         let mut error = None;
         let mut batch_size = None;
         let mut late_reply_policy = None;
+        let mut protocol = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -94,10 +171,12 @@ impl Parse for StreamArgs {
                 batch_size = Some(value.into_token_stream());
             } else if key == "late_reply" {
                 late_reply_policy = Some(parse_late_reply_policy(input.parse()?)?);
+            } else if key == "protocol" {
+                protocol = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `item`, `error`, `batch_size`, or `late_reply`",
+                    "expected `item`, `error`, `batch_size`, `late_reply`, or `protocol`",
                 ));
             }
 
@@ -117,7 +196,91 @@ impl Parse for StreamArgs {
             error,
             batch_size,
             late_reply_policy,
+            protocol,
         })
+    }
+}
+
+enum ProtocolItemKind {
+    Event {
+        payload: Type,
+    },
+    Call {
+        request: Type,
+        reply: Type,
+    },
+    Stream {
+        request: Type,
+        item: Type,
+        error: Type,
+    },
+}
+
+struct ProtocolItemParsed {
+    kind: ProtocolItemKind,
+    name: Ident,
+}
+
+struct ProtocolDecl {
+    vis: Visibility,
+    name: Ident,
+    items: Vec<ProtocolItemParsed>,
+}
+
+impl Parse for ProtocolDecl {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let vis: Visibility = input.parse()?;
+        input.parse::<kw::protocol>()?;
+        let name: Ident = input.parse()?;
+        let content;
+        braced!(content in input);
+        let mut items = Vec::new();
+
+        while !content.is_empty() {
+            let lookahead = content.lookahead1();
+            let (name, kind) = if lookahead.peek(kw::event) {
+                content.parse::<kw::event>()?;
+                let name: Ident = content.parse()?;
+                let args;
+                parenthesized!(args in content);
+                let payload = args.parse()?;
+                (name, ProtocolItemKind::Event { payload })
+            } else if lookahead.peek(kw::call) {
+                content.parse::<kw::call>()?;
+                let name: Ident = content.parse()?;
+                let args;
+                parenthesized!(args in content);
+                let request = args.parse()?;
+                content.parse::<Token![->]>()?;
+                let reply = content.parse()?;
+                (name, ProtocolItemKind::Call { request, reply })
+            } else if lookahead.peek(kw::stream) {
+                content.parse::<kw::stream>()?;
+                let name: Ident = content.parse()?;
+                let args;
+                parenthesized!(args in content);
+                let request = args.parse()?;
+                content.parse::<Token![->]>()?;
+                let item = content.parse()?;
+                content.parse::<kw::error>()?;
+                let error = content.parse()?;
+                (
+                    name,
+                    ProtocolItemKind::Stream {
+                        request,
+                        item,
+                        error,
+                    },
+                )
+            } else {
+                return Err(lookahead.error());
+            };
+
+            content.parse::<Token![;]>()?;
+            items.push(ProtocolItemParsed { kind, name });
+        }
+
+        Ok(Self { vis, name, items })
     }
 }
 
@@ -142,16 +305,19 @@ enum HandlerKind {
     Start,
     Event {
         priority: bool,
+        protocol: Option<Path>,
     },
     Call {
         reply: Box<Type>,
         late_reply_policy: TokenStream2,
+        protocol: Option<Path>,
     },
     Stream {
         item: Box<Type>,
         error: Box<Type>,
         batch_size: TokenStream2,
         late_reply_policy: TokenStream2,
+        protocol: Option<Path>,
     },
     LateReply,
 }
@@ -199,14 +365,26 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
 
         result = Some(match name {
             "start" => HandlerKind::Start,
-            "event" => HandlerKind::Event {
-                priority: attr.to_token_stream().to_string().contains("priority"),
-            },
+            "event" => {
+                let args = if matches!(attr.meta, syn::Meta::Path(_)) {
+                    EventArgs {
+                        priority: false,
+                        protocol: None,
+                    }
+                } else {
+                    attr.parse_args::<EventArgs>()?
+                };
+                HandlerKind::Event {
+                    priority: args.priority,
+                    protocol: args.protocol,
+                }
+            }
             "call" => {
                 let args = attr.parse_args::<CallArgs>()?;
                 HandlerKind::Call {
                     reply: Box::new(args.reply),
                     late_reply_policy: args.late_reply_policy,
+                    protocol: args.protocol,
                 }
             }
             "stream" => {
@@ -216,6 +394,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                     error: Box::new(args.error),
                     batch_size: args.batch_size,
                     late_reply_policy: args.late_reply_policy,
+                    protocol: args.protocol,
                 }
             }
             "late_reply" => HandlerKind::LateReply,
@@ -323,6 +502,232 @@ fn to_variant_ident(method: &Ident) -> Ident {
     format_ident!("{}", out)
 }
 
+fn to_snake_ident(ident: &Ident) -> Ident {
+    let name = ident.to_string();
+    let mut out = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    format_ident!("{}", out)
+}
+
+fn protocol_item_method(protocol: &Path) -> syn::Result<Ident> {
+    protocol
+        .segments
+        .last()
+        .map(|segment| to_snake_ident(&segment.ident))
+        .ok_or_else(|| syn::Error::new_spanned(protocol, "protocol path must name a message"))
+}
+
+/// Generates protocol message identity modules and protocol-derived bindings.
+#[proc_macro]
+pub fn protocol(input: TokenStream) -> TokenStream {
+    let decl = parse_macro_input!(input as ProtocolDecl);
+    let vis = decl.vis;
+    let protocol_ident = decl.name;
+    let mut item_modules = Vec::new();
+    let mut binding_methods = Vec::new();
+
+    for item in decl.items {
+        let item_ident = item.name;
+        let method_ident = to_snake_ident(&item_ident);
+        let blocking_method_ident = format_ident!("{}_blocking", method_ident);
+
+        match item.kind {
+            ProtocolItemKind::Event { payload } => {
+                item_modules.push(quote! {
+                    #[allow(non_snake_case)]
+                    pub mod #item_ident {
+                        use super::super::*;
+
+                        pub type Payload = #payload;
+
+                        pub trait Target: Clone {
+                            fn #method_ident(
+                                &self,
+                                ctx: &mut impl ::mpi::TaskScope,
+                                payload: Payload,
+                            ) -> Result<(), ::mpi::SendError>;
+
+                            fn #blocking_method_ident(
+                                &self,
+                                payload: Payload,
+                            ) -> Result<(), ::mpi::SendError>;
+                        }
+                    }
+                });
+                binding_methods.push(quote! {
+                    pub fn #method_ident(
+                        &self,
+                        ctx: &mut impl ::mpi::TaskScope,
+                        payload: #item_ident::Payload,
+                    ) -> Result<(), ::mpi::SendError>
+                    where
+                        H: #item_ident::Target,
+                    {
+                        self.handle.#method_ident(ctx, payload)
+                    }
+
+                    pub fn #blocking_method_ident(
+                        &self,
+                        payload: #item_ident::Payload,
+                    ) -> Result<(), ::mpi::SendError>
+                    where
+                        H: #item_ident::Target,
+                    {
+                        self.handle.#blocking_method_ident(payload)
+                    }
+                });
+            }
+            ProtocolItemKind::Call { request, reply } => {
+                item_modules.push(quote! {
+                    #[allow(non_snake_case)]
+                    pub mod #item_ident {
+                        use super::super::*;
+
+                        pub type Request = #request;
+                        pub type ReplyPayload = #reply;
+                        pub type Reply = ::mpi::Response<ReplyPayload>;
+
+                        pub trait Target: Clone {
+                            fn #method_ident<C>(
+                                &self,
+                                ctx: &mut C,
+                                request: Request,
+                            ) -> ::mpi::SuspendedCall<ReplyPayload>
+                            where
+                                C: ::mpi::TaskScope,
+                                C::Message: ::mpi::CanReceive<Reply>;
+
+                            fn #blocking_method_ident(
+                                &self,
+                                request: Request,
+                            ) -> Result<ReplyPayload, ::mpi::CallError>;
+                        }
+                    }
+                });
+                binding_methods.push(quote! {
+                    pub fn #method_ident<C>(
+                        &self,
+                        ctx: &mut C,
+                        request: #item_ident::Request,
+                    ) -> ::mpi::SuspendedCall<#item_ident::ReplyPayload>
+                    where
+                        H: #item_ident::Target,
+                        C: ::mpi::TaskScope,
+                        C::Message: ::mpi::CanReceive<#item_ident::Reply>,
+                    {
+                        self.handle.#method_ident(ctx, request)
+                    }
+
+                    pub fn #blocking_method_ident(
+                        &self,
+                        request: #item_ident::Request,
+                    ) -> Result<#item_ident::ReplyPayload, ::mpi::CallError>
+                    where
+                        H: #item_ident::Target,
+                    {
+                        self.handle.#blocking_method_ident(request)
+                    }
+                });
+            }
+            ProtocolItemKind::Stream {
+                request,
+                item,
+                error,
+            } => {
+                item_modules.push(quote! {
+                    #[allow(non_snake_case)]
+                    pub mod #item_ident {
+                        use super::super::*;
+
+                        pub type Request = #request;
+                        pub type Item = #item;
+                        pub type Error = #error;
+                        pub type Event = ::mpi::StreamEvent<Item, Error>;
+
+                        pub trait Target: Clone {
+                            fn #method_ident<C>(
+                                &self,
+                                ctx: &mut C,
+                                request: Request,
+                            ) -> Result<::mpi::SuspendedMessageStream<Item, Error>, ::mpi::SendError>
+                            where
+                                C: ::mpi::TaskScope,
+                                C::Message: ::mpi::CanReceive<Event>;
+
+                            fn #blocking_method_ident(
+                                &self,
+                                request: Request,
+                            ) -> Result<::mpi::BlockingMessageStream<Item, Error>, ::mpi::SendError>;
+                        }
+                    }
+                });
+                binding_methods.push(quote! {
+                    pub fn #method_ident<C>(
+                        &self,
+                        ctx: &mut C,
+                        request: #item_ident::Request,
+                    ) -> Result<::mpi::SuspendedMessageStream<#item_ident::Item, #item_ident::Error>, ::mpi::SendError>
+                    where
+                        H: #item_ident::Target,
+                        C: ::mpi::TaskScope,
+                        C::Message: ::mpi::CanReceive<#item_ident::Event>,
+                    {
+                        self.handle.#method_ident(ctx, request)
+                    }
+
+                    pub fn #blocking_method_ident(
+                        &self,
+                        request: #item_ident::Request,
+                    ) -> Result<::mpi::BlockingMessageStream<#item_ident::Item, #item_ident::Error>, ::mpi::SendError>
+                    where
+                        H: #item_ident::Target,
+                    {
+                        self.handle.#blocking_method_ident(request)
+                    }
+                });
+            }
+        }
+    }
+
+    quote! {
+        #[allow(non_snake_case)]
+        #vis mod #protocol_ident {
+            use super::*;
+
+            #[derive(Clone)]
+            pub struct Binding<H> {
+                handle: H,
+            }
+
+            pub fn bind<H>(handle: H) -> Binding<H> {
+                Binding { handle }
+            }
+
+            impl<H> Binding<H> {
+                pub fn handle(&self) -> &H {
+                    &self.handle
+                }
+
+                #(#binding_methods)*
+            }
+
+            #(#item_modules)*
+        }
+    }
+    .into()
+}
+
 /// Generates task message enum, context, handle, send methods, spawn helper,
 /// placement implementation, and dispatch for one task impl block.
 #[rustfmt::skip]
@@ -341,6 +746,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let context_ident = format_ident!("{}Context", task_ident);
     let stream_control_ident = format_ident!("{}StreamControl", task_ident);
     let queue_size = args.queue_size;
+    let receives = args.receives;
 
     let mut handlers = Vec::new();
     let mut stripped_items = Vec::new();
@@ -408,6 +814,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut placements = Vec::new();
     let mut dispatch_arms = Vec::new();
     let mut handle_methods = Vec::new();
+    let mut protocol_impls = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
     let late_reply_method = handlers
@@ -544,7 +951,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
-            HandlerKind::Event { priority } => {
+            HandlerKind::Event { priority, protocol } => {
                 let placement = if *priority {
                     quote! { ::mpi::MessagePlacement::Priority }
                 } else {
@@ -575,10 +982,36 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         self.inner.send_message(#message_ident::#variant_ident { #(#arg_idents),* })
                     }
                 });
+                if let Some(protocol) = protocol {
+                    let protocol_method = match protocol_item_method(protocol) {
+                        Ok(method) => method,
+                        Err(error) => return compile_error(error),
+                    };
+                    let protocol_blocking_method = format_ident!("{}_blocking", protocol_method);
+                    protocol_impls.push(quote! {
+                        impl #protocol::Target for #handle_ident {
+                            fn #protocol_method(
+                                &self,
+                                ctx: &mut impl ::mpi::TaskScope,
+                                payload: #protocol::Payload,
+                            ) -> Result<(), ::mpi::SendError> {
+                                self.#method_ident(ctx, payload)
+                            }
+
+                            fn #protocol_blocking_method(
+                                &self,
+                                payload: #protocol::Payload,
+                            ) -> Result<(), ::mpi::SendError> {
+                                self.#blocking_method(payload)
+                            }
+                        }
+                    });
+                }
             }
             HandlerKind::Call {
                 reply,
                 late_reply_policy,
+                protocol,
             } => {
                 let reply = &**reply;
                 let blocking_method = format_ident!("{}_blocking", method_ident);
@@ -641,12 +1074,42 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             .map(|response| response.value)
                     }
                 });
+                if let Some(protocol) = protocol {
+                    let protocol_method = match protocol_item_method(protocol) {
+                        Ok(method) => method,
+                        Err(error) => return compile_error(error),
+                    };
+                    let protocol_blocking_method = format_ident!("{}_blocking", protocol_method);
+                    protocol_impls.push(quote! {
+                        impl #protocol::Target for #handle_ident {
+                            fn #protocol_method<C>(
+                                &self,
+                                ctx: &mut C,
+                                request: #protocol::Request,
+                            ) -> ::mpi::SuspendedCall<#protocol::ReplyPayload>
+                            where
+                                C: ::mpi::TaskScope,
+                                C::Message: ::mpi::CanReceive<#protocol::Reply>,
+                            {
+                                self.#method_ident(ctx, request)
+                            }
+
+                            fn #protocol_blocking_method(
+                                &self,
+                                request: #protocol::Request,
+                            ) -> Result<#protocol::ReplyPayload, ::mpi::CallError> {
+                                self.#blocking_method(request)
+                            }
+                        }
+                    });
+                }
             }
             HandlerKind::Stream {
                 item,
                 error,
                 batch_size,
                 late_reply_policy,
+                protocol,
             } => {
                 let item = &**item;
                 let error = &**error;
@@ -735,6 +1198,35 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         Ok(::mpi::BlockingMessageStream::new(session_id, control, receiver))
                     }
                 });
+                if let Some(protocol) = protocol {
+                    let protocol_method = match protocol_item_method(protocol) {
+                        Ok(method) => method,
+                        Err(error) => return compile_error(error),
+                    };
+                    let protocol_blocking_method = format_ident!("{}_blocking", protocol_method);
+                    protocol_impls.push(quote! {
+                        impl #protocol::Target for #handle_ident {
+                            fn #protocol_method<C>(
+                                &self,
+                                ctx: &mut C,
+                                request: #protocol::Request,
+                            ) -> Result<::mpi::SuspendedMessageStream<#protocol::Item, #protocol::Error>, ::mpi::SendError>
+                            where
+                                C: ::mpi::TaskScope,
+                                C::Message: ::mpi::CanReceive<#protocol::Event>,
+                            {
+                                self.#method_ident(ctx, request)
+                            }
+
+                            fn #protocol_blocking_method(
+                                &self,
+                                request: #protocol::Request,
+                            ) -> Result<::mpi::BlockingMessageStream<#protocol::Item, #protocol::Error>, ::mpi::SendError> {
+                                self.#blocking_method(request)
+                            }
+                        }
+                    });
+                }
             }
             HandlerKind::LateReply => {}
         }
@@ -743,11 +1235,24 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let start_variant = start_variant.expect("start handler counted above");
     let start_arg_idents: Vec<_> = start_args.iter().map(|arg| &arg.ident).collect();
     let start_arg_tys: Vec<_> = start_args.iter().map(|arg| &arg.ty).collect();
+    let receive_impls = receives.iter().map(|receive_ty| {
+        quote! {
+            impl ::mpi::CanReceive<#receive_ty> for #message_ident
+            where
+                #receive_ty: ::mpi::ProtocolReceive,
+            {
+                fn wrap(value: #receive_ty) -> Self {
+                    <#receive_ty as ::mpi::ProtocolReceive>::into_task_message::<Self>(value)
+                }
+            }
+        }
+    });
 
     let expanded = quote! {
         #item_impl
 
-        enum #message_ident {
+        #[allow(private_interfaces)]
+        pub enum #message_ident {
             #(#variants),*
         }
 
@@ -758,6 +1263,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
+
+        #(#receive_impls)*
 
         impl ::mpi::CallResponseMessage for #message_ident {
             fn call_response_with_late_reply_policy(
@@ -897,11 +1404,15 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             #(#handle_methods)*
         }
 
+        #(#protocol_impls)*
+
         pub struct #context_ident {
             inner: ::mpi::TaskContext<#message_ident, #queue_size>,
         }
 
         impl ::mpi::TaskScope for #context_ident {
+            type Message = #message_ident;
+
             fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
                 self.inner.begin_call::<T>()
             }

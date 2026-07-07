@@ -16,9 +16,9 @@ pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, resume_fn};
 pub use error::{CallError, RecvError, SendError};
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
-    MessagePlacement, TaskMessage,
+    MessagePlacement, ProtocolReceive, TaskMessage,
 };
-pub use mpi_macros::{call, event, late_reply, start, stream, task};
+pub use mpi_macros::{call, event, late_reply, protocol, start, stream, task};
 pub use queue::{TaskQueue, TaskQueueSnapshot};
 pub use runtime::{block_on, block_on_ctx_task, block_on_task};
 pub use scope::TaskScope;

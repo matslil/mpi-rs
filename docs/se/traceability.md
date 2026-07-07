@@ -67,7 +67,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-130..REQ-131 | SN-044 | ARCH-090..ARCH-092 | INT-110..INT-111 | pending | inspection pending | VAL-012 | approved |
 | REQ-140 | SN-045 | diagnostics | INT-052, diagnostics interfaces pending for timeout/tracing/deadlock support | diagnostics roadmap in `docs/reports/diagnostics-roadmap.md`; `TaskQueueSnapshot`, `TaskDiagnosticsSnapshot`, and generated-context diagnostics access expose read-only queue and session state | `docs/reports/diagnostics-roadmap.md` inspection; `crates/mpi/tests/runtime_baseline.rs`; `crates/mpi/tests/task_macro.rs` | VAL-013 | implemented |
 | REQ-150..REQ-152 | SN-021, SN-022 | implementation phases, crate structure, CMP-015 | `docs/se/ctx-future.md`, `crates/ctx-future` | `crates/ctx-future` | `crates/ctx-future/tests/context_borrow.rs`, inspection | review evidence | approved |
-| REQ-160..REQ-170 | SN-012, SN-018, SN-023, SN-024 | CMP-002, CMP-012, CMP-016, ARCH-100..ARCH-109 | INT-006..INT-009B, INT-042A | pending | inspection and compile-fail tests pending | VAL-015 | proposed |
+| REQ-160..REQ-170 | SN-012, SN-018, SN-023, SN-024 | CMP-002, CMP-012, CMP-016, ARCH-100..ARCH-109 | INT-006..INT-009B, INT-042A | candidate implementation in `crates/mpi-macros/src/lib.rs`, `crates/mpi/src/message.rs`, `crates/mpi/src/scope.rs`, and generated task contexts | `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs`; full separate-binary validation pending | VAL-015 | proposed |
 
 ## Known initial gaps
 
@@ -83,10 +83,10 @@ GAP-005: Unix signal support is later-phase work and remains deferred for valida
 
 GAP-006: The `ctx-future` crate now has a task-local runtime integration point in `mpi`, but macro-generated async handlers are still adapted through standard `Future`; full generated lowering into native `CtxFuture` continuations remains pending.
 
-GAP-007: Protocol declarations are now proposed as the design source for
-namespace-qualified message identities, explicit protocol message types,
-protocol-derived send surfaces, append-only compatibility, and compile-time
-receive checks. Runtime and macro implementation remains pending.
+GAP-007: Protocol declarations now have a candidate macro/runtime
+implementation for namespace-qualified message identities, explicit protocol
+message types, protocol-derived send surfaces, and compile-time receive checks.
+Separate-binary runtime capability discovery and validation remain pending.
 
 ## Traceability maintenance rules
 
