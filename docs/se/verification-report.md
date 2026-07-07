@@ -1,71 +1,86 @@
 # Verification Report
 
-This is the current verification report for the systems-engineering and agent-documentation baseline.
-
-The repository now treats `docs/se/` as the authoritative engineering baseline. Runtime implementation verification is intentionally pending until implementation work begins.
+This report summarizes the current local verification evidence for the
+systems-engineering baseline and the implemented runtime subset.
 
 ## Summary
 
-The following document categories are part of the current baseline:
+The repository now contains working implementation evidence for the early queue,
+task, macro, call, late-reply, stream-basics, and `ctx-future` areas. The
+implementation is not yet complete against the approved baseline.
 
-- repository-level AI instructions;
-- role-specific agent instructions;
-- stakeholder needs;
-- requirements;
-- architecture;
-- interfaces;
-- verification plan;
-- validation scenarios;
-- traceability matrix;
-- glossary;
-- change process;
-- message-model replacement readiness note.
+Remaining blocking or major gaps are tracked explicitly:
+
+- full task-local scheduling that dispatches ordinary messages while handlers
+  are suspended;
+- compile-time receive declarations and `CanReceive<T>` enforcement for
+  task-internal calls and streams;
+- producer-side stream cancellation and suspension under stream backpressure;
+- Unix signal bridge and diagnostics work, which remain later-phase/deferred
+  areas in the baseline.
 
 ## Commands run
 
-No Rust verification commands were run for this documentation-only update.
+The following commands were run from the workspace root:
 
-Rust commands are required for future implementation and test changes according to `docs/se/verification-plan.md` and the relevant agent instructions.
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo test --doc
+```
 
-## Requirement verification status
+Result: all commands passed.
+
+Note: an initial sandboxed `cargo test` run failed because temporary
+compile-fail fixtures tried to access the crates.io index. The compile-fail
+fixture harness now copies the workspace lockfile and runs `cargo check
+--offline` so those tests use already-resolved workspace dependency versions
+without contacting the network.
+
+## Requirement Verification Status
 
 | Requirement area | Method | Evidence | Result | Notes |
 |---|---|---|---|---|
-| Process source-of-truth handling | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se/replacement-readiness.md` | pending human review | Establishes `docs/se/` as the authoritative baseline. |
-| Agent role separation | inspection | `docs/agents/*.md` | pending human review | Separate system engineering, implementation, test, review, validation, traceability, and release roles are defined. |
-| Human approval rule | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se/change-process.md` | pending human review | Merge authority remains with the human maintainer. |
-| Message model requirements | inspection | `docs/se/requirements.md` | pending human review | Requirements are now self-contained in `docs/se/`. |
-| Architecture baseline | inspection | `docs/se/architecture.md` | pending human review | Architecture is now self-contained in `docs/se/`. |
-| Interface baseline | inspection | `docs/se/interfaces.md` | pending human review | Interfaces are now self-contained in `docs/se/`. |
-| Validation baseline | inspection | `docs/se/validation-scenarios.md` | pending human review | Scenarios are derived from intended user workflows. |
-| Traceability baseline | inspection | `docs/se/traceability.md` | pending human review | Implementation and tests are mostly pending by design. |
+| Process source-of-truth handling | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se/*` | partial | Source-of-truth process exists; human approval remains required. |
+| Queue behavior | test | `crates/mpi/tests/runtime_baseline.rs` | passed | Covers static/shared capacity, queue-full error, normal FIFO, priority FIFO, and priority-before-normal. |
+| Start message behavior | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | passed | Covers start enqueue/priority/first behavior and macro-forced priority. |
+| Macro-generated task API | test, inspection | `crates/mpi-macros/src/lib.rs`, `crates/mpi/tests/task_macro.rs` | partial | Generates handles, contexts, dispatch, calls, streams, and blocking APIs; compile-time receive declarations remain missing. |
+| Context-returning suspension primitive | test, inspection | `crates/ctx-future/tests/context_borrow.rs`, `crates/ctx-future/README.md` | passed | `ctx-future` is standalone and returns context between pending resumes. |
+| Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters; ordinary messages are still deferred while the active handler waits. |
+| Compile-time receive checks | inspection | `crates/mpi/src/message.rs`, `crates/mpi-macros/src/lib.rs` | gap | `CanReceive<T>` exists as a trait, but generated receive declarations and bounds are not implemented. |
+| Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session IDs, typed responses, external blocking calls, and late replies are covered; full receive-check coverage is pending. |
+| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Batch hiding, end, error, drop cancellation attempt, and late stream replies are covered; producer cancellation and suspension under backpressure remain incomplete. |
+| External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
+| Unix signal bridge | inspection | no implementation files | deferred | Later-phase work. |
+| Diagnostics | inspection | SE roadmap | deferred | Later-phase work. |
 
-## Failing or blocked verification
+## Failing or Blocked Verification
 
-No runtime verification has been performed for this documentation-only baseline.
+No local Rust verification command is currently failing.
 
-The following verification remains blocked until implementation exists:
+The following approved requirements remain blocked or incomplete because the
+supporting implementation is not present yet:
 
-- queue behavior tests;
-- task spawn and start-message tests;
-- macro generation tests;
-- task-local async receive tests;
-- compile-time receive checks;
-- synchronous call tests;
-- stream batching and cancellation tests;
-- Unix signal bridge inspection;
-- diagnostics tests.
+- REQ-061 and REQ-062 for full task-local scheduling of ordinary messages while
+  handlers are suspended;
+- REQ-070, REQ-071, and REQ-072 for compile-time receive declaration checks;
+- REQ-112 and REQ-113 for stream flow-control suspension;
+- REQ-130 and REQ-131 for Unix signal support.
 
-## Deferred verification
+## Deferred Verification
 
-The following areas are later-phase work:
+The following areas remain later-phase or explicitly incomplete:
 
 - Unix signal bridge;
 - diagnostics, timeouts, tracing, and deadlock/debug support;
-- release readiness.
+- full validation examples for the public workflows listed in
+  `docs/se/validation-scenarios.md`.
 
-## Human decisions needed
+## Human Decisions Needed
 
-- Confirm that `docs/se/` should fully replace the old standalone message-model design note.
-- Confirm whether the old message-model document should be deleted or moved to `docs/archive/` or `docs/history/`.
-- Confirm the preferred compile-fail test framework for macro/type-checking verification when implementation begins.
+- Define the task declaration syntax for response and stream-event receive
+  declarations before implementing REQ-070 through REQ-072.
+- Decide whether the current stream backpressure behavior should be treated as
+  a temporary error-returning limitation or replaced immediately by producer
+  suspension.
