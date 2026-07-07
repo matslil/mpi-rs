@@ -42,7 +42,7 @@ The generated enum representing all messages a specific task can receive.
 
 ### Handler
 
-An async function associated with a received message. Handlers process start messages, events, calls, streams, or internal protocol messages.
+A function associated with a received message. Handlers process start messages, events, calls, streams, or internal protocol messages, and may suspend through task-internal call or stream APIs.
 
 ### Dispatch loop
 

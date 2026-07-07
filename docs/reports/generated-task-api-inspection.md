@@ -92,11 +92,11 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- ordinary messages are still deferred while a standard async handler waits for
-  a protocol message;
-- macro-generated async handlers are adapted into `CtxFuture` at the task
-  runtime boundary; native lowering of arbitrary Rust `async fn` bodies into
-  `CtxFuture` continuations remains pending;
+- ordinary messages are still deferred while an active handler waits for a
+  protocol message;
+- handler declarations use ordinary `fn` syntax and are adapted into
+  `CtxFuture` at the task runtime boundary; native lowering of arbitrary
+  handler bodies directly into `CtxFuture` continuations remains pending;
 - producer-side stream suspension under backpressure remains partial.
 
 These gaps should remain visible in traceability and verification reports until

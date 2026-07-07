@@ -27,6 +27,8 @@ A Rust developer declares a task with a queue size, task state, start handler, a
 Expected outcome:
 
 - the declaration is compact and Rust-like;
+- message handlers use implementation-neutral `fn` declarations rather than
+  exposing the runtime lowering strategy;
 - the task has a generated message enum;
 - the task has a generated context;
 - the task has a generated handle;
