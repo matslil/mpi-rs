@@ -2,65 +2,13 @@
 
 use ctx_future::{CtxFuture, CtxPoll};
 use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::{Pin, pin};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 
 use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::TaskMessage;
 use crate::queue::TaskQueue;
 use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
 use crate::task::TaskContext;
-
-struct StdFutureCtx<F> {
-    future: Pin<Box<F>>,
-}
-
-impl<F> StdFutureCtx<F> {
-    fn new(future: F) -> Self {
-        Self {
-            future: Box::pin(future),
-        }
-    }
-}
-
-impl<Cx, F> CtxFuture<Cx> for StdFutureCtx<F>
-where
-    F: Future,
-{
-    type Output = F::Output;
-
-    fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
-        let waker = Waker::noop();
-        let mut context = Context::from_waker(waker);
-
-        match Future::poll(self.future.as_mut(), &mut context) {
-            Poll::Ready(value) => CtxPoll::Ready(value),
-            Poll::Pending => CtxPoll::Pending,
-        }
-    }
-}
-
-/// Run a future to completion on the current task thread.
-///
-/// This executor is intentionally minimal. It is sufficient for generated
-/// handlers that complete without waiting on external async runtimes.
-pub fn block_on<F>(future: F) -> F::Output
-where
-    F: Future,
-{
-    let waker = Waker::noop();
-    let mut context = Context::from_waker(waker);
-    let mut future = pin!(future);
-
-    loop {
-        match Future::poll(future.as_mut(), &mut context) {
-            Poll::Ready(value) => return value,
-            Poll::Pending => std::thread::yield_now(),
-        }
-    }
-}
 
 fn route_task_message<M, const N: usize>(
     message: M,
@@ -135,7 +83,7 @@ where
     }
 }
 
-/// Run a handler future while routing queued call responses, call lifecycle
+/// Run a handler continuation while routing queued call responses, call lifecycle
 /// messages, stream pull control, and stream events to registered task-local
 /// state.
 ///
@@ -154,8 +102,8 @@ where
         + StreamPullMessage
         + StreamCancelMessage
         + StreamEventMessage,
-    F: Future,
+    F: CtxFuture<TaskContext<M, N>>,
 {
     let mut ctx = ctx.clone();
-    block_on_ctx_task(StdFutureCtx::new(future), queue, &mut ctx, deferred)
+    block_on_ctx_task(future, queue, &mut ctx, deferred)
 }
