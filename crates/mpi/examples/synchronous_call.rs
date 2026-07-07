@@ -28,7 +28,7 @@ struct Client {
     observed: u32,
 }
 
-#[task(queue_size = 8)]
+#[task(queue_size = 8, receives(mpi::Response<u32>))]
 impl Client {
     #[start]
     async fn start(&mut self, _ctx: &mut ClientContext) {}

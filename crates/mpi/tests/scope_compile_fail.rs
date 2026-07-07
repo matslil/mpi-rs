@@ -163,6 +163,57 @@ fn main() {
 }
 
 #[test]
+fn req_070_nonprotocol_call_rejects_missing_receive_declaration() {
+    assert_fails_contains(
+        "nonprotocol_call_receive",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    async fn start(&mut self, _ctx: &mut CounterContext) {}
+
+    #[call(reply = u32)]
+    async fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+        1
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client;
+
+#[task(queue_size = 4)]
+impl Client {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    async fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        let _reply = counter.get(ctx).await.unwrap();
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["CanReceive", "Response"],
+    );
+}
+
+#[test]
 fn req_101_req_121_stream_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
         "stream",
@@ -205,6 +256,63 @@ fn main() {
 }
 "#,
         "numbers",
+    );
+}
+
+#[test]
+fn req_071_nonprotocol_stream_rejects_missing_receive_declaration() {
+    assert_fails_contains(
+        "nonprotocol_stream_receive",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Producer;
+
+#[task(queue_size = 4)]
+impl Producer {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ProducerContext) {}
+
+    #[stream(item = u32, error = String, batch_size = 2)]
+    async fn numbers(
+        &mut self,
+        _ctx: &mut ProducerContext,
+        out: &mut mpi::BoxStreamSink<u32, String>,
+    ) -> Result<(), String> {
+        out.push(1).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ProducerContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client;
+
+#[task(queue_size = 4)]
+impl Client {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    async fn ask(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+        let mut stream = producer.numbers(ctx).unwrap();
+        let _ = stream.next(ctx).await.unwrap();
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["CanReceive", "StreamEvent"],
     );
 }
 
@@ -272,5 +380,78 @@ impl Client {
 fn main() {}
 "#,
         &["CanReceive", "CounterProtocolV1", "Reply"],
+    );
+}
+
+#[test]
+fn req_168_protocol_call_receive_declaration_rejects_wrong_protocol_identity() {
+    assert_fails_contains(
+        "protocol_call_receive_identity",
+        r#"
+use mpi::{protocol, task};
+
+#[derive(Clone)]
+struct GetRequest;
+
+#[derive(Clone)]
+struct GetReply;
+
+protocol! {
+    pub protocol CounterProtocolV1 {
+        call Get(GetRequest) -> GetReply;
+    }
+}
+
+protocol! {
+    pub protocol OtherCounterProtocolV1 {
+        call Get(GetRequest) -> GetReply;
+    }
+}
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    async fn start(&mut self, _ctx: &mut CounterContext) {}
+
+    #[call(protocol = OtherCounterProtocolV1::Get, reply = GetReply)]
+    async fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+        GetReply
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client;
+
+#[task(queue_size = 4, receives(CounterProtocolV1::Get::Reply))]
+impl Client {
+    #[start]
+    async fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    async fn ask(
+        &mut self,
+        ctx: &mut ClientContext,
+        counter: OtherCounterProtocolV1::Binding<CounterHandle>,
+    ) {
+        let _reply = counter.get(ctx, GetRequest).await.unwrap();
+    }
+
+    #[event(priority)]
+    async fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["CanReceive", "OtherCounterProtocolV1", "Reply"],
     );
 }
