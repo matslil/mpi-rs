@@ -549,6 +549,8 @@ impl<M, const N: usize> TaskScope for TaskContext<M, N>
 where
     M: TaskMessage + CallResponseMessage + StreamEventMessage,
 {
+    type Message = M;
+
     fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T> {
         TaskContext::begin_call::<T>(self)
     }

@@ -2,12 +2,17 @@
 
 use std::sync::Arc;
 
-use crate::call::CallSession;
+use crate::call::{CallResponseMessage, CallSession};
 use crate::message::LateReplyPolicy;
+use crate::message::TaskMessage;
+use crate::stream::StreamEventMessage;
 use crate::stream::{StreamControl, StreamSession};
 
 /// Marker trait implemented by generated task contexts.
 pub trait TaskScope {
+    /// Generated task message enum associated with this scope.
+    type Message: TaskMessage + CallResponseMessage + StreamEventMessage;
+
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.
     fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T>;
