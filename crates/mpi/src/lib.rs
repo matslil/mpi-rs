@@ -20,7 +20,9 @@ pub use message::{
 };
 pub use mpi_macros::{call, event, late_reply, protocol, start, stream, task};
 pub use queue::{TaskQueue, TaskQueueSnapshot};
-pub use runtime::{block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_task};
+pub use runtime::{
+    block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_handler, block_on_task,
+};
 pub use scope::TaskScope;
 pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
