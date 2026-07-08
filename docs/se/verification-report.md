@@ -14,8 +14,8 @@ Remaining blocking or major gaps are tracked explicitly:
 - full macro-generated task-local scheduling that dispatches ordinary messages
   while normalized handlers are suspended;
 - producer-side suspension under stream backpressure;
-- Unix signal bridge, timeout APIs, tracing, and deadlock/debug support, which
-  remain later-phase/deferred areas in the baseline.
+- timeout APIs, tracing, and deadlock/debug support, which remain
+  later-phase/deferred areas in the baseline.
 
 ## Commands run
 
@@ -26,6 +26,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --doc
+cargo check -p mpi --target x86_64-unknown-linux-gnu
 ```
 
 Result: all commands passed.
@@ -50,26 +51,26 @@ without contacting the network.
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Session IDs, typed responses, external blocking calls, out-of-order response matching, late replies, and receive-check enforcement are covered; task-local ordinary-message scheduling while suspended remains incomplete. |
 | Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | partial | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, late stream replies, ordinary-message non-discard, and mapped credit enforcement are covered; producer suspension under backpressure remains incomplete. |
 | External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
-| Unix signal bridge | inspection | no implementation files | deferred | Later-phase work. |
+| Unix signal bridge | inspection, Unix-only test | `crates/mpi/src/signal.rs`, `docs/reports/unix-signal-bridge.md` | passed by inspection | `forward_signals` delegates handler registration to `signal-hook` and constructs task messages on an ordinary bridge thread. The mapped unit test is compiled on Unix targets. |
 | Diagnostics | inspection, test | `docs/reports/diagnostics-roadmap.md`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Roadmap plus read-only queue and task-context snapshots exist; timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support remain deferred. |
 
 ## Failing or Blocked Verification
 
 No local Rust verification command is currently failing.
 
-The following approved requirements remain blocked or incomplete because the
-supporting implementation is not present yet:
+The following approved requirements remain intentionally partial because the
+supporting implementation scope is not complete yet:
 
 - REQ-061 and REQ-062 for full macro-generated task-local scheduling of
   ordinary messages while normalized handlers are suspended;
 - REQ-113 for stream flow-control suspension;
-- REQ-130 and REQ-131 for Unix signal support.
 
 ## Deferred Verification
 
 The following areas remain later-phase or explicitly incomplete:
 
-- Unix signal bridge;
+- cross-platform validation of the Unix signal bridge through an application
+  example;
 - timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support;
 - full validation examples for the public workflows listed in
   `docs/se/validation-scenarios.md`.
