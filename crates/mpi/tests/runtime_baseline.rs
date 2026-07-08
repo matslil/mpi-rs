@@ -99,8 +99,8 @@ fn req_034_priority_messages_are_received_before_normal_messages() {
 fn req_040_req_041_req_042_start_message_is_first() {
     let (handle, runtime) = spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, |handle| {
         handle.send_message(TestMessage::Priority(9)).unwrap();
-        let first = handle.queue().recv().unwrap();
-        let second = handle.queue().recv().unwrap();
+        let first = handle.recv_message().unwrap();
+        let second = handle.recv_message().unwrap();
         (first, second)
     })
     .unwrap();
@@ -245,8 +245,8 @@ impl TaskMessage for CallMessage {
 #[test]
 fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
     let (handle, runtime) = spawn_task::<CallMessage, _, _, 4>(CallMessage::Start, |handle| {
-        assert!(matches!(handle.queue().recv().unwrap(), CallMessage::Start));
-        match handle.queue().recv().unwrap() {
+        assert!(matches!(handle.recv_message().unwrap(), CallMessage::Start));
+        match handle.recv_message().unwrap() {
             CallMessage::Get { session_id, reply } => {
                 reply.send(Response::new(session_id, 42)).unwrap();
             }
@@ -454,7 +454,7 @@ fn req_064_block_on_ctx_task_returns_context_between_pending_resumes() {
 
     let (first, second) = block_on_ctx_task(
         AllocateAcrossPending::default(),
-        &queue,
+        handle.task_endpoint(),
         &mut ctx,
         &mut deferred,
     );
@@ -483,7 +483,12 @@ fn req_106_req_107_block_on_ctx_task_routes_stream_cancel() {
         .send_message(CtxRuntimeMessage::stream_cancel(session_id))
         .unwrap();
 
-    block_on_ctx_task(PendingTwice::default(), &queue, &mut ctx, &mut deferred);
+    block_on_ctx_task(
+        PendingTwice::default(),
+        handle.task_endpoint(),
+        &mut ctx,
+        &mut deferred,
+    );
 
     assert_eq!(ctx.stream_credit(session_id), 0);
     assert_eq!(stream_credit(session_id), 0);
@@ -505,7 +510,7 @@ fn req_064_block_on_ctx_task_routes_call_response_to_ctx_future_waiter() {
         ))
         .unwrap();
 
-    let value = block_on_ctx_task(call, &queue, &mut ctx, &mut deferred).unwrap();
+    let value = block_on_ctx_task(call, handle.task_endpoint(), &mut ctx, &mut deferred).unwrap();
 
     assert_eq!(value, 42);
     assert!(deferred.is_empty());
@@ -532,11 +537,13 @@ fn req_062_block_on_ctx_task_dispatches_ordinary_message_while_suspended() {
     });
 
     let value =
-        block_on_ctx_task_with_dispatch(call, &queue, &mut ctx, |message, ctx| match message {
-            CtxRuntimeMessage::Normal(value) => {
-                handled.push((value, ctx.next_session_id()));
+        block_on_ctx_task_with_dispatch(call, handle.task_endpoint(), &mut ctx, |message, ctx| {
+            match message {
+                CtxRuntimeMessage::Normal(value) => {
+                    handled.push((value, ctx.next_session_id()));
+                }
+                _ => panic!("unexpected protocol message dispatched as ordinary"),
             }
-            _ => panic!("unexpected protocol message dispatched as ordinary"),
         })
         .unwrap();
 
@@ -568,8 +575,10 @@ fn req_063_req_092_out_of_order_call_responses_match_session_ids() {
         ))
         .unwrap();
 
-    let second = block_on_ctx_task(second_call, &queue, &mut ctx, &mut deferred).unwrap();
-    let first = block_on_ctx_task(first_call, &queue, &mut ctx, &mut deferred).unwrap();
+    let second =
+        block_on_ctx_task(second_call, handle.task_endpoint(), &mut ctx, &mut deferred).unwrap();
+    let first =
+        block_on_ctx_task(first_call, handle.task_endpoint(), &mut ctx, &mut deferred).unwrap();
 
     assert_eq!(second, 2);
     assert_eq!(first, 1);
@@ -587,7 +596,7 @@ fn req_109_block_on_ctx_task_defers_ordinary_messages_instead_of_discarding() {
 
     let _ = block_on_ctx_task(
         AllocateAcrossPending::default(),
-        &queue,
+        handle.task_endpoint(),
         &mut ctx,
         &mut deferred,
     );
@@ -884,7 +893,7 @@ fn req_113_stream_sink_yield_item_returns_context_after_sending_batch() {
 
     block_on_ctx_task_with_dispatch(
         sink.yield_item(2),
-        &queue,
+        handle.task_endpoint(),
         &mut ctx,
         move |message, _ctx| {
             if let CtxRuntimeMessage::Normal(value) = message {
@@ -933,7 +942,7 @@ fn req_115_stream_sink_yield_item_suspends_until_credit_arrives() {
 
     block_on_ctx_task_with_dispatch(
         sink.yield_item(2),
-        &queue,
+        handle.task_endpoint(),
         &mut ctx,
         move |message, _ctx| {
             if let CtxRuntimeMessage::Normal(value) = message {
@@ -973,7 +982,7 @@ fn req_115_stream_sink_yield_batch_reports_cancel_while_waiting_for_credit() {
 
     let result = block_on_ctx_task_with_dispatch(
         sink.yield_batch([1, 2]),
-        &queue,
+        handle.task_endpoint(),
         &mut ctx,
         |_message, _ctx| {},
     );

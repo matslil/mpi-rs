@@ -1433,7 +1433,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let __ctx_inner = ctx.inner.clone();
                         ::mpi::block_on_handler(
                             state.#method_ident(&mut ctx, #(#arg_idents),*),
-                            inner_handle.queue(),
+                            inner_handle.task_endpoint(),
                             &__ctx_inner,
                             &mut *deferred,
                         );
@@ -1486,7 +1486,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         },
                                     ),
-                                    inner_handle.queue(),
+                                    inner_handle.task_endpoint(),
                                     &mut ctx.inner,
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
@@ -1537,7 +1537,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         },
                                     ),
-                                    inner_handle.queue(),
+                                    inner_handle.task_endpoint(),
                                     &mut ctx.inner,
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
@@ -1591,7 +1591,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                                 }
                                             },
                                         ),
-                                        inner_handle.queue(),
+                                        inner_handle.task_endpoint(),
                                         &mut ctx.inner,
                                         |__mpi_message, __mpi_inner| {
                                             let ctx = #context_ident {
@@ -1622,7 +1622,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                                 }
                                             },
                                         ),
-                                        inner_handle.queue(),
+                                        inner_handle.task_endpoint(),
                                         &mut ctx.inner,
                                         &mut *deferred,
                                     )
@@ -1693,7 +1693,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         },
                                     ),
-                                    inner_handle.queue(),
+                                    inner_handle.task_endpoint(),
                                     &mut ctx.inner,
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
@@ -1764,7 +1764,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         },
                                     ),
-                                    inner_handle.queue(),
+                                    inner_handle.task_endpoint(),
                                     &mut ctx.inner,
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
@@ -1819,7 +1819,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         },
                                     ),
-                                    inner_handle.queue(),
+                                    inner_handle.task_endpoint(),
                                     &mut ctx.inner,
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
@@ -1851,7 +1851,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             let __ctx_inner = ctx.inner.clone();
                             ::mpi::block_on_handler(
                                 state.#method_ident(&mut ctx, #(#arg_idents),*),
-                                inner_handle.queue(),
+                                inner_handle.task_endpoint(),
                                 &__ctx_inner,
                                 &mut *deferred,
                             );
@@ -1916,7 +1916,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             let __ctx_inner = ctx.inner.clone();
                             let value = ::mpi::block_on_handler(
                                 state.#method_ident(&mut ctx, #(#arg_idents),*),
-                                inner_handle.queue(),
+                                inner_handle.task_endpoint(),
                                 &__ctx_inner,
                                 &mut *deferred,
                             );
@@ -2045,7 +2045,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 &mut out,
                                 #(#arg_idents),*
                             ),
-                            inner_handle.queue(),
+                            inner_handle.task_endpoint(),
                             &__ctx_inner,
                             &mut *deferred,
                         );
@@ -2432,7 +2432,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                             let message = match deferred.pop_front() {
                                 Some(message) => message,
-                                None => match inner_handle.queue().recv() {
+                                None => match inner_handle.recv_message() {
                                     Ok(message) => message,
                                     Err(_) => break,
                                 },
