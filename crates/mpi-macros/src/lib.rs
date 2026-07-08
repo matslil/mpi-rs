@@ -203,16 +203,16 @@ impl Parse for StreamArgs {
 
 enum ProtocolItemKind {
     Event {
-        payload: Type,
+        payload: Box<Type>,
     },
     Call {
-        request: Type,
-        reply: Type,
+        request: Box<Type>,
+        reply: Box<Type>,
     },
     Stream {
-        request: Type,
-        item: Type,
-        error: Type,
+        request: Box<Type>,
+        item: Box<Type>,
+        error: Box<Type>,
     },
 }
 
@@ -243,27 +243,27 @@ impl Parse for ProtocolDecl {
                 let name: Ident = content.parse()?;
                 let args;
                 parenthesized!(args in content);
-                let payload = args.parse()?;
+                let payload = Box::new(args.parse()?);
                 (name, ProtocolItemKind::Event { payload })
             } else if lookahead.peek(kw::call) {
                 content.parse::<kw::call>()?;
                 let name: Ident = content.parse()?;
                 let args;
                 parenthesized!(args in content);
-                let request = args.parse()?;
+                let request = Box::new(args.parse()?);
                 content.parse::<Token![->]>()?;
-                let reply = content.parse()?;
+                let reply = Box::new(content.parse()?);
                 (name, ProtocolItemKind::Call { request, reply })
             } else if lookahead.peek(kw::stream) {
                 content.parse::<kw::stream>()?;
                 let name: Ident = content.parse()?;
                 let args;
                 parenthesized!(args in content);
-                let request = args.parse()?;
+                let request = Box::new(args.parse()?);
                 content.parse::<Token![->]>()?;
-                let item = content.parse()?;
+                let item = Box::new(content.parse()?);
                 content.parse::<kw::error>()?;
-                let error = content.parse()?;
+                let error = Box::new(content.parse()?);
                 (
                     name,
                     ProtocolItemKind::Stream {

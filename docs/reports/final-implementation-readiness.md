@@ -64,6 +64,10 @@ cargo test --doc
 cargo check -p mpi --target x86_64-unknown-linux-gnu
 ```
 
+After the GitHub Actions run exposed new Rust 1.96 Clippy lints, the CI command
+sequence was repeated with `cargo +stable` on Rust 1.96.1, including
+`cargo +stable clippy --workspace --all-targets -- -D warnings`.
+
 `cargo test` was run on the Windows host. The Unix signal bridge was additionally
 type-checked for `x86_64-unknown-linux-gnu`; its Unix-only unit test is compiled
 and executed on Unix targets.
