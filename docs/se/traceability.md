@@ -32,12 +32,12 @@ Use the status values from `docs/agents/process.md`:
 | SN-015 | REQ-060, REQ-061, REQ-062, REQ-064, REQ-113, REQ-114, REQ-121 | CMP-006, CMP-007, CMP-015, ARCH-044, ARCH-077, ARCH-078 | INT-004, INT-018A, INT-025, INT-043..INT-045, INT-076, INT-092 | VAL-004, VAL-011 |
 | SN-016 | REQ-100..REQ-105, REQ-112, REQ-113, REQ-115, REQ-114 | ARCH-070..ARCH-078, ARCH-077A | INT-070..INT-081, INT-075A, INT-075B | VAL-007, VAL-009 |
 | SN-017 | REQ-106, REQ-107 | ARCH-073, ARCH-074 | INT-073, INT-074 | VAL-008 |
-| SN-018 | REQ-160..REQ-170 | CMP-016, ARCH-100..ARCH-109 | INT-006..INT-009B, INT-042A | VAL-015 |
+| SN-018 | REQ-160..REQ-170, REQ-162A | CMP-016, ARCH-100..ARCH-109, ARCH-101A | INT-006..INT-009D, INT-042A | VAL-015 |
 | SN-020 | REQ-020..REQ-024 | glossary | docs/se/glossary.md | documentation review |
 | SN-021 | REQ-051, REQ-110, REQ-151, REQ-152 | CMP-001..CMP-015 | INT-010..INT-111 | review evidence |
 | SN-022 | REQ-150, REQ-151, REQ-152 | implementation phases, ctx-future crate structure | process | review evidence |
-| SN-023 | REQ-070, REQ-071, REQ-072, REQ-166, REQ-168 | CMP-011, ARCH-105, ARCH-107 | INT-040..INT-042A, INT-009A | VAL-006, VAL-015 |
-| SN-024 | REQ-160, REQ-162, REQ-164, REQ-165 | CMP-016, ARCH-103, ARCH-104 | protocol compatibility rules | VAL-015 |
+| SN-023 | REQ-070, REQ-071, REQ-072, REQ-162A, REQ-166, REQ-168 | CMP-011, ARCH-101A, ARCH-105, ARCH-107 | INT-040..INT-042A, INT-009A, INT-009D | VAL-006, VAL-015 |
+| SN-024 | REQ-160, REQ-162, REQ-162A, REQ-164, REQ-165 | CMP-016, ARCH-101A, ARCH-103, ARCH-104 | protocol compatibility rules, INT-009C, INT-009D | VAL-015 |
 | SN-030 | VER-001..VER-005 | verification plan | docs/agents/test-agent.md | VAL-014 |
 | SN-031 | validation scenarios | validation plan | docs/agents/validation-agent.md | VAL-001..VAL-014 |
 | SN-032 | traceability matrix | process | docs/agents/traceability-agent.md | VAL-014 |
@@ -67,7 +67,7 @@ Use the status values from `docs/agents/process.md`:
 | REQ-130..REQ-132 | SN-044 | ARCH-090..ARCH-093 | INT-110..INT-112 | `crates/mpi/src/signal.rs`, Unix-only default-feature-gated `forward_signals` bridge using safe `signal-hook` registration and an ordinary Rust forwarding thread; `crates/mpi/examples/unix_signal_bridge.rs` demonstrates forwarding a Unix signal into a generated task event | `docs/reports/unix-signal-bridge.md`; Unix-only unit test `req_130_req_131_signal_bridge_forwards_signal_outside_handler`; `cargo check -p mpi --no-default-features` for feature opt-out; Unix-target example check pending on a Unix host | VAL-012 | implemented |
 | REQ-140 | SN-045 | diagnostics | INT-052, diagnostics interfaces pending for timeout/tracing/deadlock support | diagnostics roadmap in `docs/reports/diagnostics-roadmap.md`; `TaskQueueSnapshot`, `TaskDiagnosticsSnapshot`, and generated-context diagnostics access expose read-only queue and session state | `docs/reports/diagnostics-roadmap.md` inspection; `crates/mpi/tests/runtime_baseline.rs`; `crates/mpi/tests/task_macro.rs` | VAL-013 | implemented |
 | REQ-150..REQ-152 | SN-021, SN-022 | implementation phases, crate structure, CMP-015 | `docs/se/ctx-future.md`, `crates/ctx-future` | `crates/ctx-future` | `crates/ctx-future/tests/context_borrow.rs`, inspection | review evidence | approved |
-| REQ-160..REQ-170 | SN-012, SN-018, SN-023, SN-024 | CMP-002, CMP-012, CMP-016, ARCH-100..ARCH-109 | INT-006..INT-009B, INT-042A | candidate implementation in `crates/mpi-macros/src/lib.rs`, `crates/mpi/src/message.rs`, `crates/mpi/src/scope.rs`, and generated task contexts | `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs`; full separate-binary validation pending | VAL-015 | proposed |
+| REQ-160..REQ-170, REQ-162A | SN-012, SN-018, SN-023, SN-024 | CMP-002, CMP-012, CMP-016, ARCH-100..ARCH-109, ARCH-101A | INT-006..INT-009D, INT-042A | candidate implementation in `crates/mpi-macros/src/lib.rs`, `crates/mpi/src/message.rs`, `crates/mpi/src/scope.rs`, and generated task contexts; protocol interaction modules use snake_case names with generated receive identities such as `get::Reply` and `numbers::Item`; call reply payloads may be inferred from handler return types | `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs`; full separate-binary validation pending | VAL-015 | proposed |
 
 ## Known initial gaps
 

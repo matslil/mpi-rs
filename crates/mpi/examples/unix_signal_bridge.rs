@@ -22,7 +22,7 @@ impl SignalTask {
         });
     }
 
-    #[call(reply = (Option<i32>, u32))]
+    #[call]
     fn snapshot(ctx: &mut SignalTaskContext) -> (Option<i32>, u32) {
         ctx.with_state(|state| (state.last_signal, state.count))
     }

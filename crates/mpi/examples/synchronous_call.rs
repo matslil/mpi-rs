@@ -14,7 +14,7 @@ impl Store {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn get(ctx: &mut StoreContext) -> u32 {
         ctx.with_state(|state| state.value)
     }
@@ -43,7 +43,7 @@ impl Client {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn observed(ctx: &mut ClientContext) -> u32 {
         ctx.with_state(|state| state.observed)
     }

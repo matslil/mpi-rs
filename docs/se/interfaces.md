@@ -25,9 +25,9 @@ is:
 ```rust
 protocol! {
     pub protocol InventoryV1 {
-        event Reindex(ReindexRequest);
-        call GetItem(GetItemRequest) -> GetItemReply;
-        stream WatchStock(WatchStockRequest) -> StockEvent error WatchStockError;
+        event reindex(ReindexRequest);
+        call get_item(GetItemRequest) -> GetItemReply;
+        stream watch_stock(WatchStockRequest) -> StockEvent error WatchStockError;
     }
 }
 ```
@@ -46,6 +46,10 @@ INT-009A: A receive declaration shall identify a protocol-qualified reply or str
 
 INT-009B: Generated send, call, and stream methods shall be produced from a protocol declaration or from a protocol-instance binding that identifies the concrete implementing task handle.
 
+INT-009C: Protocol interaction names should be declared in `snake_case`; generated Rust modules for protocol interactions shall use `snake_case`, while generated receive identity types inside those modules shall use `PascalCase`.
+
+INT-009D: A call named `get` shall expose its protocol-qualified reply receive identity as `get::Reply`. A stream named `list_directories` shall expose protocol-qualified stream receive identities as `list_directories::Item`, `list_directories::Finish`, and `list_directories::Error`. Rendered non-Rust protocol names are equivalent to `get_reply`, `list_directories_item`, `list_directories_finish`, and `list_directories_error`.
+
 Conceptual protocol-instance binding:
 
 ```rust
@@ -53,7 +57,7 @@ let inventory = InventoryV1::bind(inventory_task);
 let reply = inventory.get_item(ctx, request).await?;
 ```
 
-In this shape, `InventoryV1::GetItem` defines the message identity and Rust
+In this shape, `InventoryV1::get_item` defines the message identity and Rust
 types, while `inventory_task` identifies the concrete task instance that
 implements that protocol message.
 
@@ -84,7 +88,7 @@ impl ServerTask {
         });
     }
 
-    #[call(reply = GetReply)]
+    #[call]
     fn get(ctx: &mut ServerTaskContext, key: String) -> GetReply {
         ctx.with_state(|state| GetReply {
             value: state.state.get(&key).cloned(),
@@ -128,7 +132,7 @@ INT-012: `#[start]` shall identify the start handler.
 
 INT-013: `#[event]` shall identify an asynchronous message with no reply.
 
-INT-014: `#[call(reply = T)]` shall identify a synchronous request handler with reply payload type `T`.
+INT-014: `#[call]` shall identify a synchronous request handler. For non-protocol task calls, the reply payload type shall be inferred from the handler return type. For protocol-bound calls, the protocol-declared reply type shall remain authoritative and the handler return type shall be type-checked against it.
 
 INT-015: `#[stream(item = T, error = E)]` shall identify a streaming handler with item type `T` and error type `E`.
 
