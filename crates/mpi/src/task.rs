@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 
@@ -34,50 +34,44 @@ fn allocate_endpoint_id() -> EndpointId {
     EndpointId(NEXT_ENDPOINT_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Public send surface for a task.
-pub struct TaskHandle<M, const N: usize>
+/// Runtime endpoint shared by task handles and in-flight sessions.
+///
+/// The endpoint keeps the queue allocation alive while any handle or session can
+/// still attempt delivery. Its lifecycle flag is separate from object lifetime:
+/// an endpoint may remain allocated through reference counting after the task
+/// has stopped accepting messages.
+pub struct TaskEndpoint<M, const N: usize>
 where
     M: TaskMessage,
 {
     endpoint: EndpointId,
     queue: Arc<TaskQueue<M, N>>,
-    next_external_sequence: Arc<AtomicU64>,
+    accepting: AtomicBool,
+    next_external_sequence: AtomicU64,
 }
 
-impl<M, const N: usize> Clone for TaskHandle<M, N>
+impl<M, const N: usize> TaskEndpoint<M, N>
 where
     M: TaskMessage,
 {
-    fn clone(&self) -> Self {
-        Self {
-            endpoint: self.endpoint,
-            queue: Arc::clone(&self.queue),
-            next_external_sequence: Arc::clone(&self.next_external_sequence),
-        }
-    }
-}
-
-impl<M, const N: usize> TaskHandle<M, N>
-where
-    M: TaskMessage,
-{
-    /// Create a handle from an existing queue.
+    /// Create an endpoint for an existing queue with a fresh endpoint ID.
     #[must_use]
     pub fn new(queue: Arc<TaskQueue<M, N>>) -> Self {
         Self::with_endpoint(queue, allocate_endpoint_id())
     }
 
-    /// Create a handle from an existing queue and explicit endpoint ID.
+    /// Create an endpoint for an existing queue and explicit endpoint ID.
     #[must_use]
     pub fn with_endpoint(queue: Arc<TaskQueue<M, N>>, endpoint: EndpointId) -> Self {
         Self {
             endpoint,
             queue,
-            next_external_sequence: Arc::new(AtomicU64::new(0)),
+            accepting: AtomicBool::new(true),
+            next_external_sequence: AtomicU64::new(0),
         }
     }
 
-    /// Return the logical endpoint represented by this handle.
+    /// Return the logical endpoint ID.
     #[must_use]
     pub const fn endpoint(&self) -> EndpointId {
         self.endpoint
@@ -89,8 +83,18 @@ where
         &self.queue
     }
 
-    /// Enqueue one already-constructed message.
+    /// Return whether the endpoint is still accepting messages.
+    #[must_use]
+    pub fn is_accepting(&self) -> bool {
+        self.accepting.load(Ordering::Acquire)
+    }
+
+    /// Enqueue one message through this endpoint.
     pub fn send_message(&self, message: M) -> Result<(), SendError> {
+        if !self.is_accepting() {
+            return Err(SendError::TaskStopped);
+        }
+
         self.queue.try_send(message)
     }
 
@@ -98,6 +102,88 @@ where
     pub fn next_external_session_id(&self) -> SessionId {
         let sequence = self.next_external_sequence.fetch_add(1, Ordering::Relaxed);
         SessionId::new(self.endpoint, sequence)
+    }
+
+    /// Stop accepting messages and close the underlying queue.
+    pub fn close(&self) {
+        self.accepting.store(false, Ordering::Release);
+        self.queue.close();
+    }
+}
+
+/// Public send surface for a task.
+pub struct TaskHandle<M, const N: usize>
+where
+    M: TaskMessage,
+{
+    endpoint: Arc<TaskEndpoint<M, N>>,
+}
+
+impl<M, const N: usize> Clone for TaskHandle<M, N>
+where
+    M: TaskMessage,
+{
+    fn clone(&self) -> Self {
+        Self {
+            endpoint: Arc::clone(&self.endpoint),
+        }
+    }
+}
+
+impl<M, const N: usize> TaskHandle<M, N>
+where
+    M: TaskMessage,
+{
+    /// Create a handle from an existing queue.
+    #[must_use]
+    pub fn new(queue: Arc<TaskQueue<M, N>>) -> Self {
+        Self::from_endpoint(Arc::new(TaskEndpoint::new(queue)))
+    }
+
+    /// Create a handle from an existing queue and explicit endpoint ID.
+    #[must_use]
+    pub fn with_endpoint(queue: Arc<TaskQueue<M, N>>, endpoint: EndpointId) -> Self {
+        Self::from_endpoint(Arc::new(TaskEndpoint::with_endpoint(queue, endpoint)))
+    }
+
+    /// Create a handle from a shared endpoint.
+    #[must_use]
+    pub fn from_endpoint(endpoint: Arc<TaskEndpoint<M, N>>) -> Self {
+        Self { endpoint }
+    }
+
+    /// Return the shared endpoint object represented by this handle.
+    #[must_use]
+    pub fn task_endpoint(&self) -> &Arc<TaskEndpoint<M, N>> {
+        &self.endpoint
+    }
+
+    /// Return the logical endpoint represented by this handle.
+    #[must_use]
+    pub fn endpoint(&self) -> EndpointId {
+        self.endpoint.endpoint()
+    }
+
+    /// Return the underlying queue.
+    #[must_use]
+    pub fn queue(&self) -> &Arc<TaskQueue<M, N>> {
+        self.endpoint.queue()
+    }
+
+    /// Return whether the target endpoint still accepts messages.
+    #[must_use]
+    pub fn is_accepting(&self) -> bool {
+        self.endpoint.is_accepting()
+    }
+
+    /// Enqueue one already-constructed message.
+    pub fn send_message(&self, message: M) -> Result<(), SendError> {
+        self.endpoint.send_message(message)
+    }
+
+    /// Allocate a session ID for an external blocking call.
+    pub fn next_external_session_id(&self) -> SessionId {
+        self.endpoint.next_external_session_id()
     }
 
     /// Send a synchronous request from code that is outside the task model and
@@ -119,7 +205,7 @@ where
 
     /// Close the target task queue.
     pub fn close(&self) {
-        self.queue.close();
+        self.endpoint.close();
     }
 }
 
@@ -616,9 +702,9 @@ where
     T: Send + 'static,
     F: FnOnce(TaskHandle<M, N>) -> T + Send + 'static,
 {
-    let queue = Arc::new(TaskQueue::<M, N>::new());
-    queue.try_send(start_message)?;
-    let handle = TaskHandle::new(Arc::clone(&queue));
+    let endpoint = Arc::new(TaskEndpoint::new(Arc::new(TaskQueue::<M, N>::new())));
+    endpoint.send_message(start_message)?;
+    let handle = TaskHandle::from_endpoint(endpoint);
     let runtime_handle = handle.clone();
     let join = thread::spawn(move || run(runtime_handle));
     Ok((handle, TaskRuntime { join }))

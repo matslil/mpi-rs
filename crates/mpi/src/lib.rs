@@ -34,6 +34,6 @@ pub use session::{
 pub use signal::{SignalBridge, SignalBridgeError, forward_signals};
 pub use stream::*;
 pub use task::{
-    StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskHandle, TaskJoinError,
-    TaskRuntime, spawn_task,
+    StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskEndpoint, TaskHandle,
+    TaskJoinError, TaskRuntime, spawn_task,
 };
