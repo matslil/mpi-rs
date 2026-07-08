@@ -8,8 +8,8 @@ use mpi::{
     QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent, Response, SendError, SessionId,
     SessionIdAllocator, StreamCancel, StreamCancelMessage, StreamControl, StreamEvent,
     StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
-    TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task, block_on_ctx_task_with_dispatch,
-    spawn_task, stream_credit,
+    TaskEndpoint, TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task,
+    block_on_ctx_task_with_dispatch, spawn_task, stream_credit,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -110,6 +110,49 @@ fn req_040_req_041_req_042_start_message_is_first() {
 
     assert_eq!(first, TestMessage::Start);
     assert_eq!(second, TestMessage::Priority(9));
+}
+
+#[test]
+fn req_027_req_028_task_handle_uses_shared_endpoint_for_direct_enqueue() {
+    let queue = Arc::new(TaskQueue::<TestMessage, 4>::new());
+    let endpoint = Arc::new(TaskEndpoint::with_endpoint(
+        Arc::clone(&queue),
+        EndpointId(54),
+    ));
+    let first = TaskHandle::from_endpoint(Arc::clone(&endpoint));
+    let second = first.clone();
+
+    first.send_message(TestMessage::Normal(1)).unwrap();
+    assert_eq!(queue.try_recv(), Some(TestMessage::Normal(1)));
+    assert_eq!(second.endpoint(), EndpointId(54));
+    assert!(Arc::ptr_eq(first.task_endpoint(), second.task_endpoint()));
+
+    endpoint.close();
+    assert!(!first.is_accepting());
+    assert_eq!(
+        second.send_message(TestMessage::Normal(2)),
+        Err(SendError::TaskStopped)
+    );
+}
+
+#[test]
+fn req_080_req_083_external_sessions_are_allocated_by_shared_endpoint() {
+    let queue = Arc::new(TaskQueue::<TestMessage, 4>::new());
+    let endpoint = Arc::new(TaskEndpoint::with_endpoint(
+        Arc::clone(&queue),
+        EndpointId(57),
+    ));
+    let first = TaskHandle::from_endpoint(Arc::clone(&endpoint));
+    let second = first.clone();
+
+    assert_eq!(
+        first.next_external_session_id(),
+        SessionId::new(EndpointId(57), 0)
+    );
+    assert_eq!(
+        second.next_external_session_id(),
+        SessionId::new(EndpointId(57), 1)
+    );
 }
 
 #[test]
