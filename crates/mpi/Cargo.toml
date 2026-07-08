@@ -8,3 +8,8 @@ repository.workspace = true
 [dependencies]
 ctx-future = { path = "../ctx-future" }
 mpi-macros = { path = "../mpi-macros" }
+
+[target.'cfg(unix)'.dependencies]
+# Unix signal forwarding needs async-signal-safe registration and a safe bridge
+# from POSIX handlers into ordinary Rust code.
+signal-hook = { version = "0.4.4", default-features = false, features = ["iterator"] }
