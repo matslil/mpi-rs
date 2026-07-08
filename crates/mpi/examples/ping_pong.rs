@@ -21,7 +21,7 @@ impl PingPong {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn value(ctx: &mut PingPongContext) -> u32 {
         ctx.with_state(|state| state.value)
     }

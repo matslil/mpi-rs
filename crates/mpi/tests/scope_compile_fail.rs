@@ -139,7 +139,7 @@ impl Counter {
     #[start]
     fn start(_ctx: &mut CounterContext) {}
 
-    #[call(reply = u32)]
+    #[call]
     fn get(_ctx: &mut CounterContext) -> u32 {
         1
     }
@@ -177,7 +177,7 @@ impl Counter {
     #[start]
     fn start(_ctx: &mut CounterContext) {}
 
-    #[call(reply = u32)]
+    #[call]
     fn get(_ctx: &mut CounterContext) -> u32 {
         1
     }
@@ -358,7 +358,7 @@ impl Counter {
     #[start]
     fn start(_ctx: &mut CounterContext) {}
 
-    #[call(reply = u32)]
+    #[call]
     fn get(_ctx: &mut CounterContext) -> u32 {
         1
     }
@@ -414,7 +414,7 @@ struct GetReply;
 
 protocol! {
     pub protocol CounterProtocolV1 {
-        call Get(GetRequest) -> GetReply;
+        call get(GetRequest) -> GetReply;
     }
 }
 
@@ -426,7 +426,7 @@ impl Counter {
     #[start]
     fn start(_ctx: &mut CounterContext) {}
 
-    #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
+    #[call(protocol = CounterProtocolV1::get)]
     fn get(_ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
@@ -479,13 +479,13 @@ struct GetReply;
 
 protocol! {
     pub protocol CounterProtocolV1 {
-        call Get(GetRequest) -> GetReply;
+        call get(GetRequest) -> GetReply;
     }
 }
 
 protocol! {
     pub protocol OtherCounterProtocolV1 {
-        call Get(GetRequest) -> GetReply;
+        call get(GetRequest) -> GetReply;
     }
 }
 
@@ -497,7 +497,7 @@ impl Counter {
     #[start]
     fn start(_ctx: &mut CounterContext) {}
 
-    #[call(protocol = OtherCounterProtocolV1::Get, reply = GetReply)]
+    #[call(protocol = OtherCounterProtocolV1::get)]
     fn get(_ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
@@ -511,7 +511,7 @@ impl Counter {
 #[derive(Default)]
 struct Client;
 
-#[task(queue_size = 4, receives(CounterProtocolV1::Get::Reply))]
+#[task(queue_size = 4, receives(CounterProtocolV1::get::Reply))]
 impl Client {
     #[start]
     fn start(_ctx: &mut ClientContext) {}

@@ -9,7 +9,7 @@ The branch updates `docs/se/interfaces.md` and implements concrete task macro ge
 - `#[start]`
 - `#[event]`
 - `#[event(priority)]`
-- `#[call(reply = T)]`
+- `#[call]`, with reply type inferred from the handler return type
 
 ## Implemented generated artifacts
 
