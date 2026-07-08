@@ -92,15 +92,14 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- ordinary call/request messages are still deferred while an active handler
-  waits for a protocol message through generated dispatch; the ignored test
+- direct awaited-assignment event handlers now lower into the native
+  `CtxFuture` dispatch hook, and
   `req_062_generated_task_receives_call_request_while_handler_is_suspended`
-  captures the gap, even though the runtime now has a native `CtxFuture`
-  dispatch hook for ordinary messages during suspension;
+  covers request progress for that shape;
 - handler declarations use ordinary `fn` syntax and are adapted into
-  `CtxFuture` at the task runtime boundary; native lowering of arbitrary
-  handler bodies directly into `CtxFuture` continuations remains pending;
-- full generated handler lowering for REQ-062 remains pending.
+  `CtxFuture` at the task runtime boundary when no native lowering is available;
+  native lowering of arbitrary handler bodies directly into `CtxFuture`
+  continuations remains pending.
 
 These gaps should remain visible in traceability and verification reports until
 supporting implementation and tests exist.

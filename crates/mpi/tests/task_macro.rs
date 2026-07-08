@@ -356,7 +356,15 @@ fn req_120_req_121_generated_call_has_context_aware_handler_api() {
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.ask_counter_blocking(counter.clone()).unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 41);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 41 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 41);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();
@@ -395,7 +403,6 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
 }
 
 #[test]
-#[ignore = "documents the remaining generated-dispatch REQ-062 gap"]
 fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();

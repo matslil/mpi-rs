@@ -42,9 +42,9 @@ The implementation now has local verification evidence for:
 The following gaps remain visible for human system-engineering decision or later
 implementation slices:
 
-- REQ-061 and REQ-062: generated dispatch still defers ordinary messages while
-  an active standard-future handler waits, although native `CtxFuture` runtime
-  support can dispatch ordinary messages while suspended.
+- REQ-061 and REQ-062: generated direct awaited-assignment event handlers now
+  use native `CtxFuture` dispatch while suspended; standard-future fallback
+  handlers for other body shapes still defer ordinary messages while waiting.
 - VAL-012: Unix signal support has implementation, inspection evidence, and an
   application-level example; running that example remains Unix-host validation
   evidence.
