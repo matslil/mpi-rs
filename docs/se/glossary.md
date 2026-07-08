@@ -42,6 +42,11 @@ still accepts messages. A task endpoint is not a global registry entry.
 
 A generated context passed to handlers. It provides access to task-local runtime behavior such as self handle, session allocation, suspended receive, and control operations.
 
+### User state
+
+The application-defined state stored by a task, distinct from framework-owned
+runtime state such as queues, sessions, stream control, and diagnostics.
+
 ### Task message enum
 
 The generated enum representing all messages a specific task can receive.
