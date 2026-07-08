@@ -710,10 +710,10 @@ impl<T, E> SuspendedMessageStream<T, E> {
 
 impl<T, E> Drop for SuspendedMessageStream<T, E> {
     fn drop(&mut self) {
-        if !self.stream.is_finished() {
-            if let Some(on_drop) = self.on_drop.take() {
-                on_drop(self.stream.session_id());
-            }
+        if !self.stream.is_finished()
+            && let Some(on_drop) = self.on_drop.take()
+        {
+            on_drop(self.stream.session_id());
         }
     }
 }

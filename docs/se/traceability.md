@@ -88,6 +88,10 @@ implementation for namespace-qualified message identities, explicit protocol
 message types, protocol-derived send surfaces, and compile-time receive checks.
 Separate-binary runtime capability discovery and validation remain pending.
 
+GAP-008: Final implementation-readiness evidence is recorded in
+`docs/reports/final-implementation-readiness.md`. Remaining gaps are explicit
+human-decision or later-slice items rather than local verification failures.
+
 ## Traceability maintenance rules
 
 - Add rows when requirements are added.
