@@ -57,7 +57,10 @@ Generated handle evidence:
   message enum to implement `CanReceive<T>` for the expected response or stream
   event type;
 - generated methods enqueue the generated message enum directly through
-  `TaskHandle::send_message` or `TaskHandle::call_blocking`.
+  `TaskHandle::send_message` or `TaskHandle::call_blocking`;
+- runtime `TaskHandle` wraps a shared `TaskEndpoint`, so generated handles keep
+  direct enqueue semantics while sharing endpoint identity, queue lifetime,
+  external session allocation, and accepting lifecycle.
 
 Generated context and dispatch evidence:
 
