@@ -115,6 +115,13 @@ The Rust module or crate path that qualifies a protocol declaration.
 The namespace-qualified identity of a protocol message, formed from protocol
 namespace, protocol name, and message name.
 
+### Derived protocol response identity
+
+A generated protocol message identity for a call reply or stream reply derived
+from the declared protocol interaction name. In Rust, the interaction module is
+`snake_case`, and receive identity types inside it are `PascalCase`, such as
+`get::Reply` or `list_directories::Item`.
+
 ### Protocol-instance binding
 
 A generated or declared binding from a protocol message contract to the concrete

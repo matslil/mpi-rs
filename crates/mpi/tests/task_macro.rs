@@ -23,14 +23,14 @@ type NumbersError = String;
 
 protocol! {
     pub protocol CounterProtocolV1 {
-        event Add(AddRequest);
-        call Get(GetRequest) -> GetReply;
+        event add(AddRequest);
+        call get(GetRequest) -> GetReply;
     }
 }
 
 protocol! {
     pub protocol ProducerProtocolV1 {
-        stream Numbers(NumbersRequest) -> u32 error NumbersError;
+        stream numbers(NumbersRequest) -> u32 error NumbersError;
     }
 }
 
@@ -61,7 +61,7 @@ impl Counter {
         self_handle.add(ctx, amount).unwrap();
     }
 
-    #[call(reply = u32, late_reply = "ignore")]
+    #[call(late_reply = "ignore")]
     fn get(ctx: &mut CounterContext) -> u32 {
         ctx.with_state(|state| state.value)
     }
@@ -86,14 +86,14 @@ impl ProtocolCounter {
         });
     }
 
-    #[event(protocol = CounterProtocolV1::Add)]
+    #[event(protocol = CounterProtocolV1::add)]
     fn add(ctx: &mut ProtocolCounterContext, request: AddRequest) {
         ctx.with_state(|state| {
             state.value += request.amount;
         });
     }
 
-    #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
+    #[call(protocol = CounterProtocolV1::get)]
     fn get(ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
         ctx.with_state(|state| GetReply { value: state.value })
     }
@@ -114,8 +114,8 @@ struct Client {
     receives(
         mpi::Response<u32>,
         mpi::StreamEvent<u32, String>,
-        CounterProtocolV1::Get::Reply,
-        ProducerProtocolV1::Numbers::Event
+        CounterProtocolV1::get::Reply,
+        ProducerProtocolV1::numbers::Item
     )
 )]
 impl Client {
@@ -290,7 +290,7 @@ impl Client {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn observed(ctx: &mut ClientContext) -> u32 {
         ctx.with_state(|state| state.observed)
     }
@@ -311,7 +311,7 @@ impl DelayedCounter {
     #[start]
     fn start(_ctx: &mut DelayedCounterContext) {}
 
-    #[call(reply = u32)]
+    #[call]
     fn delayed(ctx: &mut DelayedCounterContext) -> u32 {
         ctx.with_state(|state| {
             state.started.send(()).unwrap();
@@ -350,7 +350,7 @@ impl ScopedState {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn value(ctx: &mut ScopedStateContext) -> u32 {
         ctx.with_state(|state| state.value)
     }
@@ -431,7 +431,7 @@ impl ProtocolProducer {
     fn start(_ctx: &mut ProtocolProducerContext) {}
 
     #[stream(
-        protocol = ProducerProtocolV1::Numbers,
+        protocol = ProducerProtocolV1::numbers,
         item = u32,
         error = String,
         batch_size = 2
