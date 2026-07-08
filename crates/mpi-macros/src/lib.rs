@@ -979,10 +979,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
-                        ::mpi::block_on_task(
-                            ::mpi::from_std_future(
-                                state.#method_ident(&mut ctx, #(#arg_idents),*)
-                            ),
+                        ::mpi::block_on_handler(
+                            state.#method_ident(&mut ctx, #(#arg_idents),*),
                             inner_handle.queue(),
                             &__ctx_inner,
                             &mut deferred,
@@ -1004,10 +1002,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
-                        ::mpi::block_on_task(
-                            ::mpi::from_std_future(
-                                state.#method_ident(&mut ctx, #(#arg_idents),*)
-                            ),
+                        ::mpi::block_on_handler(
+                            state.#method_ident(&mut ctx, #(#arg_idents),*),
                             inner_handle.queue(),
                             &__ctx_inner,
                             &mut deferred,
@@ -1070,10 +1066,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { session_id, reply #(, #arg_idents)* } => {
                         if !ctx.inner.take_call_released(session_id) {
                             let __ctx_inner = ctx.inner.clone();
-                            let value = ::mpi::block_on_task(
-                                ::mpi::from_std_future(
-                                    state.#method_ident(&mut ctx, #(#arg_idents),*)
-                                ),
+                            let value = ::mpi::block_on_handler(
+                                state.#method_ident(&mut ctx, #(#arg_idents),*),
                                 inner_handle.queue(),
                                 &__ctx_inner,
                                 &mut deferred,
@@ -1197,13 +1191,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
-                        let result = ::mpi::block_on_task(
-                            ::mpi::from_std_future(
-                                state.#method_ident(
-                                    &mut ctx,
-                                    &mut out,
-                                    #(#arg_idents),*
-                                )
+                        let result = ::mpi::block_on_handler(
+                            state.#method_ident(
+                                &mut ctx,
+                                &mut out,
+                                #(#arg_idents),*
                             ),
                             inner_handle.queue(),
                             &__ctx_inner,

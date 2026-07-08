@@ -1,7 +1,8 @@
 //! Minimal task-local future execution support.
 
-use ctx_future::{CtxFuture, CtxPoll};
+use ctx_future::{CtxFuture, CtxPoll, from_std_future};
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::Arc;
 
 use crate::call::{CallReleaseMessage, CallResponseMessage};
@@ -159,4 +160,29 @@ where
 {
     let mut ctx = ctx.clone();
     block_on_ctx_task(future, queue, &mut ctx, deferred)
+}
+
+/// Run a compiler-generated handler future through the task-local
+/// context-returning scheduler.
+///
+/// This is the compatibility boundary for handler bodies that still rely on
+/// Rust `.await` syntax. Generated dispatch calls this helper so the task
+/// runtime remains responsible for adapting those continuations into
+/// [`CtxFuture`] execution.
+pub fn block_on_handler<M, F, const N: usize>(
+    future: F,
+    queue: &Arc<TaskQueue<M, N>>,
+    ctx: &TaskContext<M, N>,
+    deferred: &mut VecDeque<M>,
+) -> F::Output
+where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage,
+    F: Future,
+{
+    block_on_task(from_std_future(future), queue, ctx, deferred)
 }
