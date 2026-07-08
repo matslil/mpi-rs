@@ -101,13 +101,13 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(_ctx: &mut CounterContext) {}
 
     #[event]
-    fn add(&mut self, _ctx: &mut CounterContext, _amount: u32) {}
+    fn add(_ctx: &mut CounterContext, _amount: u32) {}
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -137,15 +137,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(_ctx: &mut CounterContext) {}
 
     #[call(reply = u32)]
-    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+    fn get(_ctx: &mut CounterContext) -> u32 {
         1
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -175,15 +175,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(_ctx: &mut CounterContext) {}
 
     #[call(reply = u32)]
-    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+    fn get(_ctx: &mut CounterContext) -> u32 {
         1
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -194,15 +194,15 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask(ctx: &mut ClientContext, counter: CounterHandle) {
         let _reply = counter.get(ctx).await.unwrap();
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -226,12 +226,10 @@ struct Producer;
 #[task(queue_size = 4)]
 impl Producer {
     #[start]
-    fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(_ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    fn numbers(
-        &mut self,
-        _ctx: &mut ProducerContext,
+    fn numbers(_ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
         count: u32,
     ) -> Result<(), String> {
@@ -242,7 +240,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -272,12 +270,10 @@ struct Producer;
 #[task(queue_size = 4)]
 impl Producer {
     #[start]
-    fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(_ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2)]
-    fn numbers(
-        &mut self,
-        _ctx: &mut ProducerContext,
+    fn numbers(_ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
     ) -> Result<(), String> {
         out.push(1).map_err(|error| error.to_string())?;
@@ -285,7 +281,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -296,16 +292,16 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn ask(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn ask(ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx).unwrap();
         let _ = stream.next(ctx).await.unwrap();
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -317,60 +313,33 @@ fn main() {}
 }
 
 #[test]
-fn req_062_req_064_unsupported_event_await_body_fails_instead_of_fallback() {
+fn req_064_handler_rejects_self_receiver() {
     assert_fails_contains(
-        "unsupported_event_await_body",
+        "handler_self_receiver",
         r#"
 use mpi::task;
-
-#[derive(Default)]
-struct Counter;
-
-#[task(queue_size = 4)]
-impl Counter {
-    #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
-
-    #[call(reply = u32)]
-    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
-        1
-    }
-
-    #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
-        ctx.stop();
-    }
-}
 
 #[derive(Default)]
 struct Client {
     observed: u32,
 }
 
-#[task(queue_size = 4, receives(mpi::Response<u32>))]
+#[task(queue_size = 4)]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
-
-    #[event]
-    fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
-        if true {
-            self.observed = counter.get(ctx).await.unwrap();
-        }
+    fn start(&mut self, _ctx: &mut ClientContext) {
+        self.observed = 1;
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
 
 fn main() {}
 "#,
-        &[
-            "event handler await body is not supported",
-            "CtxFuture lowering",
-        ],
+        &["must not take `self`", "with_state"],
     );
 }
 
@@ -431,39 +400,6 @@ fn main() {}
 }
 
 #[test]
-fn req_064_with_state_rejects_receiver_handler_state_borrow() {
-    assert_fails_contains(
-        "with_state_rejects_receiver_handler",
-        r#"
-use mpi::task;
-
-#[derive(Default)]
-struct Client {
-    observed: u32,
-}
-
-#[task(queue_size = 4)]
-impl Client {
-    #[start]
-    fn start(&mut self, ctx: &mut ClientContext) {
-        ctx.with_state(|state| {
-            state.observed += 1;
-        });
-    }
-
-    #[event(priority)]
-    fn stop(ctx: &mut ClientContext) {
-        ctx.stop();
-    }
-}
-
-fn main() {}
-"#,
-        &["with_state", "without `self`"],
-    );
-}
-
-#[test]
 fn req_070_req_168_protocol_call_rejects_missing_receive_declaration() {
     assert_fails_contains(
         "protocol_call_receive",
@@ -488,15 +424,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(_ctx: &mut CounterContext) {}
 
     #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
-    fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+    fn get(_ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -507,19 +443,17 @@ struct Client;
 #[task(queue_size = 4)]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn ask(
-        &mut self,
-        ctx: &mut ClientContext,
+    fn ask(ctx: &mut ClientContext,
         counter: CounterProtocolV1::Binding<CounterHandle>,
     ) {
         let _reply = counter.get(ctx, GetRequest).await.unwrap();
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -561,15 +495,15 @@ struct Counter;
 #[task(queue_size = 4)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext) {}
+    fn start(_ctx: &mut CounterContext) {}
 
     #[call(protocol = OtherCounterProtocolV1::Get, reply = GetReply)]
-    fn get(&mut self, _ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
+    fn get(_ctx: &mut CounterContext, _request: GetRequest) -> GetReply {
         GetReply
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -580,19 +514,17 @@ struct Client;
 #[task(queue_size = 4, receives(CounterProtocolV1::Get::Reply))]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn ask(
-        &mut self,
-        ctx: &mut ClientContext,
+    fn ask(ctx: &mut ClientContext,
         counter: OtherCounterProtocolV1::Binding<CounterHandle>,
     ) {
         let _reply = counter.get(ctx, GetRequest).await.unwrap();
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
