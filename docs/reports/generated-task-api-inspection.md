@@ -92,9 +92,11 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- ordinary messages are still deferred while an active handler waits for a
-  protocol message through generated dispatch, even though the runtime now has
-  a native `CtxFuture` dispatch hook for ordinary messages during suspension;
+- ordinary call/request messages are still deferred while an active handler
+  waits for a protocol message through generated dispatch; the ignored test
+  `req_062_generated_task_receives_call_request_while_handler_is_suspended`
+  captures the gap, even though the runtime now has a native `CtxFuture`
+  dispatch hook for ordinary messages during suspension;
 - handler declarations use ordinary `fn` syntax and are adapted into
   `CtxFuture` at the task runtime boundary; native lowering of arbitrary
   handler bodies directly into `CtxFuture` continuations remains pending;
