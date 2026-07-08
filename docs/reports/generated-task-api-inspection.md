@@ -92,13 +92,17 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- direct awaited assignment, pre-await side effects followed by awaited
-  assignment, awaited-let reply projection, and two pending call futures now
-  lower into the native `CtxFuture` dispatch hook, and mapped REQ-062 tests
-  cover request progress for the suspended call-wait shapes;
-- handler declarations use ordinary `fn` syntax and are adapted into
-  `CtxFuture` at the task runtime boundary when no native lowering is available;
-  native lowering of stream-next loops and arbitrary handler bodies directly
+- direct awaited assignment, await-and-discard, pre-await side effects followed
+  by awaited assignment, deferred future binding followed by awaited assignment,
+  awaited-let reply projection, two pending call futures, one stream-next await,
+  and a recognized stream-next accumulator loop now lower into native
+  `CtxFuture` schedulers, and mapped REQ-062 tests cover request progress for
+  the suspended handler shapes that dispatch ordinary messages;
+- handler declarations use ordinary `fn` syntax and non-awaiting fallback
+  handlers are adapted into `CtxFuture` at the task runtime boundary when no
+  native lowering is needed; awaited event-handler bodies without a recognized
+  lowering fail macro expansion instead of silently using the blocking
+  compatibility path. Fully general arbitrary handler-body lowering directly
   into `CtxFuture` continuations remains pending.
 
 These gaps should remain visible in traceability and verification reports until
