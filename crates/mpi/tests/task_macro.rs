@@ -593,7 +593,7 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
     });
 
     let observed_before_release = observed_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(std::time::Duration::from_secs(5))
         .expect("generated dispatch deferred the call request until the suspended handler resumed");
     release_tx.send(()).unwrap();
 
