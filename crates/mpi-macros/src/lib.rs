@@ -6,8 +6,8 @@ use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Pat, PatType, Path, Token,
-    Type, Visibility, braced, parenthesized, parse_macro_input,
+    Attribute, Expr, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Member, Pat, PatType,
+    Path, Token, Type, Visibility, braced, parenthesized, parse_macro_input,
 };
 
 mod kw {
@@ -479,6 +479,53 @@ fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<
             )),
         })
         .collect()
+}
+
+fn lowered_direct_await_assignment(method: &ImplItemFn) -> Option<(Member, Expr)> {
+    let [statement] = method.block.stmts.as_slice() else {
+        return None;
+    };
+    let syn::Stmt::Expr(Expr::Assign(assign), _) = statement else {
+        return None;
+    };
+    let Expr::Field(field) = &*assign.left else {
+        return None;
+    };
+    let Expr::Path(base) = &*field.base else {
+        return None;
+    };
+    if !base.path.is_ident("self") {
+        return None;
+    }
+    let Expr::MethodCall(unwrap) = &*assign.right else {
+        return None;
+    };
+    if unwrap.method != "unwrap" || !unwrap.args.is_empty() {
+        return None;
+    }
+    let Expr::Await(await_expr) = &*unwrap.receiver else {
+        return None;
+    };
+    if !method_call_uses_ctx_argument(&await_expr.base) {
+        return None;
+    }
+
+    Some((field.member.clone(), (*await_expr.base).clone()))
+}
+
+fn method_call_uses_ctx_argument(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = expr else {
+        return false;
+    };
+
+    call.args.iter().any(|arg| match arg {
+        Expr::Path(path) => path.path.is_ident("ctx"),
+        Expr::Reference(reference) => matches!(
+            &*reference.expr,
+            Expr::Path(path) if path.path.is_ident("ctx")
+        ),
+        _ => false,
+    })
 }
 
 fn self_type_ident(item: &ItemImpl) -> syn::Result<Ident> {
@@ -983,7 +1030,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             state.#method_ident(&mut ctx, #(#arg_idents),*),
                             inner_handle.queue(),
                             &__ctx_inner,
-                            &mut deferred,
+                            &mut *deferred,
                         );
                     }
                 });
@@ -999,17 +1046,72 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 placements.push(quote! {
                     Self::#variant_ident { .. } => #placement
                 });
-                dispatch_arms.push(quote! {
-                    #message_ident::#variant_ident { #(#arg_idents),* } => {
-                        let __ctx_inner = ctx.inner.clone();
-                        ::mpi::block_on_handler(
-                            state.#method_ident(&mut ctx, #(#arg_idents),*),
-                            inner_handle.queue(),
-                            &__ctx_inner,
-                            &mut deferred,
-                        );
-                    }
-                });
+                if let Some((field, awaited_expr)) = lowered_direct_await_assignment(&handler.method)
+                {
+                    dispatch_arms.push(quote! {
+                        #message_ident::#variant_ident { #(#arg_idents),* } => {
+                            let mut __mpi_handler_result = None;
+                            let mut __mpi_handler_future = None;
+
+                            ::mpi::block_on_ctx_task_with_dispatch(
+                                ::mpi::resume_fn(
+                                    |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                        if __mpi_handler_future.is_none() {
+                                            let mut __mpi_handler_ctx = #context_ident {
+                                                inner: __mpi_inner.clone(),
+                                            };
+                                            let ctx = &mut __mpi_handler_ctx;
+                                            __mpi_handler_future = Some(#awaited_expr);
+                                        }
+
+                                        match ::mpi::CtxFuture::resume(
+                                            __mpi_handler_future
+                                                .as_mut()
+                                                .expect("lowered handler future missing"),
+                                            __mpi_inner,
+                                            (),
+                                        ) {
+                                            ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                            ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                __mpi_handler_result = Some(__mpi_value.unwrap());
+                                                ::mpi::CtxPoll::Ready(())
+                                            }
+                                        }
+                                    },
+                                ),
+                                inner_handle.queue(),
+                                &mut ctx.inner,
+                                |__mpi_message, __mpi_inner| {
+                                    let ctx = #context_ident {
+                                        inner: __mpi_inner.clone(),
+                                    };
+                                    let _ctx = __dispatch_message(
+                                        state,
+                                        inner_handle,
+                                        ctx,
+                                        deferred,
+                                        __mpi_message,
+                                    );
+                                },
+                            );
+
+                            state.#field = __mpi_handler_result
+                                .expect("lowered handler completed without result");
+                        }
+                    });
+                } else {
+                    dispatch_arms.push(quote! {
+                        #message_ident::#variant_ident { #(#arg_idents),* } => {
+                            let __ctx_inner = ctx.inner.clone();
+                            ::mpi::block_on_handler(
+                                state.#method_ident(&mut ctx, #(#arg_idents),*),
+                                inner_handle.queue(),
+                                &__ctx_inner,
+                                &mut *deferred,
+                            );
+                        }
+                    });
+                }
                 handle_methods.push(quote! {
                     pub fn #method_ident(&self, _ctx: &mut impl ::mpi::TaskScope #(, #arg_idents: #arg_tys)*) -> Result<(), ::mpi::SendError> {
                         self.inner.send_message(#message_ident::#variant_ident { #(#arg_idents),* })
@@ -1070,7 +1172,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 state.#method_ident(&mut ctx, #(#arg_idents),*),
                                 inner_handle.queue(),
                                 &__ctx_inner,
-                                &mut deferred,
+                                &mut *deferred,
                             );
                             let _ = reply.send(::mpi::Response::new(session_id, value));
                         }
@@ -1199,7 +1301,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             ),
                             inner_handle.queue(),
                             &__ctx_inner,
-                            &mut deferred,
+                            &mut *deferred,
                         );
                         match result {
                             Ok(()) => {
@@ -1559,6 +1661,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let (inner, runtime) = ::mpi::spawn_task::<#message_ident, _, _, #queue_size>(
                     #start_variant,
                     move |inner_handle| {
+                        fn __dispatch_message(
+                            state: &mut #task_ident,
+                            inner_handle: &::mpi::TaskHandle<#message_ident, #queue_size>,
+                            mut ctx: #context_ident,
+                            deferred: &mut ::std::collections::VecDeque<#message_ident>,
+                            message: #message_ident,
+                        ) -> #context_ident {
+                            match message {
+                                #(#dispatch_arms),*
+                            }
+                            ctx
+                        }
+
                         let mut ctx = #context_ident {
                             inner: ::mpi::TaskContext::new(inner_handle.clone()),
                         };
@@ -1577,9 +1692,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 },
                             };
 
-                            match message {
-                                #(#dispatch_arms),*
-                            }
+                            ctx = __dispatch_message(
+                                &mut state,
+                                &inner_handle,
+                                ctx,
+                                &mut deferred,
+                                message,
+                            );
 
                             if ctx.is_stopped() {
                                 break;
