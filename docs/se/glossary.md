@@ -32,6 +32,12 @@ An operating-system thread with an associated bounded message queue, task state,
 
 A generated handle used by other code to send messages to a task.
 
+### Task endpoint
+
+A shared runtime endpoint behind task handles and in-flight sessions. It keeps
+the queue allocation valid while references exist and records whether the task
+still accepts messages. A task endpoint is not a global registry entry.
+
 ### Task context
 
 A generated context passed to handlers. It provides access to task-local runtime behavior such as self handle, session allocation, suspended receive, and control operations.

@@ -42,6 +42,7 @@ OS threads and synchronization primitives
 |---|---|---|
 | CMP-001 | Task | Owns state, queue, context, and dispatch loop on one OS thread. |
 | CMP-002 | TaskHandle | Public send surface used by other code to enqueue messages to a task. |
+| CMP-002A | TaskEndpoint | Shared runtime endpoint behind task handles and in-flight sessions; owns queue reference, endpoint identity, external session allocation, and message-acceptance lifecycle. |
 | CMP-003 | TaskQueue | Bounded queue with separate internal FIFO queues for normal and priority messages. |
 | CMP-004 | TaskContext | Generated handler context containing self handle, session allocation, task-local receive state, and control operations. |
 | CMP-005 | TaskMessage | Trait implemented by generated task message enums to expose receiver-declared placement. |
@@ -101,6 +102,7 @@ A task consists of:
 
 - a task state object;
 - a task handle used by other code to send messages;
+- a task endpoint shared by task handles and in-flight sessions;
 - a bounded message queue;
 - a generated task context passed to handlers;
 - a dispatch loop running on one OS thread.
@@ -116,6 +118,8 @@ ARCH-012: Each task has a generated context type passed to handlers.
 ARCH-013: Each task has a generated handle type exposing send methods.
 
 ARCH-014: Task initialization is performed through the start message; there is no separate normal out-of-band initialization path.
+
+ARCH-015: A task handle should enqueue through a shared task endpoint that keeps the queue allocation valid while handles or sessions exist and represents whether the task still accepts messages.
 
 ## Protocol architecture
 
