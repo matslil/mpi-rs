@@ -328,6 +328,7 @@ struct Handler {
     kind: HandlerKind,
     method: ImplItemFn,
     args: Vec<HandlerArg>,
+    has_receiver: bool,
 }
 
 fn compile_error(error: syn::Error) -> TokenStream {
@@ -421,26 +422,32 @@ fn normalize_handler_method(method: &mut ImplItemFn, kind: &HandlerKind) {
     }
 }
 
-fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<HandlerArg>> {
+fn payload_args(
+    method: &ImplItemFn,
+    skip_stream_sink: bool,
+) -> syn::Result<(bool, Vec<HandlerArg>)> {
     let mut inputs = method.sig.inputs.iter();
 
-    match inputs.next() {
-        Some(FnArg::Receiver(_)) => {}
-        _ => {
+    let has_receiver = match inputs.next() {
+        Some(FnArg::Receiver(_)) => true,
+        Some(FnArg::Typed(_)) => false,
+        None => {
             return Err(syn::Error::new_spanned(
                 &method.sig,
-                "handler must take `&mut self` as first parameter",
+                "handler must take a context parameter",
             ));
         }
-    }
+    };
 
-    match inputs.next() {
-        Some(FnArg::Typed(_)) => {}
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &method.sig,
-                "handler must take a context parameter after `self`",
-            ));
+    if has_receiver {
+        match inputs.next() {
+            Some(FnArg::Typed(_)) => {}
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "handler must take a context parameter after `self`",
+                ));
+            }
         }
     }
 
@@ -463,7 +470,7 @@ fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<
         }
     }
 
-    inputs
+    let args = inputs
         .map(|input| match input {
             FnArg::Typed(PatType { pat, ty, .. }) => match &**pat {
                 Pat::Ident(ident) => Ok(HandlerArg {
@@ -480,7 +487,9 @@ fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<
                 "unexpected receiver in payload parameter list",
             )),
         })
-        .collect()
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok((has_receiver, args))
 }
 
 enum LoweredEventHandler {
@@ -918,6 +927,29 @@ fn method_contains_await(method: &ImplItemFn) -> bool {
     visitor.found
 }
 
+fn method_contains_with_state(method: &ImplItemFn) -> bool {
+    struct WithStateVisitor {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for WithStateVisitor {
+        fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+            if node.method == "with_state" {
+                self.found = true;
+                return;
+            }
+
+            if !self.found {
+                visit::visit_expr_method_call(self, node);
+            }
+        }
+    }
+
+    let mut visitor = WithStateVisitor { found: false };
+    visitor.visit_block(&method.block);
+    visitor.found
+}
+
 fn method_call_uses_ctx_argument(expr: &Expr) -> bool {
     let Expr::MethodCall(call) = expr else {
         return false;
@@ -1250,10 +1282,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 if let Some(kind) = kind {
                     let skip_stream_sink = matches!(kind, HandlerKind::Stream { .. });
-                    let args = match payload_args(&method, skip_stream_sink) {
+                    let (has_receiver, args) = match payload_args(&method, skip_stream_sink) {
                         Ok(args) => args,
                         Err(error) => return compile_error(error),
                     };
+                    if has_receiver && method_contains_with_state(&method) {
+                        return compile_error(syn::Error::new_spanned(
+                            &method.sig.ident,
+                            "`with_state` is only supported in handlers declared without `self`",
+                        ));
+                    }
                     if matches!(kind, HandlerKind::LateReply) && args.len() != 1 {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
@@ -1261,7 +1299,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         ));
                     }
                     normalize_handler_method(&mut method, &kind);
-                    handlers.push(Handler { kind, method, args });
+                    handlers.push(Handler {
+                        kind,
+                        method,
+                        args,
+                        has_receiver,
+                    });
                 } else {
                     stripped_items.push(ImplItem::Fn(method));
                 }
@@ -1306,11 +1349,21 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut protocol_impls = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
-    let late_reply_method = handlers
+    let late_reply_handler = handlers
         .iter()
         .find(|handler| matches!(handler.kind, HandlerKind::LateReply))
-        .map(|handler| handler.method.sig.ident.clone());
-    let deliver_call_response = if let Some(method_ident) = &late_reply_method {
+        .map(|handler| (handler.method.sig.ident.clone(), handler.has_receiver));
+    let deliver_call_response = if let Some((method_ident, has_receiver)) = &late_reply_handler {
+        let late_reply_call = if *has_receiver {
+            quote! {
+                let mut __mpi_state = state.borrow_mut();
+                __mpi_state.#method_ident(&mut ctx, late_reply)
+            }
+        } else {
+            quote! {
+                #task_ident::#method_ident(&mut ctx, late_reply)
+            }
+        };
         quote! {
             let __ctx_inner = ctx.inner.clone();
             let _ = __ctx_inner.deliver_call_response_with_late_reply_handler(
@@ -1319,7 +1372,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     value,
                     late_reply_policy,
                 ),
-                |late_reply| state.#method_ident(&mut ctx, late_reply),
+                |late_reply| { #late_reply_call },
             );
         }
     } else {
@@ -1333,7 +1386,17 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
     };
-    let deliver_stream_event = if let Some(method_ident) = &late_reply_method {
+    let deliver_stream_event = if let Some((method_ident, has_receiver)) = &late_reply_handler {
+        let late_reply_call = if *has_receiver {
+            quote! {
+                let mut __mpi_state = state.borrow_mut();
+                __mpi_state.#method_ident(&mut ctx, late_reply)
+            }
+        } else {
+            quote! {
+                #task_ident::#method_ident(&mut ctx, late_reply)
+            }
+        };
         quote! {
             let __ctx_inner = ctx.inner.clone();
             let _ = __ctx_inner.deliver_stream_event_with_late_reply_handler(
@@ -1342,7 +1405,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     event,
                     late_reply_policy,
                 ),
-                |late_reply| state.#method_ident(&mut ctx, late_reply),
+                |late_reply| { #late_reply_call },
             );
         }
     } else {
@@ -1418,6 +1481,20 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
         let arg_idents: Vec<_> = handler.args.iter().map(|arg| &arg.ident).collect();
         let arg_tys: Vec<_> = handler.args.iter().map(|arg| &arg.ty).collect();
+        let handler_state_guard = if handler.has_receiver {
+            quote! { let mut __mpi_state = state.borrow_mut(); }
+        } else {
+            quote! {}
+        };
+        let handler_call = if handler.has_receiver {
+            quote! {
+                __mpi_state.#method_ident(&mut ctx, #(#arg_idents),*)
+            }
+        } else {
+            quote! {
+                #task_ident::#method_ident(&mut ctx, #(#arg_idents),*)
+            }
+        };
 
         match &handler.kind {
             HandlerKind::Start => {
@@ -1431,8 +1508,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
+                        #handler_state_guard
                         ::mpi::block_on_handler(
-                            state.#method_ident(&mut ctx, #(#arg_idents),*),
+                            #handler_call,
                             inner_handle.task_endpoint(),
                             &__ctx_inner,
                             &mut *deferred,
@@ -1466,6 +1544,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut __mpi_handler_future = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #awaited_expr
@@ -1491,6 +1570,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
                                             inner: __mpi_inner.clone(),
+                                            state: state.clone(),
                                         };
                                         let _ctx = __dispatch_message(
                                             state,
@@ -1502,7 +1582,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     },
                                 );
 
-                                state.#field = __mpi_handler_result;
+                                state.borrow_mut().#field = __mpi_handler_result;
                             }
                         },
                         LoweredEventHandler::AwaitDiscard {
@@ -1517,6 +1597,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut __mpi_handler_future = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #awaited_expr
@@ -1542,6 +1623,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
                                             inner: __mpi_inner.clone(),
+                                            state: state.clone(),
                                         };
                                         let _ctx = __dispatch_message(
                                             state,
@@ -1570,6 +1652,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut __mpi_handler_future = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #awaited_expr
@@ -1596,6 +1679,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                         |__mpi_message, __mpi_inner| {
                                             let ctx = #context_ident {
                                                 inner: __mpi_inner.clone(),
+                                                state: state.clone(),
                                             };
                                             let _ctx = __dispatch_message(
                                                 state,
@@ -1628,7 +1712,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     )
                                 };
 
-                                state.#field = #assigned_expr;
+                                state.borrow_mut().#field = #assigned_expr;
                             }
                         },
                         LoweredEventHandler::PairAwait {
@@ -1645,6 +1729,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut #first = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #first_expr
@@ -1652,6 +1737,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut #second = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #second_expr
@@ -1698,6 +1784,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
                                             inner: __mpi_inner.clone(),
+                                            state: state.clone(),
                                         };
                                         let _ctx = __dispatch_message(
                                             state,
@@ -1713,7 +1800,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     .expect("lowered handler completed without first result");
                                 let #second = __mpi_second_result
                                     .expect("lowered handler completed without second result");
-                                state.#field = #left #op #right;
+                                state.borrow_mut().#field = #left #op #right;
                             }
                         },
                         LoweredEventHandler::StreamSum {
@@ -1728,6 +1815,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut #stream = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #stream_expr
@@ -1741,6 +1829,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                                 let mut __mpi_next = {
                                                     let mut __mpi_handler_ctx = #context_ident {
                                                         inner: __mpi_inner.clone(),
+                                                        state: state.clone(),
                                                     };
                                                     let ctx = &mut __mpi_handler_ctx;
                                                     #stream.next(ctx)
@@ -1769,6 +1858,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
                                             inner: __mpi_inner.clone(),
+                                            state: state.clone(),
                                         };
                                         let _ctx = __dispatch_message(
                                             state,
@@ -1780,7 +1870,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     },
                                 );
 
-                                state.#field = #accumulator;
+                                state.borrow_mut().#field = #accumulator;
                             }
                         },
                         LoweredEventHandler::StreamNextDiscard {
@@ -1791,6 +1881,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 let mut #stream = {
                                     let mut __mpi_handler_ctx = #context_ident {
                                         inner: ctx.inner.clone(),
+                                        state: state.clone(),
                                     };
                                     let ctx = &mut __mpi_handler_ctx;
                                     #stream_expr
@@ -1802,6 +1893,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                             let mut __mpi_next = {
                                                 let mut __mpi_handler_ctx = #context_ident {
                                                     inner: __mpi_inner.clone(),
+                                                    state: state.clone(),
                                                 };
                                                 let ctx = &mut __mpi_handler_ctx;
                                                 #stream.next(ctx)
@@ -1824,6 +1916,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     |__mpi_message, __mpi_inner| {
                                         let ctx = #context_ident {
                                             inner: __mpi_inner.clone(),
+                                            state: state.clone(),
                                         };
                                         let _ctx = __dispatch_message(
                                             state,
@@ -1849,8 +1942,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     dispatch_arms.push(quote! {
                         #message_ident::#variant_ident { #(#arg_idents),* } => {
                             let __ctx_inner = ctx.inner.clone();
+                            #handler_state_guard
                             ::mpi::block_on_handler(
-                                state.#method_ident(&mut ctx, #(#arg_idents),*),
+                                #handler_call,
                                 inner_handle.task_endpoint(),
                                 &__ctx_inner,
                                 &mut *deferred,
@@ -1914,8 +2008,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { session_id, reply #(, #arg_idents)* } => {
                         if !ctx.inner.take_call_released(session_id) {
                             let __ctx_inner = ctx.inner.clone();
+                            #handler_state_guard
                             let value = ::mpi::block_on_handler(
-                                state.#method_ident(&mut ctx, #(#arg_idents),*),
+                                #handler_call,
                                 inner_handle.task_endpoint(),
                                 &__ctx_inner,
                                 &mut *deferred,
@@ -2016,6 +2111,28 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 late_reply_policy,
                 protocol,
             } => {
+                let stream_handler_state_guard = if handler.has_receiver {
+                    quote! { let mut __mpi_state = state.borrow_mut(); }
+                } else {
+                    quote! {}
+                };
+                let stream_handler_call = if handler.has_receiver {
+                    quote! {
+                        __mpi_state.#method_ident(
+                            &mut ctx,
+                            &mut out,
+                            #(#arg_idents),*
+                        )
+                    }
+                } else {
+                    quote! {
+                        #task_ident::#method_ident(
+                            &mut ctx,
+                            &mut out,
+                            #(#arg_idents),*
+                        )
+                    }
+                };
                 let item = &**item;
                 let error = &**error;
                 let blocking_method = format_ident!("{}_blocking", method_ident);
@@ -2039,12 +2156,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
+                        #stream_handler_state_guard
                         let result = ::mpi::block_on_handler(
-                            state.#method_ident(
-                                &mut ctx,
-                                &mut out,
-                                #(#arg_idents),*
-                            ),
+                            #stream_handler_call,
                             inner_handle.task_endpoint(),
                             &__ctx_inner,
                             &mut *deferred,
@@ -2336,6 +2450,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         pub struct #context_ident {
             inner: ::mpi::TaskContext<#message_ident, #queue_size>,
+            state: ::std::rc::Rc<::std::cell::RefCell<#task_ident>>,
         }
 
         impl ::mpi::TaskScope for #context_ident {
@@ -2372,6 +2487,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl #context_ident {
+            pub fn with_state<R>(&mut self, f: impl FnOnce(&mut #task_ident) -> R) -> R {
+                let mut state = self.state.borrow_mut();
+                f(&mut state)
+            }
+
             pub fn self_handle(&self) -> #handle_ident {
                 #handle_ident {
                     inner: self.inner.self_handle(),
@@ -2398,7 +2518,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         impl #task_ident {
             pub fn spawn(
-                mut state: Self
+                state: Self
                 #(, #start_arg_idents: #start_arg_tys)*
             ) -> Result<(#handle_ident, ::mpi::TaskRuntime<()>), ::mpi::SendError>
             where
@@ -2407,8 +2527,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let (inner, runtime) = ::mpi::spawn_task::<#message_ident, _, _, #queue_size>(
                     #start_variant,
                     move |inner_handle| {
+                        let state = ::std::rc::Rc::new(::std::cell::RefCell::new(state));
+
                         fn __dispatch_message(
-                            state: &mut #task_ident,
+                            state: &::std::rc::Rc<::std::cell::RefCell<#task_ident>>,
                             inner_handle: &::mpi::TaskHandle<#message_ident, #queue_size>,
                             mut ctx: #context_ident,
                             deferred: &mut ::std::collections::VecDeque<#message_ident>,
@@ -2422,6 +2544,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         let mut ctx = #context_ident {
                             inner: ::mpi::TaskContext::new(inner_handle.clone()),
+                            state: state.clone(),
                         };
                         let mut deferred = ::std::collections::VecDeque::<#message_ident>::new();
 
@@ -2439,7 +2562,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             };
 
                             ctx = __dispatch_message(
-                                &mut state,
+                                &state,
                                 &inner_handle,
                                 ctx,
                                 &mut deferred,
