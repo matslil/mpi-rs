@@ -5,6 +5,8 @@ pub mod queue;
 pub mod runtime;
 pub mod scope;
 pub mod session;
+#[cfg(unix)]
+pub mod signal;
 pub mod stream;
 pub mod task;
 
@@ -28,6 +30,8 @@ pub use session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
     sync_reply_channel,
 };
+#[cfg(unix)]
+pub use signal::{SignalBridge, SignalBridgeError, forward_signals};
 pub use stream::*;
 pub use task::{
     StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskHandle, TaskJoinError,
