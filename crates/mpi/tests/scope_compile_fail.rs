@@ -375,6 +375,95 @@ fn main() {}
 }
 
 #[test]
+fn req_064_with_state_rejects_task_operation_inside_state_borrow() {
+    assert_fails_contains(
+        "with_state_rejects_task_operation",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(_ctx: &mut CounterContext) {}
+
+    #[call(reply = u32)]
+    fn get(_ctx: &mut CounterContext) -> u32 {
+        1
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client {
+    observed: u32,
+}
+
+#[task(queue_size = 4, receives(mpi::Response<u32>))]
+impl Client {
+    #[start]
+    fn start(_ctx: &mut ClientContext) {}
+
+    #[event]
+    fn bad(ctx: &mut ClientContext, counter: CounterHandle) {
+        ctx.with_state(|state| {
+            state.observed += 1;
+            let _reply = counter.get(ctx);
+        });
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["with_state", "borrow"],
+    );
+}
+
+#[test]
+fn req_064_with_state_rejects_receiver_handler_state_borrow() {
+    assert_fails_contains(
+        "with_state_rejects_receiver_handler",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Client {
+    observed: u32,
+}
+
+#[task(queue_size = 4)]
+impl Client {
+    #[start]
+    fn start(&mut self, ctx: &mut ClientContext) {
+        ctx.with_state(|state| {
+            state.observed += 1;
+        });
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["with_state", "without `self`"],
+    );
+}
+
+#[test]
 fn req_070_req_168_protocol_call_rejects_missing_receive_declaration() {
     assert_fails_contains(
         "protocol_call_receive",

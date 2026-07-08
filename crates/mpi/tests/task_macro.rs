@@ -291,6 +291,38 @@ impl DelayedCounter {
 #[derive(Default)]
 struct Producer;
 
+#[derive(Default)]
+struct ScopedState {
+    value: u32,
+}
+
+#[task(queue_size = 8)]
+impl ScopedState {
+    #[start]
+    fn start(ctx: &mut ScopedStateContext, initial: u32) {
+        ctx.with_state(|state| {
+            state.value = initial;
+        });
+    }
+
+    #[event]
+    fn add(ctx: &mut ScopedStateContext, amount: u32) {
+        ctx.with_state(|state| {
+            state.value += amount;
+        });
+    }
+
+    #[call(reply = u32)]
+    fn value(ctx: &mut ScopedStateContext) -> u32 {
+        ctx.with_state(|state| state.value)
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut ScopedStateContext) {
+        ctx.stop();
+    }
+}
+
 #[task(queue_size = 8)]
 impl Producer {
     #[start]
@@ -395,6 +427,17 @@ fn req_051_req_052_macro_generates_task_handle_dispatch_and_call_plumbing() {
     assert_eq!(counter.get_blocking().unwrap(), 22);
 
     counter.stop_blocking().unwrap();
+    runtime.join().unwrap();
+}
+
+#[test]
+fn req_064_generated_context_with_state_scopes_user_state_access() {
+    let (task, runtime) = ScopedState::spawn(ScopedState::default(), 7).unwrap();
+
+    task.add_blocking(5).unwrap();
+    assert_eq!(task.value_blocking().unwrap(), 12);
+
+    task.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
 
