@@ -8,22 +8,26 @@ struct PingPong {
 #[task(queue_size = 8)]
 impl PingPong {
     #[start]
-    fn start(&mut self, _ctx: &mut PingPongContext, initial: u32) {
-        self.value = initial;
+    fn start(ctx: &mut PingPongContext, initial: u32) {
+        ctx.with_state(|state| {
+            state.value = initial;
+        });
     }
 
     #[event]
-    fn ping(&mut self, _ctx: &mut PingPongContext, amount: u32) {
-        self.value += amount;
+    fn ping(ctx: &mut PingPongContext, amount: u32) {
+        ctx.with_state(|state| {
+            state.value += amount;
+        });
     }
 
     #[call(reply = u32)]
-    fn value(&mut self, _ctx: &mut PingPongContext) -> u32 {
-        self.value
+    fn value(ctx: &mut PingPongContext) -> u32 {
+        ctx.with_state(|state| state.value)
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut PingPongContext) {
+    fn stop(ctx: &mut PingPongContext) {
         ctx.stop();
     }
 }

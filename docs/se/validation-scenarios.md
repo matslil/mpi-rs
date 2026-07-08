@@ -29,6 +29,8 @@ Expected outcome:
 - the declaration is compact and Rust-like;
 - message handlers use implementation-neutral `fn` declarations rather than
   exposing the runtime lowering strategy;
+- handlers access task user state through scoped context operations rather than
+  a `self` receiver;
 - the task has a generated message enum;
 - the task has a generated context;
 - the task has a generated handle;
