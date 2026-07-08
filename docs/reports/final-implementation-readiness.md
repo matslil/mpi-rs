@@ -45,9 +45,6 @@ implementation slices:
 - REQ-061 and REQ-062: generated dispatch still defers ordinary messages while
   an active standard-future handler waits, although native `CtxFuture` runtime
   support can dispatch ordinary messages while suspended.
-- REQ-115: `yield_item()` and `yield_batch()` are now required to suspend under
-  no-credit stream backpressure, but the implementation still returns an
-  explicit flow-control error.
 - VAL-012: Unix signal support has implementation, inspection evidence, and an
   application-level example; running that example remains Unix-host validation
   evidence.
@@ -78,8 +75,8 @@ and executed on Unix targets.
 
 ## Human Decisions Needed
 
-- Implement the approved `yield_item()`/`yield_batch()` no-credit suspension
-  behavior for stream handlers.
+- Decide whether generated handler lowering for full REQ-062 behavior should be
+  the next implementation slice.
 - Decide whether to promote any proposed protocol requirements after reviewing
   the candidate implementation and validation needs.
 - Run the Unix signal bridge example on a Unix host before marking VAL-012

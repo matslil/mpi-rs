@@ -859,6 +859,88 @@ fn req_113_stream_sink_yield_item_returns_context_after_sending_batch() {
 }
 
 #[test]
+fn req_115_stream_sink_yield_item_suspends_until_credit_arrives() {
+    let session_id = SessionId::new(EndpointId(4), 3);
+    mpi::forget_stream_credit(session_id);
+    let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
+    let captured_events = events.clone();
+
+    let mut sink = StreamSink::new_flow_controlled(session_id, 8, move |event| {
+        if let StreamEvent::Batch { session_id, values } = &event {
+            mpi::consume_stream_credit(*session_id, values.len())?;
+        }
+        captured_events.lock().unwrap().push(event);
+        Ok(())
+    });
+    sink.push(1).unwrap();
+
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(83));
+    let mut ctx = TaskContext::new(handle.clone());
+    let dispatched = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let captured_dispatched = dispatched.clone();
+
+    handle.send_message(CtxRuntimeMessage::Normal(9)).unwrap();
+    handle
+        .send_message(CtxRuntimeMessage::StreamPull {
+            session_id,
+            credit: 2,
+        })
+        .unwrap();
+
+    block_on_ctx_task_with_dispatch(
+        sink.yield_item(2),
+        &queue,
+        &mut ctx,
+        move |message, _ctx| {
+            if let CtxRuntimeMessage::Normal(value) = message {
+                captured_dispatched.lock().unwrap().push(value);
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        &[StreamEvent::batch(session_id, vec![1, 2])]
+    );
+    assert_eq!(dispatched.lock().unwrap().as_slice(), &[9]);
+    assert_eq!(mpi::stream_credit(session_id), 0);
+    mpi::forget_stream_credit(session_id);
+}
+
+#[test]
+fn req_115_stream_sink_yield_batch_reports_cancel_while_waiting_for_credit() {
+    let session_id = SessionId::new(EndpointId(4), 4);
+    mpi::forget_stream_credit(session_id);
+    let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));
+    let captured_events = events.clone();
+
+    let mut sink = StreamSink::new_flow_controlled(session_id, 8, move |event| {
+        captured_events.lock().unwrap().push(event);
+        Ok(())
+    });
+
+    let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
+    let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(84));
+    let mut ctx = TaskContext::new(handle.clone());
+    handle
+        .send_message(CtxRuntimeMessage::StreamCancel { session_id })
+        .unwrap();
+
+    let result = block_on_ctx_task_with_dispatch(
+        sink.yield_batch([1, 2]),
+        &queue,
+        &mut ctx,
+        |_message, _ctx| {},
+    );
+
+    assert_eq!(result, Err(mpi::SendError::StreamCancelled));
+    assert!(events.lock().unwrap().is_empty());
+    mpi::forget_stream_credit(session_id);
+}
+
+#[test]
 fn req_105_req_111_stream_sink_flushes_before_error() {
     let session_id = SessionId::new(EndpointId(4), 1);
     let events = Arc::new(Mutex::new(Vec::<StreamEvent<u8, &'static str>>::new()));

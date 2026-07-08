@@ -77,6 +77,25 @@ pub fn consume_stream_credit(session_id: SessionId, count: usize) -> Result<(), 
     Ok(())
 }
 
+fn stream_credit_available(session_id: SessionId, count: usize) -> Result<bool, SendError> {
+    if count == 0 {
+        return Ok(true);
+    }
+    if stream_cancelled()
+        .lock()
+        .expect("stream cancellation table poisoned")
+        .contains(&session_id)
+    {
+        return Err(SendError::StreamCancelled);
+    }
+
+    let count = u32::try_from(count).unwrap_or(u32::MAX);
+    let credits = stream_credits()
+        .lock()
+        .expect("stream credit table poisoned");
+    Ok(credits.get(&session_id).copied().unwrap_or(0) >= count)
+}
+
 /// Forget producer credit for a stream session.
 pub fn forget_stream_credit(session_id: SessionId) {
     stream_credits()
@@ -364,6 +383,7 @@ where
     sink: S,
     buffer: Vec<T>,
     finished: bool,
+    flow_controlled: bool,
     _error: PhantomData<fn() -> E>,
 }
 
@@ -384,8 +404,17 @@ where
             sink,
             buffer: Vec::with_capacity(batch_size),
             finished: false,
+            flow_controlled: false,
             _error: PhantomData,
         }
+    }
+
+    /// Create a stream sink whose yield operations wait for stream credit.
+    #[must_use]
+    pub fn new_flow_controlled(session_id: SessionId, batch_size: usize, sink: S) -> Self {
+        let mut stream = Self::new(session_id, batch_size, sink);
+        stream.flow_controlled = true;
+        stream
     }
 
     /// Return this stream's session identifier.
@@ -483,16 +512,32 @@ where
 
     fn try_resume(&mut self) -> CtxPoll<Result<(), SendError>> {
         match self.state {
-            StreamYieldState::Send => match self.sink.flush() {
-                Ok(()) => {
-                    self.state = StreamYieldState::Yield;
-                    CtxPoll::Pending
+            StreamYieldState::Send => {
+                if self.sink.flow_controlled {
+                    match stream_credit_available(self.sink.session_id, self.sink.buffer.len()) {
+                        Ok(true) => {}
+                        Ok(false) => return CtxPoll::Pending,
+                        Err(error) => {
+                            self.state = StreamYieldState::Done;
+                            return CtxPoll::Ready(Err(error));
+                        }
+                    }
                 }
-                Err(error) => {
-                    self.state = StreamYieldState::Done;
-                    CtxPoll::Ready(Err(error))
+
+                match self.sink.flush() {
+                    Ok(()) => {
+                        self.state = StreamYieldState::Yield;
+                        CtxPoll::Pending
+                    }
+                    Err(SendError::StreamFlowLimited) if self.sink.flow_controlled => {
+                        CtxPoll::Pending
+                    }
+                    Err(error) => {
+                        self.state = StreamYieldState::Done;
+                        CtxPoll::Ready(Err(error))
+                    }
                 }
-            },
+            }
             StreamYieldState::Yield => {
                 self.state = StreamYieldState::Done;
                 CtxPoll::Ready(Ok(()))
