@@ -8,17 +8,19 @@ struct Store {
 #[task(queue_size = 8)]
 impl Store {
     #[start]
-    fn start(&mut self, _ctx: &mut StoreContext, value: u32) {
-        self.value = value;
+    fn start(ctx: &mut StoreContext, value: u32) {
+        ctx.with_state(|state| {
+            state.value = value;
+        });
     }
 
     #[call(reply = u32)]
-    fn get(&mut self, _ctx: &mut StoreContext) -> u32 {
-        self.value
+    fn get(ctx: &mut StoreContext) -> u32 {
+        ctx.with_state(|state| state.value)
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut StoreContext) {
+    fn stop(ctx: &mut StoreContext) {
         ctx.stop();
     }
 }
@@ -31,20 +33,23 @@ struct Client {
 #[task(queue_size = 8, receives(mpi::Response<u32>))]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn fetch(&mut self, ctx: &mut ClientContext, store: StoreHandle) {
-        self.observed = store.get(ctx).await.unwrap();
+    fn fetch(ctx: &mut ClientContext, store: StoreHandle) {
+        let observed = store.get(ctx).await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[call(reply = u32)]
-    fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
-        self.observed
+    fn observed(ctx: &mut ClientContext) -> u32 {
+        ctx.with_state(|state| state.observed)
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
