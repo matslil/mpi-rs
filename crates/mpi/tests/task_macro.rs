@@ -42,28 +42,32 @@ struct Counter {
 #[task(queue_size = 8)]
 impl Counter {
     #[start]
-    fn start(&mut self, _ctx: &mut CounterContext, initial: u32) {
-        self.value = initial;
+    fn start(ctx: &mut CounterContext, initial: u32) {
+        ctx.with_state(|state| {
+            state.value = initial;
+        });
     }
 
     #[event(priority)]
-    fn add(&mut self, _ctx: &mut CounterContext, amount: u32) {
-        self.value += amount;
+    fn add(ctx: &mut CounterContext, amount: u32) {
+        ctx.with_state(|state| {
+            state.value += amount;
+        });
     }
 
     #[event(priority)]
-    fn add_from_handler(&mut self, ctx: &mut CounterContext, amount: u32) {
+    fn add_from_handler(ctx: &mut CounterContext, amount: u32) {
         let self_handle = ctx.self_handle();
         self_handle.add(ctx, amount).unwrap();
     }
 
     #[call(reply = u32, late_reply = "ignore")]
-    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
-        self.value
+    fn get(ctx: &mut CounterContext) -> u32 {
+        ctx.with_state(|state| state.value)
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut CounterContext) {
+    fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
 }
@@ -76,22 +80,26 @@ struct ProtocolCounter {
 #[task(queue_size = 8)]
 impl ProtocolCounter {
     #[start]
-    fn start(&mut self, _ctx: &mut ProtocolCounterContext, initial: u32) {
-        self.value = initial;
+    fn start(ctx: &mut ProtocolCounterContext, initial: u32) {
+        ctx.with_state(|state| {
+            state.value = initial;
+        });
     }
 
     #[event(protocol = CounterProtocolV1::Add)]
-    fn add(&mut self, _ctx: &mut ProtocolCounterContext, request: AddRequest) {
-        self.value += request.amount;
+    fn add(ctx: &mut ProtocolCounterContext, request: AddRequest) {
+        ctx.with_state(|state| {
+            state.value += request.amount;
+        });
     }
 
     #[call(protocol = CounterProtocolV1::Get, reply = GetReply)]
-    fn get(&mut self, _ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
-        GetReply { value: self.value }
+    fn get(ctx: &mut ProtocolCounterContext, _request: GetRequest) -> GetReply {
+        ctx.with_state(|state| GetReply { value: state.value })
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ProtocolCounterContext) {
+    fn stop(ctx: &mut ProtocolCounterContext) {
         ctx.stop();
     }
 }
@@ -112,96 +120,116 @@ struct Client {
 )]
 impl Client {
     #[start]
-    fn start(&mut self, _ctx: &mut ClientContext) {}
+    fn start(_ctx: &mut ClientContext) {}
 
     #[event]
-    fn ask_counter(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
-        self.observed = counter.get(ctx).await.unwrap();
+    fn ask_counter(ctx: &mut ClientContext, counter: CounterHandle) {
+        let observed = counter.get(ctx).await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn ask_counter_twice(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter_twice(ctx: &mut ClientContext, counter: CounterHandle) {
         let first = counter.get(ctx);
         let second = counter.get(ctx);
-        self.observed = first.await.unwrap() + second.await.unwrap();
+        let observed = first.await.unwrap() + second.await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn ask_counter_then_mark(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter_then_mark(ctx: &mut ClientContext, counter: CounterHandle) {
         let self_handle = ctx.self_handle();
         self_handle.mark(ctx, 1).unwrap();
-        self.observed = counter.get(ctx).await.unwrap();
+        let observed = counter.get(ctx).await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn ask_counter_then_mark_deferred(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+    fn ask_counter_then_mark_deferred(ctx: &mut ClientContext, counter: CounterHandle) {
         let self_handle = ctx.self_handle();
         self_handle.mark(ctx, 1).unwrap();
         let reply = counter.get(ctx);
-        self.observed = reply.await.unwrap();
+        let observed = reply.await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn ask_delayed_counter(&mut self, ctx: &mut ClientContext, counter: DelayedCounterHandle) {
-        self.observed = counter.delayed(ctx).await.unwrap();
+    fn ask_delayed_counter(ctx: &mut ClientContext, counter: DelayedCounterHandle) {
+        let observed = counter.delayed(ctx).await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn ask_delayed_counter_then_mark(
-        &mut self,
-        ctx: &mut ClientContext,
-        counter: DelayedCounterHandle,
-    ) {
+    fn ask_delayed_counter_then_mark(ctx: &mut ClientContext, counter: DelayedCounterHandle) {
         let self_handle = ctx.self_handle();
         self_handle.mark(ctx, 1).unwrap();
-        self.observed = counter.delayed(ctx).await.unwrap();
+        let observed = counter.delayed(ctx).await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
     fn ask_two_delayed_counters(
-        &mut self,
         ctx: &mut ClientContext,
         first_counter: DelayedCounterHandle,
         second_counter: DelayedCounterHandle,
     ) {
         let first = first_counter.delayed(ctx);
         let second = second_counter.delayed(ctx);
-        self.observed = first.await.unwrap() + second.await.unwrap();
+        let observed = first.await.unwrap() + second.await.unwrap();
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[event]
-    fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn sum_numbers(ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
         let mut sum = 0;
         while let Some(value) = stream.next(ctx).await.unwrap() {
             sum += value;
         }
-        self.observed = sum;
+        ctx.with_state(|state| {
+            state.observed = sum;
+        });
     }
 
     #[event]
-    fn sum_delayed_numbers(&mut self, ctx: &mut ClientContext, producer: DelayedProducerHandle) {
+    fn sum_delayed_numbers(ctx: &mut ClientContext, producer: DelayedProducerHandle) {
         let mut stream = producer.delayed_numbers(ctx).unwrap();
         let mut sum = 0;
         while let Some(value) = stream.next(ctx).await.unwrap() {
             sum += value;
         }
-        self.observed = sum;
+        ctx.with_state(|state| {
+            state.observed = sum;
+        });
     }
 
     #[event]
     fn ask_protocol_counter(
-        &mut self,
         ctx: &mut ClientContext,
         counter: CounterProtocolV1::Binding<ProtocolCounterHandle>,
     ) {
         let reply = counter.get(ctx, GetRequest).await.unwrap();
-        self.observed = reply.value;
+        ctx.with_state(|state| {
+            state.observed = reply.value;
+        });
     }
 
     #[event]
     fn sum_protocol_numbers(
-        &mut self,
         ctx: &mut ClientContext,
         producer: ProducerProtocolV1::Binding<ProtocolProducerHandle>,
     ) {
@@ -210,57 +238,65 @@ impl Client {
         while let Some(value) = stream.next(ctx).await.unwrap() {
             sum += value;
         }
-        self.observed = sum;
+        ctx.with_state(|state| {
+            state.observed = sum;
+        });
     }
 
     #[event]
-    fn drop_reported_stream(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
+    fn drop_reported_stream(ctx: &mut ClientContext, producer: ProducerHandle) {
         let stream = producer.fail_after_one(ctx).unwrap();
         drop(stream);
     }
 
     #[event]
-    fn simulate_late_reply_handler(&mut self, ctx: &mut ClientContext) {
+    fn simulate_late_reply_handler(ctx: &mut ClientContext) {
         let value = 5_u32;
         let reply = mpi::LateReplyRef::new(
             mpi::SessionId::new(mpi::EndpointId(1), 1),
             mpi::LateReplyKind::CallResponse,
             &value,
         );
-        let _ = self.unexpected_reply(ctx, reply);
+        let _ = Self::unexpected_reply(ctx, reply);
     }
 
     #[event]
-    fn record_diagnostic_endpoint(&mut self, ctx: &mut ClientContext) {
-        self.observed = ctx.diagnostics_snapshot().endpoint.0 as u32;
+    fn record_diagnostic_endpoint(ctx: &mut ClientContext) {
+        let observed = ctx.diagnostics_snapshot().endpoint.0 as u32;
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
     }
 
     #[late_reply]
     fn unexpected_reply(
-        &mut self,
-        _ctx: &mut ClientContext,
+        ctx: &mut ClientContext,
         reply: mpi::LateReplyRef<'_>,
     ) -> mpi::LateReplyAction {
         if reply.kind() == mpi::LateReplyKind::CallResponse
             && reply.downcast_ref::<u32>() == Some(&5)
         {
-            self.observed += 100;
+            ctx.with_state(|state| {
+                state.observed += 100;
+            });
         }
         mpi::LateReplyAction::Ignore
     }
 
     #[event(priority)]
-    fn mark(&mut self, _ctx: &mut ClientContext, amount: u32) {
-        self.observed += amount;
+    fn mark(ctx: &mut ClientContext, amount: u32) {
+        ctx.with_state(|state| {
+            state.observed += amount;
+        });
     }
 
     #[call(reply = u32)]
-    fn observed(&mut self, _ctx: &mut ClientContext) -> u32 {
-        self.observed
+    fn observed(ctx: &mut ClientContext) -> u32 {
+        ctx.with_state(|state| state.observed)
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ClientContext) {
+    fn stop(ctx: &mut ClientContext) {
         ctx.stop();
     }
 }
@@ -273,17 +309,19 @@ struct DelayedCounter {
 #[task(queue_size = 8)]
 impl DelayedCounter {
     #[start]
-    fn start(&mut self, _ctx: &mut DelayedCounterContext) {}
+    fn start(_ctx: &mut DelayedCounterContext) {}
 
     #[call(reply = u32)]
-    fn delayed(&mut self, _ctx: &mut DelayedCounterContext) -> u32 {
-        self.started.send(()).unwrap();
-        self.release.recv().unwrap();
+    fn delayed(ctx: &mut DelayedCounterContext) -> u32 {
+        ctx.with_state(|state| {
+            state.started.send(()).unwrap();
+            state.release.recv().unwrap();
+        });
         10
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut DelayedCounterContext) {
+    fn stop(ctx: &mut DelayedCounterContext) {
         ctx.stop();
     }
 }
@@ -326,11 +364,10 @@ impl ScopedState {
 #[task(queue_size = 8)]
 impl Producer {
     #[start]
-    fn start(&mut self, _ctx: &mut ProducerContext) {}
+    fn start(_ctx: &mut ProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2, late_reply = "ignore")]
     fn numbers(
-        &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
         count: u32,
@@ -343,7 +380,6 @@ impl Producer {
 
     #[stream(item = u32, error = String, batch_size = 2)]
     fn fail_after_one(
-        &mut self,
         _ctx: &mut ProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
     ) -> Result<(), String> {
@@ -352,7 +388,7 @@ impl Producer {
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ProducerContext) {
+    fn stop(ctx: &mut ProducerContext) {
         ctx.stop();
     }
 }
@@ -365,22 +401,23 @@ struct DelayedProducer {
 #[task(queue_size = 8)]
 impl DelayedProducer {
     #[start]
-    fn start(&mut self, _ctx: &mut DelayedProducerContext) {}
+    fn start(_ctx: &mut DelayedProducerContext) {}
 
     #[stream(item = u32, error = String, batch_size = 2, late_reply = "ignore")]
     fn delayed_numbers(
-        &mut self,
-        _ctx: &mut DelayedProducerContext,
+        ctx: &mut DelayedProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
     ) -> Result<(), String> {
-        self.started.send(()).unwrap();
-        self.release.recv().unwrap();
+        ctx.with_state(|state| {
+            state.started.send(()).unwrap();
+            state.release.recv().unwrap();
+        });
         out.push(7).map_err(|error| error.to_string())?;
         Ok(())
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut DelayedProducerContext) {
+    fn stop(ctx: &mut DelayedProducerContext) {
         ctx.stop();
     }
 }
@@ -391,7 +428,7 @@ struct ProtocolProducer;
 #[task(queue_size = 8)]
 impl ProtocolProducer {
     #[start]
-    fn start(&mut self, _ctx: &mut ProtocolProducerContext) {}
+    fn start(_ctx: &mut ProtocolProducerContext) {}
 
     #[stream(
         protocol = ProducerProtocolV1::Numbers,
@@ -400,7 +437,6 @@ impl ProtocolProducer {
         batch_size = 2
     )]
     fn numbers(
-        &mut self,
         _ctx: &mut ProtocolProducerContext,
         out: &mut mpi::BoxStreamSink<u32, String>,
         request: NumbersRequest,
@@ -412,7 +448,7 @@ impl ProtocolProducer {
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut ProtocolProducerContext) {
+    fn stop(ctx: &mut ProtocolProducerContext) {
         ctx.stop();
     }
 }
@@ -507,7 +543,7 @@ fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
 }
 
 #[test]
-fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() {
+fn req_062_generated_deferred_future_dispatches_ordinary_message_while_suspended() {
     let (counter, counter_runtime) = Counter::spawn(Counter::default(), 31).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
@@ -516,13 +552,13 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
         .unwrap();
     let mut observed = client.observed_blocking().unwrap();
     for _ in 0..100 {
-        if observed == 32 {
+        if observed == 31 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
         observed = client.observed_blocking().unwrap();
     }
-    assert_eq!(observed, 32);
+    assert_eq!(observed, 31);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();

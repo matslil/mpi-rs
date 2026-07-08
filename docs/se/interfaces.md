@@ -71,25 +71,28 @@ struct ServerTask {
 #[task(queue_size = 32)]
 impl ServerTask {
     #[start]
-    fn start(&mut self, ctx: &mut ServerTaskContext, config: ServerConfig) {
-        self.state = ServerState::new(config);
+    fn start(ctx: &mut ServerTaskContext, config: ServerConfig) {
+        ctx.with_state(|state| {
+            state.state = ServerState::new(config);
+        });
     }
 
     #[event]
-    fn set(&mut self, ctx: &mut ServerTaskContext, key: String, value: Vec<u8>) {
-        self.state.insert(key, value);
+    fn set(ctx: &mut ServerTaskContext, key: String, value: Vec<u8>) {
+        ctx.with_state(|state| {
+            state.state.insert(key, value);
+        });
     }
 
     #[call(reply = GetReply)]
-    fn get(&mut self, ctx: &mut ServerTaskContext, key: String) -> GetReply {
-        GetReply {
-            value: self.state.get(&key).cloned(),
-        }
+    fn get(ctx: &mut ServerTaskContext, key: String) -> GetReply {
+        ctx.with_state(|state| GetReply {
+            value: state.state.get(&key).cloned(),
+        })
     }
 
     #[late_reply]
     fn late_reply(
-        &mut self,
         ctx: &mut ServerTaskContext,
         reply: mpi::LateReplyRef<'_>,
     ) -> mpi::LateReplyAction {
@@ -97,7 +100,7 @@ impl ServerTask {
     }
 
     #[event(priority)]
-    fn shutdown(&mut self, ctx: &mut ServerTaskContext) {
+    fn shutdown(ctx: &mut ServerTaskContext) {
         ctx.stop();
     }
 }
@@ -109,12 +112,11 @@ current implementation strategy in the handler signature. Handler bodies may
 still use `.await` with task-internal call and stream APIs when they need to
 suspend.
 
-Handlers may also be declared as associated functions without `self`. In that
-form, handlers access user state through the generated context's
-`with_state(|state| ...)` operation. The `with_state` closure receives only a
-short mutable borrow of the task's user state; it does not receive a task
-context, and task operations that require the context must be performed outside
-the closure.
+Handlers are associated functions without `self`. Handlers access user state
+through the generated context's `with_state(|state| ...)` operation. The
+`with_state` closure receives only a short mutable borrow of the task's user
+state; it does not receive a task context, and task operations that require the
+context must be performed outside the closure.
 
 Interface rules:
 
@@ -140,9 +142,9 @@ INT-017: An explicit normal placement for a start handler shall be rejected or i
 
 INT-018: A `#[task]` attribute on a struct is non-authoritative and should not be required for code generation.
 
-INT-018A: Handler declarations should use ordinary Rust `fn` syntax; the task macro owns any async or `CtxFuture` lowering needed to execute them.
+INT-018A: Handler declarations should use ordinary Rust `fn` syntax without a `self` receiver; the task macro owns any async or `CtxFuture` lowering needed to execute them.
 
-INT-018B: Generated task contexts may expose a scoped `with_state` operation for no-receiver handlers so user-state mutation is explicit and cannot directly perform context-dependent task operations inside the state borrow.
+INT-018B: Generated task contexts shall expose a scoped `with_state` operation so user-state mutation is explicit and cannot directly perform context-dependent task operations inside the state borrow.
 
 ## Generated task handle interface
 
@@ -390,12 +392,12 @@ Producer API:
 ```rust
 #[stream(item = Row, error = QueryError, batch_size = 64)]
 fn query(
-    &mut self,
     ctx: &mut DatabaseContext,
     mut out: StreamSink<Row, QueryError>,
     sql: String,
 ) -> Result<(), QueryError> {
-    for row in self.state.execute(sql)? {
+    let rows = ctx.with_state(|state| state.state.execute(sql))?;
+    for row in rows {
         out.push(row)?;
     }
 

@@ -12,21 +12,23 @@ struct SignalTask {
 #[task(queue_size = 8)]
 impl SignalTask {
     #[start]
-    fn start(&mut self, _ctx: &mut SignalTaskContext) {}
+    fn start(_ctx: &mut SignalTaskContext) {}
 
     #[event(priority)]
-    fn signal(&mut self, _ctx: &mut SignalTaskContext, signal: i32) {
-        self.last_signal = Some(signal);
-        self.count += 1;
+    fn signal(ctx: &mut SignalTaskContext, signal: i32) {
+        ctx.with_state(|state| {
+            state.last_signal = Some(signal);
+            state.count += 1;
+        });
     }
 
     #[call(reply = (Option<i32>, u32))]
-    fn snapshot(&mut self, _ctx: &mut SignalTaskContext) -> (Option<i32>, u32) {
-        (self.last_signal, self.count)
+    fn snapshot(ctx: &mut SignalTaskContext) -> (Option<i32>, u32) {
+        ctx.with_state(|state| (state.last_signal, state.count))
     }
 
     #[event(priority)]
-    fn stop(&mut self, ctx: &mut SignalTaskContext) {
+    fn stop(ctx: &mut SignalTaskContext) {
         ctx.stop();
     }
 }
