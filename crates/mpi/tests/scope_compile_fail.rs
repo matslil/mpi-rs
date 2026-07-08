@@ -317,6 +317,64 @@ fn main() {}
 }
 
 #[test]
+fn req_062_req_064_unsupported_event_await_body_fails_instead_of_fallback() {
+    assert_fails_contains(
+        "unsupported_event_await_body",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(&mut self, _ctx: &mut CounterContext) {}
+
+    #[call(reply = u32)]
+    fn get(&mut self, _ctx: &mut CounterContext) -> u32 {
+        1
+    }
+
+    #[event(priority)]
+    fn stop(&mut self, ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+#[derive(Default)]
+struct Client {
+    observed: u32,
+}
+
+#[task(queue_size = 4, receives(mpi::Response<u32>))]
+impl Client {
+    #[start]
+    fn start(&mut self, _ctx: &mut ClientContext) {}
+
+    #[event]
+    fn ask(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        if true {
+            self.observed = counter.get(ctx).await.unwrap();
+        }
+    }
+
+    #[event(priority)]
+    fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &[
+            "event handler await body is not supported",
+            "CtxFuture lowering",
+        ],
+    );
+}
+
+#[test]
 fn req_070_req_168_protocol_call_rejects_missing_receive_declaration() {
     assert_fails_contains(
         "protocol_call_receive",

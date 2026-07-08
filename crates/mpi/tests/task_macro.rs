@@ -180,6 +180,16 @@ impl Client {
     }
 
     #[event]
+    fn sum_delayed_numbers(&mut self, ctx: &mut ClientContext, producer: DelayedProducerHandle) {
+        let mut stream = producer.delayed_numbers(ctx).unwrap();
+        let mut sum = 0;
+        while let Some(value) = stream.next(ctx).await.unwrap() {
+            sum += value;
+        }
+        self.observed = sum;
+    }
+
+    #[event]
     fn ask_protocol_counter(
         &mut self,
         ctx: &mut ClientContext,
@@ -311,6 +321,34 @@ impl Producer {
 
     #[event(priority)]
     fn stop(&mut self, ctx: &mut ProducerContext) {
+        ctx.stop();
+    }
+}
+
+struct DelayedProducer {
+    started: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+
+#[task(queue_size = 8)]
+impl DelayedProducer {
+    #[start]
+    fn start(&mut self, _ctx: &mut DelayedProducerContext) {}
+
+    #[stream(item = u32, error = String, batch_size = 2, late_reply = "ignore")]
+    fn delayed_numbers(
+        &mut self,
+        _ctx: &mut DelayedProducerContext,
+        out: &mut mpi::BoxStreamSink<u32, String>,
+    ) -> Result<(), String> {
+        self.started.send(()).unwrap();
+        self.release.recv().unwrap();
+        out.push(7).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[event(priority)]
+    fn stop(&mut self, ctx: &mut DelayedProducerContext) {
         ctx.stop();
     }
 }
@@ -603,6 +641,43 @@ fn req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspend
 }
 
 #[test]
+fn req_062_generated_stream_next_handler_dispatches_ordinary_message_while_suspended() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (producer, producer_runtime) = DelayedProducer::spawn(DelayedProducer {
+        started: started_tx,
+        release: release_rx,
+    })
+    .unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .sum_delayed_numbers_blocking(producer.clone())
+        .unwrap();
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    assert_eq!(client.observed_blocking().unwrap(), 0);
+
+    release_tx.send(()).unwrap();
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 7 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 7);
+
+    client.stop_blocking().unwrap();
+    producer.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    producer_runtime.join().unwrap();
+}
+
+#[test]
 fn req_101_req_102_req_103_generated_stream_hides_batches() {
     let (producer, runtime) = Producer::spawn(Producer).unwrap();
     let mut stream = producer.numbers_blocking(3).unwrap();
@@ -658,7 +733,15 @@ fn req_101_req_103_task_internal_stream_next_await_hides_batches() {
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.sum_numbers_blocking(producer.clone()).unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 6);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 6 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 6);
 
     client.stop_blocking().unwrap();
     producer.stop_blocking().unwrap();
@@ -730,7 +813,15 @@ fn req_166_req_168_protocol_stream_receive_declaration_allows_task_internal_wait
     client
         .sum_protocol_numbers_blocking(ProducerProtocolV1::bind(producer.clone()))
         .unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 6);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 6 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 6);
 
     client.stop_blocking().unwrap();
     producer.stop_blocking().unwrap();

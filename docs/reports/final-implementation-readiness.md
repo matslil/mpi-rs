@@ -42,11 +42,13 @@ The implementation now has local verification evidence for:
 The following gaps remain visible for human system-engineering decision or later
 implementation slices:
 
-- REQ-061 and REQ-062: generated call-wait event handlers for direct awaited
-  assignment, pre-await side effects, awaited-let reply projection, and two
-  pending call futures now use native `CtxFuture` dispatch while suspended;
-  standard-future fallback handlers for stream-next loops and other body shapes
-  still defer ordinary messages while waiting.
+- REQ-061 and REQ-062: generated event handlers for direct awaited assignment,
+  await-and-discard, pre-await side effects, awaited-let reply projection,
+  deferred future binding, two pending call futures, one stream-next await, and
+  a recognized stream-next accumulator loop now use native `CtxFuture`
+  schedulers; awaited event-handler bodies without a recognized lowering fail
+  macro expansion instead of silently deferring ordinary messages through the
+  blocking compatibility path.
 - VAL-012: Unix signal support has implementation, inspection evidence, and an
   application-level example; running that example remains Unix-host validation
   evidence.
@@ -77,8 +79,9 @@ and executed on Unix targets.
 
 ## Human Decisions Needed
 
-- Decide whether generated handler lowering for full REQ-062 behavior should be
-  the next implementation slice.
+- Decide whether fully general arbitrary handler-body lowering should be
+  implemented, or whether supported awaited handler shapes should remain an
+  explicit, expanding subset.
 - Decide whether to promote any proposed protocol requirements after reviewing
   the candidate implementation and validation needs.
 - Run the Unix signal bridge example on a Unix host before marking VAL-012
