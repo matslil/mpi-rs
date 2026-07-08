@@ -79,16 +79,18 @@ impl Drop for SignalBridge {
 /// The POSIX signal handler portion is delegated to `signal-hook`; this bridge
 /// consumes the resulting signal iterator on a normal Rust thread and only then
 /// constructs and enqueues application messages.
-pub fn forward_signals<M, F, I, const N: usize>(
-    task: TaskHandle<M, N>,
+pub fn forward_signals<H, M, F, I, const N: usize>(
+    task: H,
     signals: I,
     make_message: F,
 ) -> Result<SignalBridge, SignalBridgeError>
 where
+    H: Into<TaskHandle<M, N>>,
     M: TaskMessage + Send + 'static,
     F: Fn(i32) -> M + Send + 'static,
     I: IntoIterator<Item = i32>,
 {
+    let task = task.into();
     let mut signals = Signals::new(signals)?;
     let handle = signals.handle();
     let join = thread::spawn(move || {

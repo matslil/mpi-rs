@@ -862,6 +862,30 @@ Verification: inspection
 
 Status: approved
 
+### REQ-115: Stream yield waits for credit
+
+Producer-side stream `yield_item()` and `yield_batch()` operations shall hide credit-based flow control from ordinary stream handlers by suspending the handler when insufficient stream credit is available and resuming after credit, cancellation, or another defined terminal stream-control condition is observed.
+
+Rationale: Stream handlers should not need to manually catch a flow-control error and retry merely because the consumer has not yet granted more credit.
+
+Source: Human maintainer decision, SN-016, SN-043
+
+Verification: test
+
+Status: approved
+
+### REQ-132: Optional default Unix signal feature
+
+Unix signal bridge support shall be controlled by an optional crate feature that is included in the default feature set.
+
+Rationale: Applications that do not want the Unix signal dependency should be able to disable it with `default-features = false`, while default `mpi-rs` users still receive the supported signal bridge API on Unix targets.
+
+Source: Human maintainer decision, SN-044
+
+Verification: test
+
+Status: approved
+
 ## Diagnostics requirements
 
 ### REQ-140: Diagnostics roadmap
