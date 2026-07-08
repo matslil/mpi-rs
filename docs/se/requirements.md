@@ -222,6 +222,16 @@ Verification: inspection
 
 Status: proposed
 
+### REQ-162A: Derived protocol response identities
+
+Call reply and stream reply message identities shall be derived from the declared protocol interaction name using a fixed naming convention. A call reply shall derive a `reply` identity; a stream shall derive `item`, `finish`, and `error` identities. Generated Rust names shall use idiomatic Rust casing for their syntactic position.
+
+Source: Human maintainer decision, SN-018, SN-023, SN-024
+
+Verification: inspection
+
+Status: proposed
+
 ### REQ-163: Explicit protocol message types
 
 Each protocol message declaration shall explicitly identify all Rust types carried by the protocol message interaction, including event payload, call request, call reply, stream request, stream item, and stream error types as applicable.

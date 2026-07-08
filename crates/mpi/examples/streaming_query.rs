@@ -48,7 +48,7 @@ impl QueryClient {
         });
     }
 
-    #[call(reply = u32)]
+    #[call]
     fn sum(ctx: &mut QueryClientContext) -> u32 {
         ctx.with_state(|state| state.sum)
     }

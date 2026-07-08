@@ -39,6 +39,20 @@ Protocol and message names only need to be unique within their defining
 namespace. Two protocols may use the same short message name without conflict
 because the namespace-qualified identity differs.
 
+Protocol interaction names should use Rust-style `snake_case`. Generated Rust
+modules for protocol interactions use that same `snake_case` name. Generated
+receive identity types inside an interaction module use Rust-style `PascalCase`
+names:
+
+- a call named `get` has a generated reply receive identity `get::Reply`;
+- a stream named `list_directories` has generated stream receive identities
+  `list_directories::Item`, `list_directories::Finish`, and
+  `list_directories::Error`.
+
+When rendered as external protocol message names, those derived identities are
+conceptually equivalent to `get_reply`, `list_directories_item`,
+`list_directories_finish`, and `list_directories_error`.
+
 ## Explicit message types
 
 Protocol message declarations explicitly name all Rust types carried by the
@@ -54,9 +68,9 @@ Conceptual declaration shape:
 ```rust
 protocol! {
     pub protocol InventoryV1 {
-        event Reindex(ReindexRequest);
-        call GetItem(GetItemRequest) -> GetItemReply;
-        stream WatchStock(WatchStockRequest) -> StockEvent error WatchStockError;
+        event reindex(ReindexRequest);
+        call get_item(GetItemRequest) -> GetItemReply;
+        stream watch_stock(WatchStockRequest) -> StockEvent error WatchStockError;
     }
 }
 ```

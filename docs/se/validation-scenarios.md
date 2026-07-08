@@ -288,6 +288,7 @@ Expected outcome:
 - request, reply, stream item, and stream error types are determined by the protocol declaration;
 - a caller task cannot await an undeclared protocol reply or stream event;
 - receive declarations match the protocol-qualified reply or stream event and its declared Rust type;
+- generated protocol response identities follow the derived Rust naming convention, such as `get::Reply` for a call reply and `list_directories::Item`, `list_directories::Finish`, and `list_directories::Error` for stream replies;
 - generated send, call, or stream methods are derived from the protocol or from a protocol-instance binding to the task that implements it;
 - two protocols may reuse the same short message name without conflict;
 - an incompatible message contract change is represented by a new protocol name.

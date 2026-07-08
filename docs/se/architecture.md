@@ -134,6 +134,8 @@ ARCH-100: A protocol definition has a namespace-qualified identity.
 
 ARCH-101: A protocol message identity includes the namespace, protocol name, and message name.
 
+ARCH-101A: Protocol call and stream response identities are derived from the declared interaction name using idiomatic Rust generated names: call replies use an interaction module `reply` identity exposed as `Reply`, and stream replies use `Item`, `Finish`, and `Error` identities inside the stream interaction module. External rendered names are equivalent to appending `_reply`, `_item`, `_finish`, or `_error` to the snake_case interaction name.
+
 ARCH-102: Protocol message declarations explicitly bind request, reply, stream item, and stream error Rust types as applicable.
 
 ARCH-103: Compatible protocol evolution is append-only.
