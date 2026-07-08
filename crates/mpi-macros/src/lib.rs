@@ -5,10 +5,11 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
+use syn::visit::{self, Visit};
 use syn::{
-    Attribute, BinOp, Expr, ExprAssign, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr,
-    Member, Pat, PatType, Path, Stmt, Token, Type, Visibility, braced, parenthesized,
-    parse_macro_input,
+    Attribute, BinOp, Expr, ExprAssign, ExprBinary, ExprLet, ExprWhile, FnArg, Ident, ImplItem,
+    ImplItemFn, ItemImpl, LitStr, Member, Pat, PatType, Path, Stmt, Token, Type, Visibility,
+    braced, parenthesized, parse_macro_input,
 };
 
 mod kw {
@@ -488,12 +489,17 @@ enum LoweredEventHandler {
         field: Member,
         awaited_expr: Expr,
     },
+    AwaitDiscard {
+        pre_stmts: Vec<Stmt>,
+        awaited_expr: Expr,
+    },
     AwaitBinding {
         pre_stmts: Vec<Stmt>,
         binding: Ident,
         awaited_expr: Expr,
         field: Member,
         assigned_expr: Expr,
+        dispatch_ordinary: bool,
     },
     PairAwait {
         first: Ident,
@@ -505,12 +511,28 @@ enum LoweredEventHandler {
         op: BinOp,
         right: Ident,
     },
+    StreamSum {
+        stream: Ident,
+        stream_expr: Expr,
+        accumulator: Ident,
+        accumulator_init: Expr,
+        item: Ident,
+        field: Member,
+    },
+    StreamNextDiscard {
+        stream: Ident,
+        stream_expr: Expr,
+    },
 }
 
 fn lowered_event_handler(method: &ImplItemFn) -> Option<LoweredEventHandler> {
-    lowered_two_await_assignment(method)
+    lowered_stream_sum(method)
+        .or_else(|| lowered_stream_next_discard(method))
+        .or_else(|| lowered_two_await_assignment(method))
+        .or_else(|| lowered_future_binding_assignment(method))
         .or_else(|| lowered_await_let_assignment(method))
         .or_else(|| lowered_await_assignment(method))
+        .or_else(|| lowered_await_discard(method))
 }
 
 fn lowered_await_assignment(method: &ImplItemFn) -> Option<LoweredEventHandler> {
@@ -563,6 +585,62 @@ fn lowered_await_let_assignment(method: &ImplItemFn) -> Option<LoweredEventHandl
         awaited_expr,
         field,
         assigned_expr: (*assign.right).clone(),
+        dispatch_ordinary: true,
+    })
+}
+
+fn lowered_future_binding_assignment(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let [pre_stmts @ .., let_stmt, assign_stmt] = method.block.stmts.as_slice() else {
+        return None;
+    };
+    if stmts_need_fallback(pre_stmts) {
+        return None;
+    }
+    let (binding, awaited_expr) = local_future_binding(let_stmt)?;
+    let Stmt::Expr(Expr::Assign(assign), _) = assign_stmt else {
+        return None;
+    };
+    let field = self_field_assignment(assign)?;
+    let awaited_ident = awaited_unwrap_ident(&assign.right)?;
+    if awaited_ident != binding {
+        return None;
+    }
+
+    let assigned_expr = Expr::Path(syn::ExprPath {
+        attrs: Vec::new(),
+        qself: None,
+        path: binding.clone().into(),
+    });
+    Some(LoweredEventHandler::AwaitBinding {
+        pre_stmts: pre_stmts.to_vec(),
+        binding,
+        awaited_expr,
+        field,
+        assigned_expr,
+        dispatch_ordinary: false,
+    })
+}
+
+fn lowered_await_discard(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let (last, pre_stmts) = method.block.stmts.split_last()?;
+    if stmts_need_fallback(pre_stmts) {
+        return None;
+    }
+    let Stmt::Local(local) = last else {
+        return None;
+    };
+    if !matches!(&local.pat, Pat::Ident(_) | Pat::Wild(_)) {
+        return None;
+    }
+    let init = local.init.as_ref()?;
+    let awaited_expr = awaited_unwrap_expr(&init.expr)?;
+    if !method_call_uses_ctx_argument(&awaited_expr) {
+        return None;
+    }
+
+    Some(LoweredEventHandler::AwaitDiscard {
+        pre_stmts: pre_stmts.to_vec(),
+        awaited_expr,
     })
 }
 
@@ -591,6 +669,54 @@ fn lowered_two_await_assignment(method: &ImplItemFn) -> Option<LoweredEventHandl
         left,
         op: binary.op,
         right,
+    })
+}
+
+fn lowered_stream_sum(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let [stream_stmt, accumulator_stmt, while_stmt, assign_stmt] = method.block.stmts.as_slice()
+    else {
+        return None;
+    };
+    let (stream, stream_expr) = local_stream_binding(stream_stmt)?;
+    let (accumulator, accumulator_init) = local_accumulator_binding(accumulator_stmt)?;
+    let (while_stream, item, while_accumulator) = stream_sum_while(while_stmt)?;
+    if stream != while_stream || accumulator != while_accumulator {
+        return None;
+    }
+    let Stmt::Expr(Expr::Assign(assign), _) = assign_stmt else {
+        return None;
+    };
+    let field = self_field_assignment(assign)?;
+    let Expr::Path(assigned) = &*assign.right else {
+        return None;
+    };
+    if assigned.path.get_ident() != Some(&accumulator) {
+        return None;
+    }
+
+    Some(LoweredEventHandler::StreamSum {
+        stream,
+        stream_expr,
+        accumulator,
+        accumulator_init,
+        item,
+        field,
+    })
+}
+
+fn lowered_stream_next_discard(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let [stream_stmt, next_stmt] = method.block.stmts.as_slice() else {
+        return None;
+    };
+    let (stream, stream_expr) = local_stream_binding(stream_stmt)?;
+    let next_stream = stream_next_discard(next_stmt)?;
+    if stream != next_stream {
+        return None;
+    }
+
+    Some(LoweredEventHandler::StreamNextDiscard {
+        stream,
+        stream_expr,
     })
 }
 
@@ -643,11 +769,153 @@ fn local_future_binding(stmt: &Stmt) -> Option<(Ident, Expr)> {
     Some((binding.ident.clone(), expr))
 }
 
+fn local_stream_binding(stmt: &Stmt) -> Option<(Ident, Expr)> {
+    let Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let Pat::Ident(binding) = &local.pat else {
+        return None;
+    };
+    let init = local.init.as_ref()?;
+    let unwrapped_expr = unwrap_expr(&init.expr)?;
+    if !method_call_uses_ctx_argument(&unwrapped_expr) {
+        return None;
+    }
+    Some((binding.ident.clone(), (*init.expr).clone()))
+}
+
+fn local_accumulator_binding(stmt: &Stmt) -> Option<(Ident, Expr)> {
+    let Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let Pat::Ident(binding) = &local.pat else {
+        return None;
+    };
+    let init = local.init.as_ref()?;
+    Some((binding.ident.clone(), (*init.expr).clone()))
+}
+
+fn stream_sum_while(stmt: &Stmt) -> Option<(Ident, Ident, Ident)> {
+    let Stmt::Expr(Expr::While(while_expr), _) = stmt else {
+        return None;
+    };
+    let (stream, item) = stream_next_condition(while_expr)?;
+    let [body_stmt] = while_expr.body.stmts.as_slice() else {
+        return None;
+    };
+    let accumulator = accumulator_add_assign(body_stmt, &item)?;
+    Some((stream, item, accumulator))
+}
+
+fn stream_next_condition(while_expr: &ExprWhile) -> Option<(Ident, Ident)> {
+    let Expr::Let(ExprLet { pat, expr, .. }) = &*while_expr.cond else {
+        return None;
+    };
+    let Pat::TupleStruct(tuple) = &**pat else {
+        return None;
+    };
+    if !tuple.path.is_ident("Some") || tuple.elems.len() != 1 {
+        return None;
+    }
+    let Pat::Ident(item) = &tuple.elems[0] else {
+        return None;
+    };
+    let next_expr = awaited_unwrap_expr(expr)?;
+    let Expr::MethodCall(next) = next_expr else {
+        return None;
+    };
+    if next.method != "next" || !method_call_uses_ctx_argument(&Expr::MethodCall(next.clone())) {
+        return None;
+    }
+    let Expr::Path(receiver) = &*next.receiver else {
+        return None;
+    };
+    Some((receiver.path.get_ident()?.clone(), item.ident.clone()))
+}
+
+fn stream_next_discard(stmt: &Stmt) -> Option<Ident> {
+    let Stmt::Local(local) = stmt else {
+        return None;
+    };
+    if !matches!(&local.pat, Pat::Ident(_) | Pat::Wild(_)) {
+        return None;
+    }
+    let init = local.init.as_ref()?;
+    let next_expr = awaited_unwrap_expr(&init.expr)?;
+    let Expr::MethodCall(next) = next_expr else {
+        return None;
+    };
+    if next.method != "next" || !method_call_uses_ctx_argument(&Expr::MethodCall(next.clone())) {
+        return None;
+    }
+    let Expr::Path(receiver) = &*next.receiver else {
+        return None;
+    };
+    receiver.path.get_ident().cloned()
+}
+
+fn accumulator_add_assign(stmt: &Stmt, item: &Ident) -> Option<Ident> {
+    let Stmt::Expr(
+        Expr::Binary(ExprBinary {
+            left, op, right, ..
+        }),
+        _,
+    ) = stmt
+    else {
+        return None;
+    };
+    if !matches!(op, BinOp::AddAssign(_)) {
+        return None;
+    }
+    let Expr::Path(left) = &**left else {
+        return None;
+    };
+    let Expr::Path(right) = &**right else {
+        return None;
+    };
+    if right.path.get_ident() != Some(item) {
+        return None;
+    }
+    left.path.get_ident().cloned()
+}
+
+fn unwrap_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::MethodCall(unwrap) = expr else {
+        return None;
+    };
+    if unwrap.method != "unwrap" || !unwrap.args.is_empty() {
+        return None;
+    }
+    Some((*unwrap.receiver).clone())
+}
+
 fn stmts_need_fallback(stmts: &[Stmt]) -> bool {
     stmts.iter().any(|stmt| {
         let tokens = stmt.to_token_stream().to_string();
         tokens.contains("self .") || tokens.contains("await")
     })
+}
+
+fn method_contains_await(method: &ImplItemFn) -> bool {
+    struct AwaitVisitor {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for AwaitVisitor {
+        fn visit_expr_await(&mut self, _node: &'ast syn::ExprAwait) {
+            self.found = true;
+        }
+
+        fn visit_expr(&mut self, node: &'ast Expr) {
+            if !self.found {
+                visit::visit_expr(self, node);
+            }
+        }
+    }
+
+    let mut visitor = AwaitVisitor { found: false };
+    visitor.visit_block(&method.block);
+    visitor.found
 }
 
 fn method_call_uses_ctx_argument(expr: &Expr) -> bool {
@@ -1237,12 +1505,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 state.#field = __mpi_handler_result;
                             }
                         },
-                        LoweredEventHandler::AwaitBinding {
+                        LoweredEventHandler::AwaitDiscard {
                             pre_stmts,
-                            binding,
                             awaited_expr,
-                            field,
-                            assigned_expr,
                         } => quote! {
                             #message_ident::#variant_ident { #(#arg_idents),* } => {
                                 {
@@ -1257,7 +1522,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     #awaited_expr
                                 };
 
-                                let #binding = ::mpi::block_on_ctx_task_with_dispatch(
+                                let _ = ::mpi::block_on_ctx_task_with_dispatch(
                                     ::mpi::resume_fn(
                                         |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
                                             match ::mpi::CtxFuture::resume(
@@ -1287,6 +1552,81 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                         );
                                     },
                                 );
+                            }
+                        },
+                        LoweredEventHandler::AwaitBinding {
+                            pre_stmts,
+                            binding,
+                            awaited_expr,
+                            field,
+                            assigned_expr,
+                            dispatch_ordinary,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                {
+                                    let ctx = &mut ctx;
+                                    #(#pre_stmts)*
+                                }
+                                let mut __mpi_handler_future = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #awaited_expr
+                                };
+
+                                let #binding = if #dispatch_ordinary {
+                                    ::mpi::block_on_ctx_task_with_dispatch(
+                                        ::mpi::resume_fn(
+                                            |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                                match ::mpi::CtxFuture::resume(
+                                                    &mut __mpi_handler_future,
+                                                    __mpi_inner,
+                                                    (),
+                                                ) {
+                                                    ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                                    ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                        ::mpi::CtxPoll::Ready(__mpi_value.unwrap())
+                                                    }
+                                                }
+                                            },
+                                        ),
+                                        inner_handle.queue(),
+                                        &mut ctx.inner,
+                                        |__mpi_message, __mpi_inner| {
+                                            let ctx = #context_ident {
+                                                inner: __mpi_inner.clone(),
+                                            };
+                                            let _ctx = __dispatch_message(
+                                                state,
+                                                inner_handle,
+                                                ctx,
+                                                deferred,
+                                                __mpi_message,
+                                            );
+                                        },
+                                    )
+                                } else {
+                                    ::mpi::block_on_ctx_task(
+                                        ::mpi::resume_fn(
+                                            |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                                match ::mpi::CtxFuture::resume(
+                                                    &mut __mpi_handler_future,
+                                                    __mpi_inner,
+                                                    (),
+                                                ) {
+                                                    ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                                    ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                        ::mpi::CtxPoll::Ready(__mpi_value.unwrap())
+                                                    }
+                                                }
+                                            },
+                                        ),
+                                        inner_handle.queue(),
+                                        &mut ctx.inner,
+                                        &mut *deferred,
+                                    )
+                                };
 
                                 state.#field = #assigned_expr;
                             }
@@ -1376,10 +1716,135 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 state.#field = #left #op #right;
                             }
                         },
+                        LoweredEventHandler::StreamSum {
+                            stream,
+                            stream_expr,
+                            accumulator,
+                            accumulator_init,
+                            item,
+                            field,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                let mut #stream = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #stream_expr
+                                };
+                                let mut #accumulator = #accumulator_init;
+
+                                ::mpi::block_on_ctx_task_with_dispatch(
+                                    ::mpi::resume_fn(
+                                        |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                            loop {
+                                                let mut __mpi_next = {
+                                                    let mut __mpi_handler_ctx = #context_ident {
+                                                        inner: __mpi_inner.clone(),
+                                                    };
+                                                    let ctx = &mut __mpi_handler_ctx;
+                                                    #stream.next(ctx)
+                                                };
+
+                                                match ::mpi::CtxFuture::resume(
+                                                    &mut __mpi_next,
+                                                    __mpi_inner,
+                                                    (),
+                                                ) {
+                                                    ::mpi::CtxPoll::Pending => return ::mpi::CtxPoll::Pending,
+                                                    ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                        match __mpi_value.unwrap() {
+                                                            Some(#item) => {
+                                                                #accumulator += #item;
+                                                            }
+                                                            None => return ::mpi::CtxPoll::Ready(()),
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    ),
+                                    inner_handle.queue(),
+                                    &mut ctx.inner,
+                                    |__mpi_message, __mpi_inner| {
+                                        let ctx = #context_ident {
+                                            inner: __mpi_inner.clone(),
+                                        };
+                                        let _ctx = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            ctx,
+                                            deferred,
+                                            __mpi_message,
+                                        );
+                                    },
+                                );
+
+                                state.#field = #accumulator;
+                            }
+                        },
+                        LoweredEventHandler::StreamNextDiscard {
+                            stream,
+                            stream_expr,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                let mut #stream = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #stream_expr
+                                };
+
+                                let _ = ::mpi::block_on_ctx_task_with_dispatch(
+                                    ::mpi::resume_fn(
+                                        |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                            let mut __mpi_next = {
+                                                let mut __mpi_handler_ctx = #context_ident {
+                                                    inner: __mpi_inner.clone(),
+                                                };
+                                                let ctx = &mut __mpi_handler_ctx;
+                                                #stream.next(ctx)
+                                            };
+
+                                            match ::mpi::CtxFuture::resume(
+                                                &mut __mpi_next,
+                                                __mpi_inner,
+                                                (),
+                                            ) {
+                                                ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                                ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                    ::mpi::CtxPoll::Ready(__mpi_value.unwrap())
+                                                }
+                                            }
+                                        },
+                                    ),
+                                    inner_handle.queue(),
+                                    &mut ctx.inner,
+                                    |__mpi_message, __mpi_inner| {
+                                        let ctx = #context_ident {
+                                            inner: __mpi_inner.clone(),
+                                        };
+                                        let _ctx = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            ctx,
+                                            deferred,
+                                            __mpi_message,
+                                        );
+                                    },
+                                );
+                            }
+                        },
                     };
                     dispatch_arms.push(quote! {
                         #lowered_dispatch
                     });
+                } else if method_contains_await(&handler.method) {
+                    return compile_error(syn::Error::new_spanned(
+                        &handler.method.sig.ident,
+                        "event handler await body is not supported by generated CtxFuture lowering yet",
+                    ));
                 } else {
                     dispatch_arms.push(quote! {
                         #message_ident::#variant_ident { #(#arg_idents),* } => {
