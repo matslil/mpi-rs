@@ -92,14 +92,14 @@ The current automated evidence is:
 
 The macro inspection does not close these known gaps:
 
-- direct awaited-assignment event handlers now lower into the native
-  `CtxFuture` dispatch hook, and
-  `req_062_generated_task_receives_call_request_while_handler_is_suspended`
-  covers request progress for that shape;
+- direct awaited assignment, pre-await side effects followed by awaited
+  assignment, awaited-let reply projection, and two pending call futures now
+  lower into the native `CtxFuture` dispatch hook, and mapped REQ-062 tests
+  cover request progress for the suspended call-wait shapes;
 - handler declarations use ordinary `fn` syntax and are adapted into
   `CtxFuture` at the task runtime boundary when no native lowering is available;
-  native lowering of arbitrary handler bodies directly into `CtxFuture`
-  continuations remains pending.
+  native lowering of stream-next loops and arbitrary handler bodies directly
+  into `CtxFuture` continuations remains pending.
 
 These gaps should remain visible in traceability and verification reports until
 supporting implementation and tests exist.
