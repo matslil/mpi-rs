@@ -1,4 +1,5 @@
 use mpi::{protocol, task};
+use std::sync::mpsc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AddRequest {
@@ -133,6 +134,11 @@ impl Client {
     }
 
     #[event]
+    fn ask_delayed_counter(&mut self, ctx: &mut ClientContext, counter: DelayedCounterHandle) {
+        self.observed = counter.delayed(ctx).await.unwrap();
+    }
+
+    #[event]
     fn sum_numbers(&mut self, ctx: &mut ClientContext, producer: ProducerHandle) {
         let mut stream = producer.numbers(ctx, 4).unwrap();
         let mut sum = 0;
@@ -214,6 +220,29 @@ impl Client {
 
     #[event(priority)]
     fn stop(&mut self, ctx: &mut ClientContext) {
+        ctx.stop();
+    }
+}
+
+struct DelayedCounter {
+    started: mpsc::Sender<()>,
+    release: mpsc::Receiver<()>,
+}
+
+#[task(queue_size = 8)]
+impl DelayedCounter {
+    #[start]
+    fn start(&mut self, _ctx: &mut DelayedCounterContext) {}
+
+    #[call(reply = u32)]
+    fn delayed(&mut self, _ctx: &mut DelayedCounterContext) -> u32 {
+        self.started.send(()).unwrap();
+        self.release.recv().unwrap();
+        10
+    }
+
+    #[event(priority)]
+    fn stop(&mut self, ctx: &mut DelayedCounterContext) {
         ctx.stop();
     }
 }
@@ -363,6 +392,60 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
     counter.stop_blocking().unwrap();
     client_runtime.join().unwrap();
     counter_runtime.join().unwrap();
+}
+
+#[test]
+#[ignore = "documents the remaining generated-dispatch REQ-062 gap"]
+fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (delayed_counter, delayed_counter_runtime) = DelayedCounter::spawn(DelayedCounter {
+        started: started_tx,
+        release: release_rx,
+    })
+    .unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .ask_delayed_counter_blocking(delayed_counter.clone())
+        .unwrap();
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let observed_client = client.clone();
+    let observed_thread = std::thread::spawn(move || {
+        observed_tx
+            .send(observed_client.observed_blocking().unwrap())
+            .unwrap();
+    });
+
+    let observed_before_release = observed_rx.recv_timeout(std::time::Duration::from_millis(100));
+    let observed_before_release_ok = observed_before_release.is_ok();
+    release_tx.send(()).unwrap();
+    let observed = match observed_before_release {
+        Ok(observed) => observed,
+        Err(_) => observed_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+    };
+
+    observed_thread.join().unwrap();
+    if observed_before_release_ok {
+        assert_eq!(observed, 0);
+    }
+    assert_eq!(client.observed_blocking().unwrap(), 10);
+
+    client.stop_blocking().unwrap();
+    delayed_counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    delayed_counter_runtime.join().unwrap();
+
+    assert!(
+        observed_before_release_ok,
+        "generated dispatch deferred the call request until the suspended handler resumed"
+    );
 }
 
 #[test]
