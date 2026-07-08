@@ -1,5 +1,11 @@
 # Stream Task Generation Implementation Report
 
+> Superseded status: this is a historical stream-generation slice report. The
+> current implementation-readiness summary is
+> `docs/reports/final-implementation-readiness.md`, and authoritative current
+> status remains in `docs/se/traceability.md` and
+> `docs/se/verification-report.md`.
+
 ## Summary
 
 This implementation attempt continues from the merged task macro generation slice and implements the next verifiable part of the remaining SE baseline: generated stream request plumbing for external blocking consumers.
