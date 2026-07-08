@@ -1274,15 +1274,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 .send(event)
                                 .map_err(|_| ::mpi::SendError::TaskStopped)
                         }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>);
+                        let control = ::std::sync::Arc::new(#stream_control_ident {
+                            inner: self.inner.clone(),
+                        });
+                        let stream = ::mpi::BlockingMessageStream::new(session_id, control, receiver);
                         self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             events
                             #(, #arg_idents)*
                         })?;
-                        let control = ::std::sync::Arc::new(#stream_control_ident {
-                            inner: self.inner.clone(),
-                        });
-                        Ok(::mpi::BlockingMessageStream::new(session_id, control, receiver))
+                        Ok(stream)
                     }
                 });
                 if let Some(protocol) = protocol {
