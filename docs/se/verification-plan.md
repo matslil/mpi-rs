@@ -245,6 +245,7 @@ Stream tests should verify:
 - credit-based flow control or documented interim limitation;
 - producer suspension under backpressure or stream-control waiting;
 - producer-side native stream yield operations return context to the task-local runtime after sending stream replies;
+- producer-side `yield_item()` and `yield_batch()` suspend under no-credit backpressure rather than requiring user retry loops;
 - future standard stream compatibility does not violate task-local receive-state constraints.
 
 Relevant requirements:
@@ -266,6 +267,7 @@ Relevant requirements:
 - REQ-111
 - REQ-112
 - REQ-113
+- REQ-115
 - REQ-114
 
 ### External caller verification
@@ -279,12 +281,13 @@ Relevant requirements:
 
 ### Unix signal verification
 
-Unix signal support is later-phase work. Verification should inspect that signal handlers perform only async-signal-safe operations and that normal message construction occurs in a bridge task or thread.
+Unix signal support verification should inspect that signal handlers perform only async-signal-safe operations and that normal message construction occurs in a bridge task or thread. It should also verify that the signal bridge API is feature-gated behind a default-enabled optional feature.
 
 Relevant requirements:
 
 - REQ-130
 - REQ-131
+- REQ-132
 
 ### Diagnostics verification
 
