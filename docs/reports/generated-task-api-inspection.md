@@ -100,7 +100,7 @@ The macro inspection does not close these known gaps:
 - handler declarations use ordinary `fn` syntax and are adapted into
   `CtxFuture` at the task runtime boundary; native lowering of arbitrary
   handler bodies directly into `CtxFuture` continuations remains pending;
-- producer-side stream suspension under backpressure remains partial.
+- full generated handler lowering for REQ-062 remains pending.
 
 These gaps should remain visible in traceability and verification reports until
 supporting implementation and tests exist.

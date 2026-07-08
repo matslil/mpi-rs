@@ -1183,7 +1183,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { session_id, mut events #(, #arg_idents)* } => {
-                        let mut out = ::mpi::StreamSink::new(
+                        let mut out = ::mpi::StreamSink::new_flow_controlled(
                             session_id,
                             #batch_size,
                             Box::new(move |event: ::mpi::StreamEvent<#item, #error>| {

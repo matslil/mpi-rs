@@ -13,7 +13,6 @@ Remaining blocking or major gaps are tracked explicitly:
 
 - full macro-generated task-local scheduling that dispatches ordinary request
   messages while normalized handlers are suspended;
-- producer-side `yield_item()` and `yield_batch()` suspension under stream backpressure;
 - timeout APIs, tracing, and deadlock/debug support, which remain
   later-phase/deferred areas in the baseline.
 
@@ -49,7 +48,7 @@ without contacting the network.
 | Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters, including out-of-order same-type responses; `block_on_ctx_task_with_dispatch` can dispatch ordinary messages while a native `CtxFuture` is suspended; ignored test `req_062_generated_task_receives_call_request_while_handler_is_suspended` confirms generated dispatch still defers a call request while the active handler waits. |
 | Compile-time receive checks | test, inspection | `crates/mpi/src/message.rs`, `crates/mpi-macros/src/lib.rs`, `crates/mpi/tests/scope_compile_fail.rs`, `crates/mpi/tests/task_macro.rs` | passed | Generated `receives(...)` declarations implement `CanReceive<T>` for declared raw response and stream event types and for protocol-qualified reply/event wrapper types. Compile-fail tests cover missing non-protocol call and stream receive declarations, missing protocol receive declarations, and wrong protocol identity. |
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Session IDs, typed responses, external blocking calls, out-of-order response matching, late replies, and receive-check enforcement are covered; task-local ordinary-message scheduling while suspended remains incomplete. |
-| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | partial | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, late stream replies, ordinary-message non-discard, and mapped credit enforcement are covered; REQ-115 no-credit `yield_item()`/`yield_batch()` suspension remains incomplete. |
+| Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | passed | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, late stream replies, ordinary-message non-discard, mapped credit enforcement, and REQ-115 no-credit `yield_item()`/`yield_batch()` suspension are covered. |
 | External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
 | Unix signal bridge | inspection, Unix-only test, feature check | `crates/mpi/src/signal.rs`, `crates/mpi/examples/unix_signal_bridge.rs`, `docs/reports/unix-signal-bridge.md` | partial | `forward_signals` delegates handler registration to `signal-hook` and constructs task messages on an ordinary bridge thread. The API is behind the default-enabled `unix-signals` feature. The mapped unit test and real example execution require a Unix host. |
 | Diagnostics | inspection, test | `docs/reports/diagnostics-roadmap.md`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Roadmap plus read-only queue and task-context snapshots exist; timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support remain deferred. |
@@ -63,7 +62,6 @@ supporting implementation scope is not complete yet:
 
 - REQ-061 and REQ-062 for full macro-generated task-local scheduling of
   ordinary request messages while normalized handlers are suspended;
-- REQ-115 for `yield_item()` and `yield_batch()` no-credit flow-control suspension;
 
 The ignored gap test below is expected to fail until generated handler lowering
 can release task state while the handler is suspended:
@@ -84,6 +82,5 @@ The following areas remain later-phase or explicitly incomplete:
 
 ## Human Decisions Needed
 
-- Implement the approved stream backpressure behavior where `yield_item()` and
-  `yield_batch()` become producer suspension points instead of explicit
-  no-credit errors.
+- Decide whether the remaining generated-dispatch REQ-062 gap should be the
+  next implementation slice.
