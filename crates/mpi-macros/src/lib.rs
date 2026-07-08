@@ -1478,6 +1478,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             #(#handle_methods)*
         }
 
+        impl From<#handle_ident> for ::mpi::TaskHandle<#message_ident, #queue_size> {
+            fn from(handle: #handle_ident) -> Self {
+                handle.inner
+            }
+        }
+
         #(#protocol_impls)*
 
         pub struct #context_ident {

@@ -278,6 +278,8 @@ ARCH-076: Credit-based flow control is the recommended mechanism to avoid floodi
 
 ARCH-077: A stream producer may suspend when backpressured or waiting for stream control messages while the task continues handling other messages.
 
+ARCH-077A: Producer-side `yield_item()` and `yield_batch()` are the preferred stream-handler suspension points for credit-based flow control; they should wait for additional credit instead of exposing ordinary no-credit states as handler-visible retry errors.
+
 ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
 ARCH-079: Late stream replies are passed to the receiving task's late-reply handler by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
@@ -305,6 +307,8 @@ ARCH-090: The signal handler part performs only async-signal-safe operations.
 ARCH-091: A signal bridge task or thread observes signal state or notification.
 
 ARCH-092: The signal bridge constructs and sends normal Rust messages outside signal-handler context.
+
+ARCH-093: Unix signal bridge support is packaged behind a default-enabled crate feature so applications may opt out of the platform dependency.
 
 ## Diagnostics architecture
 
