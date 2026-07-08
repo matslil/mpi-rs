@@ -513,31 +513,19 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
             .unwrap();
     });
 
-    let observed_before_release = observed_rx.recv_timeout(std::time::Duration::from_millis(100));
-    let observed_before_release_ok = observed_before_release.is_ok();
+    let observed_before_release = observed_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("generated dispatch deferred the call request until the suspended handler resumed");
     release_tx.send(()).unwrap();
-    let observed = match observed_before_release {
-        Ok(observed) => observed,
-        Err(_) => observed_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap(),
-    };
 
     observed_thread.join().unwrap();
-    if observed_before_release_ok {
-        assert_eq!(observed, 0);
-    }
+    assert_eq!(observed_before_release, 0);
     assert_eq!(client.observed_blocking().unwrap(), 10);
 
     client.stop_blocking().unwrap();
     delayed_counter.stop_blocking().unwrap();
     client_runtime.join().unwrap();
     delayed_counter_runtime.join().unwrap();
-
-    assert!(
-        observed_before_release_ok,
-        "generated dispatch deferred the call request until the suspended handler resumed"
-    );
 }
 
 #[test]

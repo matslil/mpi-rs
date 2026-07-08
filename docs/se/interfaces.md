@@ -182,7 +182,7 @@ INT-025: Task-internal generated methods shall accept a task context argument wh
 
 INT-026: Generated external blocking call methods shall be explicitly named with a blocking suffix such as `_blocking`.
 
-INT-027: Runtime task handles may expose or wrap a shared `TaskEndpoint` that owns the target queue reference and task lifecycle state. This endpoint is an implementation support interface; ordinary users still send through generated task-handle methods.
+INT-027: Runtime task handles may expose or wrap a shared `TaskEndpoint` that owns the target queue reference and task lifecycle state. Task-local runtime drivers may receive through this endpoint rather than accepting a raw queue reference. This endpoint is an implementation support interface; ordinary users still send through generated task-handle methods.
 
 ## Message interface
 
