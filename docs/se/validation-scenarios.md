@@ -177,6 +177,7 @@ Expected outcome:
 
 - batching reduces per-item message overhead;
 - flow control prevents unbounded flooding of the consumer queue;
+- stream handlers using `yield_item()` or `yield_batch()` suspend under no-credit backpressure instead of manually polling or retrying flow-control errors;
 - the public API remains `next(ctx).await`.
 
 Evidence type: integration test or analysis plus demonstration
@@ -217,7 +218,7 @@ Evidence type: example or API walkthrough
 
 ## VAL-012: Forward Unix signals safely
 
-Status: deferred
+Status: approved
 
 Stakeholder needs: SN-044
 
@@ -228,8 +229,11 @@ Expected outcome:
 - the signal handler performs only async-signal-safe operations;
 - a bridge task or thread constructs the normal message;
 - the receiving task handles the signal as a normal event.
+- Unix signal bridge support is available by default on Unix targets and can be removed from the public API by disabling the default `unix-signals` feature.
 
 Evidence type: inspection and demonstration
+
+Candidate example: `examples/unix_signal_bridge.rs`
 
 ## VAL-013: Diagnose sessions and queues
 

@@ -416,6 +416,8 @@ INT-075A: The producer-side `StreamSink` shall provide a native `CtxFuture`
 yield operation for stream producers that send a stream reply and return
 context to the task-local runtime before producer continuation.
 
+INT-075B: `StreamSink::yield_item()` and `StreamSink::yield_batch()` shall not require ordinary handlers to manually handle no-credit retry loops; when credit is unavailable they shall suspend until credit, cancellation, or another defined terminal stream-control condition is routed by the task-local runtime.
+
 INT-076: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
 INT-077: Stream replies shall be passed to the receiving task's late-reply handler by default when their session has no active waiter or stream object.
@@ -497,3 +499,5 @@ Interface rules:
 INT-110: Any signal forwarding API shall be implemented through a signal bridge.
 
 INT-111: The actual POSIX signal handler behavior shall be limited to async-signal-safe operations.
+
+INT-112: Unix signal bridge APIs shall be available on Unix targets when the default-enabled `unix-signals` feature is active, and shall be removable from the public API by disabling that feature.

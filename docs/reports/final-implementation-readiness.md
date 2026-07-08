@@ -19,7 +19,8 @@ The implementation now has local verification evidence for:
 - protocol-derived send surfaces and compile-time receive declarations for the
   proposed protocol baseline;
 - diagnostics snapshots and roadmap evidence;
-- Unix-only signal forwarding through a safe signal bridge.
+- Unix-only signal forwarding through a safe signal bridge, packaged behind a
+  default-enabled optional feature.
 
 ## PR Sequence
 
@@ -33,6 +34,8 @@ The implementation now has local verification evidence for:
   messages are constructed outside the handler.
 - REQ-131: `mpi::forward_signals` provides a Unix-only bridge from observed
   signals to generated task messages.
+- REQ-132: the signal bridge dependency is controlled by the default-enabled
+  `unix-signals` feature.
 
 ## Remaining Non-Blocking Gaps
 
@@ -42,11 +45,12 @@ implementation slices:
 - REQ-061 and REQ-062: generated dispatch still defers ordinary messages while
   an active standard-future handler waits, although native `CtxFuture` runtime
   support can dispatch ordinary messages while suspended.
-- REQ-113: stream backpressure currently has explicit error-returning credit
-  enforcement and producer-yield support; broader producer suspension under
-  backpressure remains partial.
-- VAL-012: Unix signal support has implementation and inspection evidence, but
-  a full application-level validation example remains deferred.
+- REQ-115: `yield_item()` and `yield_batch()` are now required to suspend under
+  no-credit stream backpressure, but the implementation still returns an
+  explicit flow-control error.
+- VAL-012: Unix signal support has implementation, inspection evidence, and an
+  application-level example; running that example remains Unix-host validation
+  evidence.
 - REQ-160..REQ-170 and VAL-015 remain proposed protocol baseline items rather
   than approved implementation obligations.
 
@@ -74,11 +78,11 @@ and executed on Unix targets.
 
 ## Human Decisions Needed
 
-- Decide whether the current explicit stream backpressure error is acceptable
-  until a fuller producer-suspension design slice is approved.
+- Implement the approved `yield_item()`/`yield_batch()` no-credit suspension
+  behavior for stream handlers.
 - Decide whether to promote any proposed protocol requirements after reviewing
   the candidate implementation and validation needs.
-- Decide whether VAL-012 needs a dedicated Unix application example before
-  considering signal support validated.
+- Run the Unix signal bridge example on a Unix host before marking VAL-012
+  fully validated.
 
 The human maintainer remains the approval authority for merge.
