@@ -13,7 +13,7 @@ use crate::call::{
     CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
     suspended_call_waiter_with_on_drop,
 };
-use crate::error::{CallError, SendError};
+use crate::error::{CallError, RecvError, SendError};
 use crate::message::{
     HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef, TaskMessage,
 };
@@ -98,6 +98,17 @@ where
         self.queue.try_send(message)
     }
 
+    /// Receive one message through this endpoint.
+    pub fn recv_message(&self) -> Result<M, RecvError> {
+        self.queue.recv()
+    }
+
+    /// Try to receive one message through this endpoint without blocking.
+    #[must_use]
+    pub fn try_recv_message(&self) -> Option<M> {
+        self.queue.try_recv()
+    }
+
     /// Allocate a session ID for an external blocking call.
     pub fn next_external_session_id(&self) -> SessionId {
         let sequence = self.next_external_sequence.fetch_add(1, Ordering::Relaxed);
@@ -179,6 +190,17 @@ where
     /// Enqueue one already-constructed message.
     pub fn send_message(&self, message: M) -> Result<(), SendError> {
         self.endpoint.send_message(message)
+    }
+
+    /// Receive one message from this handle's endpoint.
+    pub fn recv_message(&self) -> Result<M, RecvError> {
+        self.endpoint.recv_message()
+    }
+
+    /// Try to receive one message from this handle's endpoint without blocking.
+    #[must_use]
+    pub fn try_recv_message(&self) -> Option<M> {
+        self.endpoint.try_recv_message()
     }
 
     /// Allocate a session ID for an external blocking call.

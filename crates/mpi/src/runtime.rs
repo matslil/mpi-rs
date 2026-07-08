@@ -3,13 +3,11 @@
 use ctx_future::{CtxFuture, CtxPoll, from_std_future};
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::Arc;
 
 use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::TaskMessage;
-use crate::queue::TaskQueue;
 use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
-use crate::task::TaskContext;
+use crate::task::{TaskContext, TaskEndpoint};
 
 fn route_task_message_with_dispatch<M, D, const N: usize>(
     message: M,
@@ -78,7 +76,7 @@ fn route_task_message<M, const N: usize>(
 /// before resuming the computation later.
 pub fn block_on_ctx_task<M, F, const N: usize>(
     mut future: F,
-    queue: &Arc<TaskQueue<M, N>>,
+    endpoint: &TaskEndpoint<M, N>,
     ctx: &mut TaskContext<M, N>,
     deferred: &mut VecDeque<M>,
 ) -> F::Output
@@ -94,7 +92,7 @@ where
     loop {
         match future.resume(ctx, ()) {
             CtxPoll::Ready(value) => return value,
-            CtxPoll::Pending => match queue.recv() {
+            CtxPoll::Pending => match endpoint.recv_message() {
                 Ok(message) => route_task_message(message, ctx, deferred),
                 Err(_) => std::thread::yield_now(),
             },
@@ -112,7 +110,7 @@ where
 /// lowered into native `CtxFuture` continuations.
 pub fn block_on_ctx_task_with_dispatch<M, F, D, const N: usize>(
     mut future: F,
-    queue: &Arc<TaskQueue<M, N>>,
+    endpoint: &TaskEndpoint<M, N>,
     ctx: &mut TaskContext<M, N>,
     mut dispatch: D,
 ) -> F::Output
@@ -129,7 +127,7 @@ where
     loop {
         match future.resume(ctx, ()) {
             CtxPoll::Ready(value) => return value,
-            CtxPoll::Pending => match queue.recv() {
+            CtxPoll::Pending => match endpoint.recv_message() {
                 Ok(message) => route_task_message_with_dispatch(message, ctx, &mut dispatch),
                 Err(_) => std::thread::yield_now(),
             },
@@ -145,7 +143,7 @@ where
 /// and processed by the outer task loop after the current handler completes.
 pub fn block_on_task<M, F, const N: usize>(
     future: F,
-    queue: &Arc<TaskQueue<M, N>>,
+    endpoint: &TaskEndpoint<M, N>,
     ctx: &TaskContext<M, N>,
     deferred: &mut VecDeque<M>,
 ) -> F::Output
@@ -159,7 +157,7 @@ where
     F: CtxFuture<TaskContext<M, N>>,
 {
     let mut ctx = ctx.clone();
-    block_on_ctx_task(future, queue, &mut ctx, deferred)
+    block_on_ctx_task(future, endpoint, &mut ctx, deferred)
 }
 
 /// Run a compiler-generated handler future through the task-local
@@ -171,7 +169,7 @@ where
 /// [`CtxFuture`] execution.
 pub fn block_on_handler<M, F, const N: usize>(
     future: F,
-    queue: &Arc<TaskQueue<M, N>>,
+    endpoint: &TaskEndpoint<M, N>,
     ctx: &TaskContext<M, N>,
     deferred: &mut VecDeque<M>,
 ) -> F::Output
@@ -184,5 +182,5 @@ where
         + StreamEventMessage,
     F: Future,
 {
-    block_on_task(from_std_future(future), queue, ctx, deferred)
+    block_on_task(from_std_future(future), endpoint, ctx, deferred)
 }

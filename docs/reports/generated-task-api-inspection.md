@@ -60,7 +60,7 @@ Generated handle evidence:
   `TaskHandle::send_message` or `TaskHandle::call_blocking`;
 - runtime `TaskHandle` wraps a shared `TaskEndpoint`, so generated handles keep
   direct enqueue semantics while sharing endpoint identity, queue lifetime,
-  external session allocation, and accepting lifecycle.
+  external session allocation, accepting lifecycle, and receive-loop access.
 
 Generated context and dispatch evidence:
 
