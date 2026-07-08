@@ -54,8 +54,10 @@ call/session substrate beyond this generated-dispatch issue.
 
 The remaining known gaps are either partial or later-phase baseline items:
 
-- REQ-113: producer-side suspension under stream backpressure remains partial;
-- REQ-130 and REQ-131: Unix signal bridge remains deferred;
+- REQ-061 and REQ-062: generated standard-future handlers still defer ordinary
+  request handling while the active handler waits;
+- Unix signal bridge validation still needs a Unix-host run of the application
+  example before VAL-012 is fully validated;
 - diagnostics beyond the current roadmap and snapshots, including timeouts,
   tracing, and deadlock/debug support, remain deferred;
 - full separate-binary protocol validation remains pending for proposed

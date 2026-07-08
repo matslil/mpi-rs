@@ -808,6 +808,18 @@ Verification: test
 
 Status: approved
 
+### REQ-115: Stream yield waits for credit
+
+Producer-side stream `yield_item()` and `yield_batch()` operations shall hide credit-based flow control from ordinary stream handlers by suspending the handler when insufficient stream credit is available and resuming after credit, cancellation, or another defined terminal stream-control condition is observed.
+
+Rationale: Stream handlers should not need to manually catch a flow-control error and retry merely because the consumer has not yet granted more credit.
+
+Source: Human maintainer decision, SN-016, SN-043
+
+Verification: test
+
+Status: approved
+
 ### REQ-114: Future standard stream compatibility
 
 The design may later add a `futures_core::Stream` implementation only if the stream object can safely capture or access task-local receive state without violating the task-local runtime model.
@@ -859,18 +871,6 @@ Unix signal forwarding shall use a bridge that observes async-signal-safe state 
 Source: SN-044
 
 Verification: inspection
-
-Status: approved
-
-### REQ-115: Stream yield waits for credit
-
-Producer-side stream `yield_item()` and `yield_batch()` operations shall hide credit-based flow control from ordinary stream handlers by suspending the handler when insufficient stream credit is available and resuming after credit, cancellation, or another defined terminal stream-control condition is observed.
-
-Rationale: Stream handlers should not need to manually catch a flow-control error and retry merely because the consumer has not yet granted more credit.
-
-Source: Human maintainer decision, SN-016, SN-043
-
-Verification: test
 
 Status: approved
 
