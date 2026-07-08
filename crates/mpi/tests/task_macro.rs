@@ -134,8 +134,39 @@ impl Client {
     }
 
     #[event]
+    fn ask_counter_then_mark_deferred(&mut self, ctx: &mut ClientContext, counter: CounterHandle) {
+        let self_handle = ctx.self_handle();
+        self_handle.mark(ctx, 1).unwrap();
+        let reply = counter.get(ctx);
+        self.observed = reply.await.unwrap();
+    }
+
+    #[event]
     fn ask_delayed_counter(&mut self, ctx: &mut ClientContext, counter: DelayedCounterHandle) {
         self.observed = counter.delayed(ctx).await.unwrap();
+    }
+
+    #[event]
+    fn ask_delayed_counter_then_mark(
+        &mut self,
+        ctx: &mut ClientContext,
+        counter: DelayedCounterHandle,
+    ) {
+        let self_handle = ctx.self_handle();
+        self_handle.mark(ctx, 1).unwrap();
+        self.observed = counter.delayed(ctx).await.unwrap();
+    }
+
+    #[event]
+    fn ask_two_delayed_counters(
+        &mut self,
+        ctx: &mut ClientContext,
+        first_counter: DelayedCounterHandle,
+        second_counter: DelayedCounterHandle,
+    ) {
+        let first = first_counter.delayed(ctx);
+        let second = second_counter.delayed(ctx);
+        self.observed = first.await.unwrap() + second.await.unwrap();
     }
 
     #[event]
@@ -378,7 +409,15 @@ fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.ask_counter_twice_blocking(counter.clone()).unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 42);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 42 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 42);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();
@@ -392,9 +431,17 @@ fn req_063_req_092_queued_call_response_wakes_waiter_before_deferred_messages() 
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client
-        .ask_counter_then_mark_blocking(counter.clone())
+        .ask_counter_then_mark_deferred_blocking(counter.clone())
         .unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 32);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 32 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 32);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();
@@ -453,6 +500,106 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
         observed_before_release_ok,
         "generated dispatch deferred the call request until the suspended handler resumed"
     );
+}
+
+#[test]
+fn req_062_generated_pre_await_handler_dispatches_ordinary_message_while_suspended() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (delayed_counter, delayed_counter_runtime) = DelayedCounter::spawn(DelayedCounter {
+        started: started_tx,
+        release: release_rx,
+    })
+    .unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .ask_delayed_counter_then_mark_blocking(delayed_counter.clone())
+        .unwrap();
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    assert_eq!(client.observed_blocking().unwrap(), 1);
+
+    release_tx.send(()).unwrap();
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 10 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 10);
+
+    client.stop_blocking().unwrap();
+    delayed_counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    delayed_counter_runtime.join().unwrap();
+}
+
+#[test]
+fn req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspended() {
+    let (first_started_tx, first_started_rx) = mpsc::channel();
+    let (first_release_tx, first_release_rx) = mpsc::channel();
+    let (first_counter, first_runtime) = DelayedCounter::spawn(DelayedCounter {
+        started: first_started_tx,
+        release: first_release_rx,
+    })
+    .unwrap();
+    let (second_started_tx, second_started_rx) = mpsc::channel();
+    let (second_release_tx, second_release_rx) = mpsc::channel();
+    let (second_counter, second_runtime) = DelayedCounter::spawn(DelayedCounter {
+        started: second_started_tx,
+        release: second_release_rx,
+    })
+    .unwrap();
+    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+
+    client
+        .ask_two_delayed_counters_blocking(first_counter.clone(), second_counter.clone())
+        .unwrap();
+    first_started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    second_started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let observed_client = client.clone();
+    let observed_thread = std::thread::spawn(move || {
+        observed_tx
+            .send(observed_client.observed_blocking().unwrap())
+            .unwrap();
+    });
+    assert!(
+        observed_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok()
+    );
+
+    first_release_tx.send(()).unwrap();
+    second_release_tx.send(()).unwrap();
+    observed_thread.join().unwrap();
+
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 20 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 20);
+
+    client.stop_blocking().unwrap();
+    first_counter.stop_blocking().unwrap();
+    second_counter.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    first_runtime.join().unwrap();
+    second_runtime.join().unwrap();
 }
 
 #[test]
@@ -559,7 +706,15 @@ fn req_166_req_168_protocol_receive_declaration_allows_task_internal_waits() {
     client
         .ask_protocol_counter_blocking(CounterProtocolV1::bind(counter.clone()))
         .unwrap();
-    assert_eq!(client.observed_blocking().unwrap(), 33);
+    let mut observed = client.observed_blocking().unwrap();
+    for _ in 0..100 {
+        if observed == 33 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        observed = client.observed_blocking().unwrap();
+    }
+    assert_eq!(observed, 33);
 
     client.stop_blocking().unwrap();
     counter.stop_blocking().unwrap();

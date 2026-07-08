@@ -11,8 +11,8 @@ implementation is not yet complete against the approved baseline.
 
 Remaining partial or later-slice gaps are tracked explicitly:
 
-- generated handler lowering for arbitrary body shapes beyond direct
-  awaited-assignment event handlers;
+- generated handler lowering for stream-next loops and arbitrary body shapes
+  beyond the currently recognized call-wait patterns;
 - timeout APIs, tracing, and deadlock/debug support, which remain
   later-phase/deferred areas in the baseline.
 
@@ -42,9 +42,9 @@ without contacting the network.
 | Process source-of-truth handling | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se/*` | partial | Source-of-truth process exists; human approval remains required. |
 | Queue behavior | test | `crates/mpi/tests/runtime_baseline.rs` | passed | Covers static/shared capacity, queue-full error, normal FIFO, priority FIFO, and priority-before-normal. |
 | Start message behavior | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | passed | Covers start enqueue/priority/first behavior and macro-forced priority. |
-| Macro-generated task API | test, inspection | `crates/mpi-macros/src/lib.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Generates handles, contexts, dispatch, calls, streams, blocking APIs, protocol bindings, and compile-time receive declarations; direct awaited-assignment event handlers can dispatch ordinary messages while suspended, while arbitrary handler body lowering remains incomplete. |
+| Macro-generated task API | test, inspection | `crates/mpi-macros/src/lib.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Generates handles, contexts, dispatch, calls, streams, blocking APIs, protocol bindings, and compile-time receive declarations; generated call-wait event-handler shapes for direct awaited assignment, pre-await side effects, awaited-let reply projection, and two pending calls can dispatch ordinary messages while suspended, while stream-next loops and arbitrary handler body lowering remain incomplete. |
 | Context-returning suspension primitive | test, inspection | `crates/ctx-future/tests/context_borrow.rs`, `crates/ctx-future/README.md` | passed | `ctx-future` is standalone and returns context between pending resumes. |
-| Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters, including out-of-order same-type responses; `block_on_ctx_task_with_dispatch` can dispatch ordinary messages while a native `CtxFuture` is suspended; `req_062_generated_task_receives_call_request_while_handler_is_suspended` verifies generated dispatch for the direct awaited-assignment lowered shape. |
+| Task-local suspended calls | test, inspection | `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Session-matched replies resume waiters, including out-of-order same-type responses; `block_on_ctx_task_with_dispatch` can dispatch ordinary messages while a native `CtxFuture` is suspended; REQ-062 generated dispatch is covered for direct awaited assignment, pre-await side effects, and two pending calls by mapped task-macro tests. |
 | Compile-time receive checks | test, inspection | `crates/mpi/src/message.rs`, `crates/mpi-macros/src/lib.rs`, `crates/mpi/tests/scope_compile_fail.rs`, `crates/mpi/tests/task_macro.rs` | passed | Generated `receives(...)` declarations implement `CanReceive<T>` for declared raw response and stream event types and for protocol-qualified reply/event wrapper types. Compile-fail tests cover missing non-protocol call and stream receive declarations, missing protocol receive declarations, and wrong protocol identity. |
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Session IDs, typed responses, external blocking calls, out-of-order response matching, late replies, and receive-check enforcement are covered; task-local ordinary-message scheduling while suspended remains incomplete. |
 | Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | passed | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, late stream replies, ordinary-message non-discard, mapped credit enforcement, and REQ-115 no-credit `yield_item()`/`yield_batch()` suspension are covered. |
@@ -60,13 +60,15 @@ The following approved requirements remain intentionally partial because the
 supporting implementation scope is not complete yet:
 
 - REQ-061 and REQ-062 for full macro-generated task-local scheduling of
-  ordinary request messages across arbitrary handler body shapes.
+  ordinary request messages across stream-next loops and arbitrary handler body
+  shapes.
 
-The generated-dispatch gap test for direct awaited-assignment handlers is no
-longer ignored:
+The generated-dispatch gap tests for the currently lowered call-wait shapes are:
 
 ```sh
 cargo test -p mpi --test task_macro req_062_generated_task_receives_call_request_while_handler_is_suspended
+cargo test -p mpi --test task_macro req_062_generated_pre_await_handler_dispatches_ordinary_message_while_suspended
+cargo test -p mpi --test task_macro req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspended
 ```
 
 ## Deferred Verification
@@ -81,5 +83,5 @@ The following areas remain later-phase or explicitly incomplete:
 
 ## Human Decisions Needed
 
-- Decide whether lowering additional generated handler body shapes should be the
-  next implementation slice.
+- Decide whether stream-next loop lowering or fully general handler-body
+  lowering should be the next implementation slice.

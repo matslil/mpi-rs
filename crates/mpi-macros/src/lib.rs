@@ -6,8 +6,9 @@ use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    Attribute, Expr, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Member, Pat, PatType,
-    Path, Token, Type, Visibility, braced, parenthesized, parse_macro_input,
+    Attribute, BinOp, Expr, ExprAssign, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr,
+    Member, Pat, PatType, Path, Stmt, Token, Type, Visibility, braced, parenthesized,
+    parse_macro_input,
 };
 
 mod kw {
@@ -481,13 +482,119 @@ fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<
         .collect()
 }
 
-fn lowered_direct_await_assignment(method: &ImplItemFn) -> Option<(Member, Expr)> {
-    let [statement] = method.block.stmts.as_slice() else {
+enum LoweredEventHandler {
+    SingleAwait {
+        pre_stmts: Vec<Stmt>,
+        field: Member,
+        awaited_expr: Expr,
+    },
+    AwaitBinding {
+        pre_stmts: Vec<Stmt>,
+        binding: Ident,
+        awaited_expr: Expr,
+        field: Member,
+        assigned_expr: Expr,
+    },
+    PairAwait {
+        first: Ident,
+        first_expr: Expr,
+        second: Ident,
+        second_expr: Expr,
+        field: Member,
+        left: Ident,
+        op: BinOp,
+        right: Ident,
+    },
+}
+
+fn lowered_event_handler(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    lowered_two_await_assignment(method)
+        .or_else(|| lowered_await_let_assignment(method))
+        .or_else(|| lowered_await_assignment(method))
+}
+
+fn lowered_await_assignment(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let (last, pre_stmts) = method.block.stmts.split_last()?;
+    if stmts_need_fallback(pre_stmts) {
+        return None;
+    }
+    let Stmt::Expr(Expr::Assign(assign), _) = last else {
         return None;
     };
-    let syn::Stmt::Expr(Expr::Assign(assign), _) = statement else {
+    let field = self_field_assignment(assign)?;
+    let awaited_expr = awaited_unwrap_expr(&assign.right)?;
+    if !method_call_uses_ctx_argument(&awaited_expr) {
+        return None;
+    }
+
+    Some(LoweredEventHandler::SingleAwait {
+        pre_stmts: pre_stmts.to_vec(),
+        field,
+        awaited_expr,
+    })
+}
+
+fn lowered_await_let_assignment(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let [pre_stmts @ .., let_stmt, assign_stmt] = method.block.stmts.as_slice() else {
         return None;
     };
+    if stmts_need_fallback(pre_stmts) {
+        return None;
+    }
+    let Stmt::Local(local) = let_stmt else {
+        return None;
+    };
+    let Pat::Ident(binding) = &local.pat else {
+        return None;
+    };
+    let init = local.init.as_ref()?;
+    let awaited_expr = awaited_unwrap_expr(&init.expr)?;
+    if !method_call_uses_ctx_argument(&awaited_expr) {
+        return None;
+    }
+    let Stmt::Expr(Expr::Assign(assign), _) = assign_stmt else {
+        return None;
+    };
+    let field = self_field_assignment(assign)?;
+
+    Some(LoweredEventHandler::AwaitBinding {
+        pre_stmts: pre_stmts.to_vec(),
+        binding: binding.ident.clone(),
+        awaited_expr,
+        field,
+        assigned_expr: (*assign.right).clone(),
+    })
+}
+
+fn lowered_two_await_assignment(method: &ImplItemFn) -> Option<LoweredEventHandler> {
+    let [first_stmt, second_stmt, assign_stmt] = method.block.stmts.as_slice() else {
+        return None;
+    };
+    let (first, first_expr) = local_future_binding(first_stmt)?;
+    let (second, second_expr) = local_future_binding(second_stmt)?;
+    let Stmt::Expr(Expr::Assign(assign), _) = assign_stmt else {
+        return None;
+    };
+    let field = self_field_assignment(assign)?;
+    let Expr::Binary(binary) = &*assign.right else {
+        return None;
+    };
+    let left = awaited_unwrap_ident(&binary.left)?;
+    let right = awaited_unwrap_ident(&binary.right)?;
+
+    Some(LoweredEventHandler::PairAwait {
+        first,
+        first_expr,
+        second,
+        second_expr,
+        field,
+        left,
+        op: binary.op,
+        right,
+    })
+}
+
+fn self_field_assignment(assign: &ExprAssign) -> Option<Member> {
     let Expr::Field(field) = &*assign.left else {
         return None;
     };
@@ -497,7 +604,11 @@ fn lowered_direct_await_assignment(method: &ImplItemFn) -> Option<(Member, Expr)
     if !base.path.is_ident("self") {
         return None;
     }
-    let Expr::MethodCall(unwrap) = &*assign.right else {
+    Some(field.member.clone())
+}
+
+fn awaited_unwrap_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::MethodCall(unwrap) = expr else {
         return None;
     };
     if unwrap.method != "unwrap" || !unwrap.args.is_empty() {
@@ -506,11 +617,37 @@ fn lowered_direct_await_assignment(method: &ImplItemFn) -> Option<(Member, Expr)
     let Expr::Await(await_expr) = &*unwrap.receiver else {
         return None;
     };
-    if !method_call_uses_ctx_argument(&await_expr.base) {
+    Some((*await_expr.base).clone())
+}
+
+fn awaited_unwrap_ident(expr: &Expr) -> Option<Ident> {
+    let awaited_expr = awaited_unwrap_expr(expr)?;
+    let Expr::Path(path) = awaited_expr else {
+        return None;
+    };
+    path.path.get_ident().cloned()
+}
+
+fn local_future_binding(stmt: &Stmt) -> Option<(Ident, Expr)> {
+    let Stmt::Local(local) = stmt else {
+        return None;
+    };
+    let Pat::Ident(binding) = &local.pat else {
+        return None;
+    };
+    let init = local.init.as_ref()?;
+    let expr = (*init.expr).clone();
+    if !method_call_uses_ctx_argument(&expr) {
         return None;
     }
+    Some((binding.ident.clone(), expr))
+}
 
-    Some((field.member.clone(), (*await_expr.base).clone()))
+fn stmts_need_fallback(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| {
+        let tokens = stmt.to_token_stream().to_string();
+        tokens.contains("self .") || tokens.contains("await")
+    })
 }
 
 fn method_call_uses_ctx_argument(expr: &Expr) -> bool {
@@ -1046,58 +1183,202 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 placements.push(quote! {
                     Self::#variant_ident { .. } => #placement
                 });
-                if let Some((field, awaited_expr)) = lowered_direct_await_assignment(&handler.method)
-                {
-                    dispatch_arms.push(quote! {
-                        #message_ident::#variant_ident { #(#arg_idents),* } => {
-                            let mut __mpi_handler_result = None;
-                            let mut __mpi_handler_future = None;
-
-                            ::mpi::block_on_ctx_task_with_dispatch(
-                                ::mpi::resume_fn(
-                                    |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
-                                        if __mpi_handler_future.is_none() {
-                                            let mut __mpi_handler_ctx = #context_ident {
-                                                inner: __mpi_inner.clone(),
-                                            };
-                                            let ctx = &mut __mpi_handler_ctx;
-                                            __mpi_handler_future = Some(#awaited_expr);
-                                        }
-
-                                        match ::mpi::CtxFuture::resume(
-                                            __mpi_handler_future
-                                                .as_mut()
-                                                .expect("lowered handler future missing"),
-                                            __mpi_inner,
-                                            (),
-                                        ) {
-                                            ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
-                                            ::mpi::CtxPoll::Ready(__mpi_value) => {
-                                                __mpi_handler_result = Some(__mpi_value.unwrap());
-                                                ::mpi::CtxPoll::Ready(())
-                                            }
-                                        }
-                                    },
-                                ),
-                                inner_handle.queue(),
-                                &mut ctx.inner,
-                                |__mpi_message, __mpi_inner| {
-                                    let ctx = #context_ident {
-                                        inner: __mpi_inner.clone(),
+                if let Some(lowering) = lowered_event_handler(&handler.method) {
+                    let lowered_dispatch = match lowering {
+                        LoweredEventHandler::SingleAwait {
+                            pre_stmts,
+                            field,
+                            awaited_expr,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                {
+                                    let ctx = &mut ctx;
+                                    #(#pre_stmts)*
+                                }
+                                let mut __mpi_handler_future = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
                                     };
-                                    let _ctx = __dispatch_message(
-                                        state,
-                                        inner_handle,
-                                        ctx,
-                                        deferred,
-                                        __mpi_message,
-                                    );
-                                },
-                            );
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #awaited_expr
+                                };
 
-                            state.#field = __mpi_handler_result
-                                .expect("lowered handler completed without result");
-                        }
+                                let __mpi_handler_result = ::mpi::block_on_ctx_task_with_dispatch(
+                                    ::mpi::resume_fn(
+                                        |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                            match ::mpi::CtxFuture::resume(
+                                                &mut __mpi_handler_future,
+                                                __mpi_inner,
+                                                (),
+                                            ) {
+                                                ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                                ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                    ::mpi::CtxPoll::Ready(__mpi_value.unwrap())
+                                                }
+                                            }
+                                        },
+                                    ),
+                                    inner_handle.queue(),
+                                    &mut ctx.inner,
+                                    |__mpi_message, __mpi_inner| {
+                                        let ctx = #context_ident {
+                                            inner: __mpi_inner.clone(),
+                                        };
+                                        let _ctx = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            ctx,
+                                            deferred,
+                                            __mpi_message,
+                                        );
+                                    },
+                                );
+
+                                state.#field = __mpi_handler_result;
+                            }
+                        },
+                        LoweredEventHandler::AwaitBinding {
+                            pre_stmts,
+                            binding,
+                            awaited_expr,
+                            field,
+                            assigned_expr,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                {
+                                    let ctx = &mut ctx;
+                                    #(#pre_stmts)*
+                                }
+                                let mut __mpi_handler_future = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #awaited_expr
+                                };
+
+                                let #binding = ::mpi::block_on_ctx_task_with_dispatch(
+                                    ::mpi::resume_fn(
+                                        |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                            match ::mpi::CtxFuture::resume(
+                                                &mut __mpi_handler_future,
+                                                __mpi_inner,
+                                                (),
+                                            ) {
+                                                ::mpi::CtxPoll::Pending => ::mpi::CtxPoll::Pending,
+                                                ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                    ::mpi::CtxPoll::Ready(__mpi_value.unwrap())
+                                                }
+                                            }
+                                        },
+                                    ),
+                                    inner_handle.queue(),
+                                    &mut ctx.inner,
+                                    |__mpi_message, __mpi_inner| {
+                                        let ctx = #context_ident {
+                                            inner: __mpi_inner.clone(),
+                                        };
+                                        let _ctx = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            ctx,
+                                            deferred,
+                                            __mpi_message,
+                                        );
+                                    },
+                                );
+
+                                state.#field = #assigned_expr;
+                            }
+                        },
+                        LoweredEventHandler::PairAwait {
+                            first,
+                            first_expr,
+                            second,
+                            second_expr,
+                            field,
+                            left,
+                            op,
+                            right,
+                        } => quote! {
+                            #message_ident::#variant_ident { #(#arg_idents),* } => {
+                                let mut #first = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #first_expr
+                                };
+                                let mut #second = {
+                                    let mut __mpi_handler_ctx = #context_ident {
+                                        inner: ctx.inner.clone(),
+                                    };
+                                    let ctx = &mut __mpi_handler_ctx;
+                                    #second_expr
+                                };
+                                let mut __mpi_first_result = None;
+                                let mut __mpi_second_result = None;
+
+                                ::mpi::block_on_ctx_task_with_dispatch(
+                                    ::mpi::resume_fn(
+                                        |__mpi_inner: &mut ::mpi::TaskContext<#message_ident, #queue_size>, ()| {
+                                            loop {
+                                                if __mpi_first_result.is_none() {
+                                                    match ::mpi::CtxFuture::resume(
+                                                        &mut #first,
+                                                        __mpi_inner,
+                                                        (),
+                                                    ) {
+                                                        ::mpi::CtxPoll::Pending => return ::mpi::CtxPoll::Pending,
+                                                        ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                            __mpi_first_result = Some(__mpi_value.unwrap());
+                                                        }
+                                                    }
+                                                }
+
+                                                if __mpi_second_result.is_none() {
+                                                    match ::mpi::CtxFuture::resume(
+                                                        &mut #second,
+                                                        __mpi_inner,
+                                                        (),
+                                                    ) {
+                                                        ::mpi::CtxPoll::Pending => return ::mpi::CtxPoll::Pending,
+                                                        ::mpi::CtxPoll::Ready(__mpi_value) => {
+                                                            __mpi_second_result = Some(__mpi_value.unwrap());
+                                                        }
+                                                    }
+                                                }
+
+                                                return ::mpi::CtxPoll::Ready(());
+                                            }
+                                        },
+                                    ),
+                                    inner_handle.queue(),
+                                    &mut ctx.inner,
+                                    |__mpi_message, __mpi_inner| {
+                                        let ctx = #context_ident {
+                                            inner: __mpi_inner.clone(),
+                                        };
+                                        let _ctx = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            ctx,
+                                            deferred,
+                                            __mpi_message,
+                                        );
+                                    },
+                                );
+
+                                let #first = __mpi_first_result
+                                    .expect("lowered handler completed without first result");
+                                let #second = __mpi_second_result
+                                    .expect("lowered handler completed without second result");
+                                state.#field = #left #op #right;
+                            }
+                        },
+                    };
+                    dispatch_arms.push(quote! {
+                        #lowered_dispatch
                     });
                 } else {
                     dispatch_arms.push(quote! {
