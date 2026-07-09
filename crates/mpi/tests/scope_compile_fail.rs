@@ -163,6 +163,38 @@ fn main() {
 }
 
 #[test]
+fn req_050_req_093_call_handler_rejects_reply_attribute() {
+    assert_fails_contains(
+        "call_reply_attribute",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(_ctx: &mut CounterContext) {}
+
+    #[call(reply = u32)]
+    fn get(_ctx: &mut CounterContext) -> u32 {
+        1
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["expected `late_reply` or `protocol`"],
+    );
+}
+
+#[test]
 fn req_070_nonprotocol_call_rejects_missing_receive_declaration() {
     assert_fails_contains(
         "nonprotocol_call_receive",

@@ -61,7 +61,9 @@ protocol message interaction:
 - event declarations name the event payload type;
 - call declarations name the request payload type and reply payload type;
 - stream declarations name the request payload type, stream item type, and
-  stream error type.
+  stream error type. The stream item and stream error return types are written
+  as a comma-separated return type list so each Rust type can use ordinary Rust
+  type syntax.
 
 Conceptual declaration shape:
 
@@ -70,7 +72,7 @@ protocol! {
     pub protocol InventoryV1 {
         event reindex(ReindexRequest);
         call get_item(GetItemRequest) -> GetItemReply;
-        stream watch_stock(WatchStockRequest) -> StockEvent error WatchStockError;
+        stream watch_stock(WatchStockRequest) -> StockEvent, WatchStockError;
     }
 }
 ```
