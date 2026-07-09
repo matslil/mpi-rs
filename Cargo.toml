@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/ctx-future", "crates/mpi", "crates/mpi-macros", "crates/mpi-os-events"]
+members = [
+    "crates/ctx-future",
+    "crates/mpi",
+    "crates/mpi-macros",
+    "crates/mpi-os-events",
+    "crates/timeout-server",
+]
 resolver = "2"
 
 [workspace.package]
