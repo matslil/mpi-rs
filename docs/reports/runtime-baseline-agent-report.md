@@ -19,12 +19,12 @@ This is not the full generated task system. The marker proc macros preserve the 
 - `docs/agents/review-agent.md`
 - `docs/agents/validation-agent.md`
 - `docs/agents/traceability-agent.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
 
 ### Consistency findings
 
@@ -159,7 +159,7 @@ needs human decision
 
 ### Proposed traceability updates
 
-The implementation should update `docs/se/traceability.md` after CI confirms the tests compile and pass.
+The implementation should update `docs/se-traceability.md` after CI confirms the tests compile and pass.
 
 Proposed mappings:
 

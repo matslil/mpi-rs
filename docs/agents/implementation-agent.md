@@ -12,13 +12,13 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/stakeholders.md` when the change affects needs or scope
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md` when changing context-returning suspension or the `ctx-future` crate
-- `docs/se/interfaces.md`
-- `docs/se/glossary.md`
-- `docs/se/traceability.md`
+- `docs/se-stakeholders.md` when the change affects needs or scope
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md` when changing context-returning suspension or the `ctx-future` crate
+- `docs/se-interfaces.md`
+- `docs/se-glossary.md`
+- `docs/se-traceability.md`
 - relevant tests and examples
 - the issue, change request, or human instruction that triggered the work
 

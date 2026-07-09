@@ -6,21 +6,24 @@ The human maintainer acts as the system engineer and approval authority. AI agen
 
 ## Source of truth
 
-The authoritative project baseline is the systems-engineering document set under `docs/se/`.
+The authoritative project baseline is the systems-engineering document set named `se-*.md`.
+
+Workspace-level systems-engineering documents live under `docs/`. Crate-level systems-engineering documents live beside the crate they describe. Module-level systems-engineering documents may live beside the module they describe.
 
 The most important baseline documents are:
 
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md`
-- `docs/se/protocols.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
-- `docs/se/glossary.md`
-- `docs/se/change-process.md`
+- `docs/se-stakeholders.md`
+- `docs/se-index.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md`
+- `docs/se-protocols.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
+- `docs/se-glossary.md`
+- `docs/se-change-process.md`
 
 When there is a conflict between generated code and the systems-engineering documents, the systems-engineering documents win. When two current systems-engineering documents conflict, report the conflict instead of guessing.
 
@@ -30,19 +33,19 @@ Before changing production code, tests, examples, or process documents, read:
 
 - `docs/agents/process.md`
 - the role-specific document under `docs/agents/`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md`
-- `docs/se/protocols.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/traceability.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md`
+- `docs/se-protocols.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-traceability.md`
 
-Read `docs/se/stakeholders.md` when changing needs, scope, constraints, or process assumptions.
+Read `docs/se-stakeholders.md` when changing needs, scope, constraints, or process assumptions.
 
-Read `docs/se/validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, external APIs, signal handling, or diagnostics.
+Read `docs/se-validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, external APIs, signal handling, or diagnostics.
 
-Read `docs/se/glossary.md` when adding or changing terminology.
+Read `docs/se-glossary.md` when adding or changing terminology.
 
 ## Core project intent
 
