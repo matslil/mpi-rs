@@ -68,6 +68,13 @@ Queue tests should verify:
 - static capacity;
 - shared capacity across normal and priority queues;
 - explicit queue-full error;
+- receiver-owned queue-capacity reservation after queue-full task-internal sends;
+- FIFO sender registration with at most one reservation per sender task;
+- reservation consumption before unreserved capacity for the reserved sender;
+- failed queue-space wakeup delivery releases the reservation;
+- configurable priority-reserved capacity, including the default one-slot reservation;
+- normal messages cannot consume priority-reserved capacity;
+- priority messages can use priority-reserved capacity;
 - FIFO order among normal messages;
 - FIFO order among priority messages;
 - priority-before-normal receive order;
@@ -78,10 +85,17 @@ Relevant requirements:
 - REQ-012
 - REQ-013
 - REQ-014
+- REQ-014A
+- REQ-014B
+- REQ-014C
+- REQ-014D
+- REQ-014E
 - REQ-030
 - REQ-032
 - REQ-033
 - REQ-034
+- REQ-036
+- REQ-037
 
 ### Start message verification
 
@@ -212,6 +226,7 @@ Session and call tests should verify:
 - the default late-reply handler returns ignore;
 - a late-reply handler receives a borrowed reply reference and may return terminate;
 - one-shot responses declared with `late_reply = "ignore"` bypass the late-reply handler.
+- task-internal call responses suspend through receiver-owned queue-capacity reservations when the caller queue has no available capacity.
 
 Relevant requirements:
 
@@ -228,6 +243,7 @@ Relevant requirements:
 - REQ-095
 - REQ-096
 - REQ-097
+- REQ-098
 
 ### Stream verification
 
@@ -246,6 +262,7 @@ Stream tests should verify:
 - producer suspension under backpressure or stream-control waiting;
 - producer-side native stream yield operations return context to the task-local runtime after sending stream replies;
 - producer-side `yield_item()` and `yield_batch()` suspend under no-credit backpressure rather than requiring user retry loops;
+- stream item, end, and error replies suspend through receiver-owned queue-capacity reservations when the consumer queue has no available capacity;
 - future standard stream compatibility does not violate task-local receive-state constraints.
 
 Relevant requirements:
@@ -268,6 +285,7 @@ Relevant requirements:
 - REQ-112
 - REQ-113
 - REQ-115
+- REQ-116
 - REQ-114
 
 ### External caller verification
