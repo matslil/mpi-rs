@@ -330,6 +330,14 @@ impl DelayedCounter {
 struct Producer;
 
 #[derive(Default)]
+struct BackpressureProducer;
+
+#[derive(Default)]
+struct BackpressureClient {
+    observed: u32,
+}
+
+#[derive(Default)]
 struct ScopedState {
     value: u32,
 }
@@ -389,6 +397,62 @@ impl Producer {
 
     #[event(priority)]
     fn stop(ctx: &mut ProducerContext) {
+        ctx.stop();
+    }
+}
+
+#[task(queue_size = 4)]
+impl BackpressureProducer {
+    #[start]
+    fn start(_ctx: &mut BackpressureProducerContext) {}
+
+    #[stream(item = u32, error = String, batch_size = 1, late_reply = "ignore")]
+    fn burst(
+        _ctx: &mut BackpressureProducerContext,
+        out: &mut mpi::BoxStreamSink<u32, String>,
+        count: u32,
+    ) -> Result<(), String> {
+        for value in 0..count {
+            out.push(value).unwrap();
+        }
+        Ok(())
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut BackpressureProducerContext) {
+        ctx.stop();
+    }
+}
+
+#[task(queue_size = 2, receives(mpi::StreamEvent<u32, String>))]
+impl BackpressureClient {
+    #[start]
+    fn start(_ctx: &mut BackpressureClientContext) {}
+
+    #[event(priority)]
+    fn collect_after_delay(
+        ctx: &mut BackpressureClientContext,
+        producer: BackpressureProducerHandle,
+    ) {
+        let mut stream = producer.burst(ctx, 3).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        let mut observed = 0;
+        while let Some(value) = stream.next(ctx).await.unwrap() {
+            observed += value;
+        }
+        ctx.with_state(|state| {
+            state.observed = observed;
+        });
+    }
+
+    #[call]
+    fn observed(ctx: &mut BackpressureClientContext) -> u32 {
+        ctx.with_state(|state| state.observed)
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut BackpressureClientContext) {
         ctx.stop();
     }
 }
@@ -809,6 +873,37 @@ fn req_101_req_103_task_internal_stream_next_await_hides_batches() {
         observed = client.observed_blocking().unwrap();
     }
     assert_eq!(observed, 6);
+
+    client.stop_blocking().unwrap();
+    producer.stop_blocking().unwrap();
+    client_runtime.join().unwrap();
+    producer_runtime.join().unwrap();
+}
+
+#[test]
+fn req_014a_req_036_req_116_generated_stream_items_wait_for_reserved_queue_capacity() {
+    let (producer, producer_runtime) = BackpressureProducer::spawn(BackpressureProducer).unwrap();
+    let (client, client_runtime) =
+        BackpressureClient::spawn(BackpressureClient::default()).unwrap();
+
+    client
+        .collect_after_delay_blocking(producer.clone())
+        .unwrap();
+    let mut observed = 0;
+    for _ in 0..100 {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        match client.observed_blocking() {
+            Ok(value) => {
+                observed = value;
+                if observed == 3 {
+                    break;
+                }
+            }
+            Err(mpi::CallError::Send(mpi::SendError::QueueFull)) => {}
+            Err(error) => panic!("unexpected observed call error: {error:?}"),
+        }
+    }
+    assert_eq!(observed, 3);
 
     client.stop_blocking().unwrap();
     producer.stop_blocking().unwrap();

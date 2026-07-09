@@ -19,12 +19,14 @@ mod kw {
 
 struct TaskArgs {
     queue_size: TokenStream2,
+    priority_reserved: TokenStream2,
     receives: Vec<Type>,
 }
 
 impl Parse for TaskArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut queue_size = None;
+        let mut priority_reserved = None;
         let mut receives = Vec::new();
 
         while !input.is_empty() {
@@ -33,6 +35,10 @@ impl Parse for TaskArgs {
                 input.parse::<Token![=]>()?;
                 let value: syn::Expr = input.parse()?;
                 queue_size = Some(value.into_token_stream());
+            } else if key == "priority_reserved" {
+                input.parse::<Token![=]>()?;
+                let value: syn::Expr = input.parse()?;
+                priority_reserved = Some(value.into_token_stream());
             } else if key == "receives" {
                 let content;
                 parenthesized!(content in input);
@@ -42,7 +48,7 @@ impl Parse for TaskArgs {
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `queue_size` or `receives`",
+                    "expected `queue_size`, `priority_reserved`, or `receives`",
                 ));
             }
 
@@ -52,8 +58,10 @@ impl Parse for TaskArgs {
         }
 
         let queue_size = queue_size.ok_or_else(|| input.error("missing `queue_size`"))?;
+        let priority_reserved = priority_reserved.unwrap_or_else(|| quote!(1usize));
         Ok(Self {
             queue_size,
+            priority_reserved,
             receives,
         })
     }
@@ -856,6 +864,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let context_ident = format_ident!("{}Context", task_ident);
     let stream_control_ident = format_ident!("{}StreamControl", task_ident);
     let queue_size = args.queue_size;
+    let priority_reserved = args.priority_reserved;
     let receives = args.receives;
 
     let mut handlers = Vec::new();
@@ -1178,7 +1187,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 &__ctx_inner,
                                 &mut *deferred,
                             );
-                            let _ = reply.send(::mpi::Response::new(session_id, value));
+                            let _ = reply.send_from(
+                                inner_handle.endpoint(),
+                                ::mpi::Response::new(session_id, value),
+                            );
                         }
                     }
                 });
@@ -1296,11 +1308,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { session_id, mut events #(, #arg_idents)* } => {
-                        let mut out = ::mpi::StreamSink::new_flow_controlled(
+                        let __sender_endpoint = inner_handle.endpoint();
+                        let mut out = ::mpi::StreamSink::new_flow_controlled_from(
+                            __sender_endpoint,
                             session_id,
                             #batch_size,
                             Box::new(move |event: ::mpi::StreamEvent<#item, #error>| {
-                                events.send(event)
+                                events.send_from(__sender_endpoint, event)
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
@@ -1608,6 +1622,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self.inner.begin_call::<T>()
             }
 
+            fn endpoint(&self) -> ::mpi::EndpointId {
+                self.inner.endpoint()
+            }
+
             fn begin_call_with_late_reply_policy<T: Send + 'static>(
                 &mut self,
                 late_reply_policy: ::mpi::LateReplyPolicy,
@@ -1674,6 +1692,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             {
                 let (inner, runtime) = ::mpi::spawn_task::<#message_ident, _, _, #queue_size>(
                     #start_variant,
+                    #priority_reserved,
                     move |inner_handle| {
                         let state = ::std::rc::Rc::new(::std::cell::RefCell::new(state));
 

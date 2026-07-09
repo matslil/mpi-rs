@@ -110,7 +110,8 @@ impl<T> HasSessionId for Response<T> {
     }
 }
 
-type ReplySendFn<T> = Box<dyn FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static>;
+type ReplySendFn<T> =
+    Box<dyn FnOnce(Option<EndpointId>, Response<T>) -> Result<(), SendError> + Send + 'static>;
 
 /// Sender endpoint used by call handlers to return one typed reply.
 ///
@@ -128,6 +129,16 @@ impl<T> SyncReplySender<T> {
     where
         F: FnOnce(Response<T>) -> Result<(), SendError> + Send + 'static,
     {
+        Self::new_with_sender(move |_sender, response| send(response))
+    }
+
+    /// Create a reply sender from a one-shot send function that can observe the
+    /// task endpoint that produced a task-internal reply.
+    #[must_use]
+    pub fn new_with_sender<F>(send: F) -> Self
+    where
+        F: FnOnce(Option<EndpointId>, Response<T>) -> Result<(), SendError> + Send + 'static,
+    {
         Self {
             send: Some(Box::new(send)),
         }
@@ -136,7 +147,13 @@ impl<T> SyncReplySender<T> {
     /// Send the reply payload.
     pub fn send(mut self, response: Response<T>) -> Result<(), SendError> {
         let send = self.send.take().expect("reply sender used after send");
-        send(response)
+        send(None, response)
+    }
+
+    /// Send a task-internal reply produced by the given endpoint.
+    pub fn send_from(mut self, sender: EndpointId, response: Response<T>) -> Result<(), SendError> {
+        let send = self.send.take().expect("reply sender used after send");
+        send(Some(sender), response)
     }
 }
 
