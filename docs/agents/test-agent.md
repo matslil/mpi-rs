@@ -12,12 +12,12 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/requirements.md`
-- `docs/se/interfaces.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md` when testing context-returning suspension or the `ctx-future` crate
-- `docs/se/verification-plan.md`
-- `docs/se/traceability.md`
+- `docs/se-requirements.md`
+- `docs/se-interfaces.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md` when testing context-returning suspension or the `ctx-future` crate
+- `docs/se-verification-plan.md`
+- `docs/se-traceability.md`
 - existing Rust tests;
 - existing examples;
 - relevant production code.
@@ -62,8 +62,8 @@ The agent shall not:
 
 ## Process
 
-1. Read all approved requirements in `docs/se/requirements.md`.
-2. For each affected requirement, identify the verification method from `docs/se/verification-plan.md`.
+1. Read all approved requirements in `docs/se-requirements.md`.
+2. For each affected requirement, identify the verification method from `docs/se-verification-plan.md`.
 3. Inspect existing tests and traceability.
 4. Identify missing, weak, or obsolete tests.
 5. Add or update tests for requirements with `Verification: test`.

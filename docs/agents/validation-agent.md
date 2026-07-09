@@ -12,11 +12,11 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/interfaces.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
+- `docs/se-stakeholders.md`
+- `docs/se-requirements.md`
+- `docs/se-interfaces.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
 - examples;
 - README or user-facing documentation when present;
 - relevant implementation and tests.

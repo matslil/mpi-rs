@@ -13,13 +13,13 @@ The agent shall read:
 - pull request diff or changed files;
 - `AGENTS.md`;
 - `docs/agents/process.md`;
-- `docs/se/requirements.md`;
-- `docs/se/architecture.md`;
-- `docs/se/ctx-future.md`;
-- `docs/se/interfaces.md`;
-- `docs/se/verification-plan.md`;
-- `docs/se/validation-scenarios.md`;
-- `docs/se/traceability.md`;
+- `docs/se-requirements.md`;
+- `docs/se-architecture.md`;
+- `crates/ctx-future/se-design-baseline.md`;
+- `docs/se-interfaces.md`;
+- `docs/se-verification-plan.md`;
+- `docs/se-validation-scenarios.md`;
+- `docs/se-traceability.md`;
 - test output and verification evidence.
 
 Historical design notes are not authoritative unless a current SE document or the human maintainer explicitly references them for the change.
@@ -66,7 +66,7 @@ The agent shall check:
 - Does the change identify affected requirement IDs?
 - Does the change implement only approved requirements or clearly proposed requirements?
 - Are architecture boundaries respected?
-- Are public APIs consistent with `docs/se/interfaces.md`?
+- Are public APIs consistent with `docs/se-interfaces.md`?
 - Is message placement receiver-declared?
 - Are normal and priority FIFO rules preserved?
 - Is the start message forced to priority and received first?

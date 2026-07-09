@@ -12,10 +12,10 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/requirements.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
+- `docs/se-requirements.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
 - verification and validation reports;
 - changelog or release notes if present;
 - Cargo metadata;

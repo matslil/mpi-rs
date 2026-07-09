@@ -4,7 +4,7 @@
 
 This implementation attempt follows the approved interface change: `#[task(queue_size = ...)]` is now applied to the task `impl` block instead of splitting task information across a struct attribute and an impl attribute.
 
-The branch updates `docs/se/interfaces.md` and implements concrete task macro generation for the following handler categories:
+The branch updates `docs/se-interfaces.md` and implements concrete task macro generation for the following handler categories:
 
 - `#[start]`
 - `#[event]`

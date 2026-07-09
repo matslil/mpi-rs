@@ -1,6 +1,6 @@
 # Compile-Time Task Topology
 
-This document is part of the authoritative systems-engineering baseline under `docs/se/`.
+This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
 It records a human-approved design restriction for task instance topology: tasks that participate in the `mpi-rs` task system must be known at compile time. This restriction is intended to make generated task routing, task-local suspension, waiter matching, and compile-time receive checks simpler and more Rust-like.
 
@@ -129,13 +129,13 @@ The compile-time task topology restriction is consistent with the existing basel
 - `AGENTS.md`
 - `docs/agents/process.md`
 - `docs/agents/system-engineering-agent.md`
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/interfaces.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
-- `docs/se/glossary.md`
+- `docs/se-stakeholders.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `docs/se-interfaces.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
+- `docs/se-glossary.md`
 
 ### Consistency findings
 

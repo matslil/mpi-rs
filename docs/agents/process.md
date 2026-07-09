@@ -17,19 +17,27 @@ The process shall:
 
 ## Authoritative inputs
 
-The authoritative systems-engineering baseline is:
+The authoritative systems-engineering baseline is the set of current systems-engineering documents named `se-*.md`.
 
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md`
-- `docs/se/protocols.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
-- `docs/se/glossary.md`
-- `docs/se/change-process.md`
+Workspace-level systems-engineering documents live under `docs/`. Crate-level systems-engineering documents live beside the crate they describe. Module-level systems-engineering documents may live beside the module they describe.
+
+The baseline index is:
+
+- `docs/se-index.md`
+
+The most important baseline documents are:
+
+- `docs/se-stakeholders.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md`
+- `docs/se-protocols.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
+- `docs/se-glossary.md`
+- `docs/se-change-process.md`
 
 Role instructions are stored in:
 
@@ -178,4 +186,4 @@ When an agent finds ambiguity, it shall:
 
 ## Outdated-document rule
 
-Pre-existing documents outside `docs/se/`, `docs/agents/`, and `AGENTS.md` are not authoritative for the current baseline unless a current systems-engineering document explicitly references them.
+Pre-existing documents that are not named `se-*.md`, under `docs/agents/`, or `AGENTS.md` are not authoritative for the current baseline unless a current systems-engineering document explicitly references them.

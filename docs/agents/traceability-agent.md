@@ -12,13 +12,13 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
+- `docs/se-stakeholders.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
 - production code;
 - tests;
 - examples;
@@ -30,7 +30,7 @@ Historical design notes are not authoritative unless a current SE document or th
 
 The agent may modify or create:
 
-- `docs/se/traceability.md`;
+- `docs/se-traceability.md`;
 - traceability gap reports;
 - proposed updates to verification or validation status.
 

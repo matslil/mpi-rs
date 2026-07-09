@@ -14,19 +14,19 @@ The agent shall read:
 
 - `AGENTS.md`
 - `docs/agents/process.md`
-- `docs/se/stakeholders.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/ctx-future.md`
-- `docs/se/protocols.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
-- `docs/se/glossary.md`
-- `docs/se/change-process.md`
+- `docs/se-stakeholders.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `crates/ctx-future/se-design-baseline.md`
+- `docs/se-protocols.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
+- `docs/se-glossary.md`
+- `docs/se-change-process.md`
 
-It may inspect production code, tests, examples, and historical design notes to detect drift, but its main concern is the current engineering baseline under `docs/se/`.
+It may inspect production code, tests, examples, and historical design notes to detect drift, but its main concern is the current engineering baseline named `se-*.md`.
 
 ## Outputs
 
@@ -69,11 +69,11 @@ The agent shall not:
 
 ## Process
 
-1. Read the current `docs/se/` baseline.
+1. Read the current systems-engineering baseline from `docs/se-index.md` and the referenced `se-*.md` files.
 2. Identify affected stakeholder needs, requirements, architecture sections, interface sections, verification expectations, and validation scenarios.
 3. Check for contradictions, gaps, duplicate IDs, obsolete terms, and vague requirements.
 4. Prefer small, testable, stable requirements.
-5. Preserve the vocabulary in `docs/se/glossary.md`.
+5. Preserve the vocabulary in `docs/se-glossary.md`.
 6. Report ambiguities instead of silently resolving them.
 7. Produce proposed document edits or a consistency report.
 
