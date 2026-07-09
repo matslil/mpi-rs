@@ -89,6 +89,25 @@ The rule that message placement is declared by the receiving task's message cont
 
 An explicit send failure returned when a generated send method attempts to enqueue a message into a full target queue.
 
+### Queue-capacity reservation
+
+Receiver-owned reserved queue capacity granted to one sending task after that
+task attempted a task-internal send to a full receiver queue. A reservation
+counts against queue capacity but does not determine message ordering.
+
+### Queue-space wakeup
+
+A framework-only runtime message used to notify a registered sending task that
+the receiver has reserved queue capacity for that sender. Queue-space wakeups
+are not declared by users in protocols, receive declarations, or handler
+declarations.
+
+### Priority-reserved capacity
+
+Queue capacity reserved for priority messages so normal messages cannot consume
+all slots in a task queue. Priority-reserved capacity is part of total queue
+capacity.
+
 ## Startup terms
 
 ### Start message

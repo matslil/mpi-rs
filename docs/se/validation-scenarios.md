@@ -92,6 +92,7 @@ Expected outcome:
 - the response type is checked;
 - the caller task continues processing other messages while waiting;
 - the correct suspended handler resumes when the response arrives.
+- a full caller queue does not cause the call response to be silently dropped.
 
 Evidence type: integration test and example
 
@@ -180,6 +181,7 @@ Expected outcome:
 - batching reduces per-item message overhead;
 - flow control prevents unbounded flooding of the consumer queue;
 - stream handlers using `yield_item()` or `yield_batch()` suspend under no-credit backpressure instead of manually polling or retrying flow-control errors;
+- full consumer queues cause stream reply production to suspend through runtime backpressure rather than exposing ordinary queue-full retry loops;
 - the public API remains `next(ctx).await`.
 
 Evidence type: integration test or analysis plus demonstration
@@ -195,6 +197,7 @@ A developer declares a shutdown event as priority and sends it while normal work
 Expected outcome:
 
 - shutdown placement is defined by the receiver's declaration;
+- the task's default priority-reserved queue capacity leaves room for an urgent priority shutdown when normal messages fill the queue;
 - the shutdown event is handled before queued normal messages;
 - FIFO ordering among priority messages is preserved.
 
