@@ -40,6 +40,7 @@ Use the status values from `docs/agents/process.md`:
 | `mpi` | `crates/mpi/se-design-baseline.md`, `crates/mpi/se-send-scope.md`, `crates/mpi/se-task-topology.md` |
 | `mpi-macros` | `crates/mpi-macros/se-design-baseline.md` |
 | `mpi-os-events` | `crates/mpi-os-events/se-design-baseline.md` |
+| `timeout-server` | `crates/timeout-server/se-design-baseline.md` |
 
 ## Maintenance Rules
 
