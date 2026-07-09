@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 
 use crate::call::{CallReleaseMessage, CallResponseMessage};
-use crate::message::TaskMessage;
+use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
 use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
 use crate::task::{TaskContext, TaskEndpoint};
 
@@ -19,7 +19,8 @@ fn route_task_message_with_dispatch<M, D, const N: usize>(
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
     D: FnMut(M, &mut TaskContext<M, N>),
 {
     match message.into_call_response() {
@@ -38,11 +39,14 @@ fn route_task_message_with_dispatch<M, D, const N: usize>(
                     Ok(cancel) => {
                         ctx.record_stream_cancel(cancel);
                     }
-                    Err(message) => match message.into_stream_event() {
-                        Ok(event) => {
-                            let _ = ctx.deliver_stream_event(event);
-                        }
-                        Err(message) => dispatch(message, ctx),
+                    Err(message) => match message.into_queue_space_wakeup() {
+                        Ok(_wakeup) => {}
+                        Err(message) => match message.into_stream_event() {
+                            Ok(event) => {
+                                let _ = ctx.deliver_stream_event(event);
+                            }
+                            Err(message) => dispatch(message, ctx),
+                        },
                     },
                 },
             },
@@ -60,7 +64,8 @@ fn route_task_message<M, const N: usize>(
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
 {
     route_task_message_with_dispatch(message, ctx, &mut |message, _ctx| {
         deferred.push_back(message);
@@ -86,7 +91,8 @@ where
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
     F: CtxFuture<TaskContext<M, N>>,
 {
     loop {
@@ -120,7 +126,8 @@ where
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
     F: CtxFuture<TaskContext<M, N>>,
     D: FnMut(M, &mut TaskContext<M, N>),
 {
@@ -153,7 +160,8 @@ where
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
     F: CtxFuture<TaskContext<M, N>>,
 {
     let mut ctx = ctx.clone();
@@ -179,7 +187,8 @@ where
         + CallReleaseMessage
         + StreamPullMessage
         + StreamCancelMessage
-        + StreamEventMessage,
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
     F: Future,
 {
     block_on_task(from_std_future(future), endpoint, ctx, deferred)

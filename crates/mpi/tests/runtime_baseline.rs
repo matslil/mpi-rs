@@ -5,11 +5,12 @@ use std::sync::{Arc, Mutex};
 use mpi::{
     CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
     LateReplyAction, LateReplyKind, LateReplyPolicy, MessagePlacement, MessageStream,
-    QueuedCallRelease, QueuedCallResponse, QueuedStreamEvent, Response, SendError, SessionId,
-    SessionIdAllocator, StreamCancel, StreamCancelMessage, StreamControl, StreamEvent,
-    StreamEventMessage, StreamPull, StreamPullMessage, StreamSink, SyncReplySender, TaskContext,
-    TaskEndpoint, TaskHandle, TaskMessage, TaskQueue, block_on_ctx_task,
-    block_on_ctx_task_with_dispatch, spawn_task, stream_credit,
+    QueueSpaceWakeupMessage, QueueSpaceWakeupTarget, QueuedCallRelease, QueuedCallResponse,
+    QueuedStreamEvent, Response, SendError, SessionId, SessionIdAllocator, StreamCancel,
+    StreamCancelMessage, StreamControl, StreamEvent, StreamEventMessage, StreamPull,
+    StreamPullMessage, StreamSink, SyncReplySender, TaskContext, TaskEndpoint, TaskHandle,
+    TaskMessage, TaskQueue, block_on_ctx_task, block_on_ctx_task_with_dispatch, spawn_task,
+    stream_credit,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -24,6 +25,49 @@ impl TaskMessage for TestMessage {
         match self {
             Self::Start | Self::Priority(_) => MessagePlacement::Priority,
             Self::Normal(_) => MessagePlacement::Normal,
+        }
+    }
+}
+
+struct RecordingWakeupTarget {
+    endpoint: EndpointId,
+    wakes: Mutex<u32>,
+    fail: bool,
+}
+
+impl RecordingWakeupTarget {
+    fn new(endpoint: EndpointId) -> Arc<Self> {
+        Arc::new(Self {
+            endpoint,
+            wakes: Mutex::new(0),
+            fail: false,
+        })
+    }
+
+    fn failing(endpoint: EndpointId) -> Arc<Self> {
+        Arc::new(Self {
+            endpoint,
+            wakes: Mutex::new(0),
+            fail: true,
+        })
+    }
+
+    fn wakes(&self) -> u32 {
+        *self.wakes.lock().expect("wakes lock poisoned")
+    }
+}
+
+impl QueueSpaceWakeupTarget for RecordingWakeupTarget {
+    fn endpoint(&self) -> EndpointId {
+        self.endpoint
+    }
+
+    fn try_wake(&self) -> Result<(), SendError> {
+        *self.wakes.lock().expect("wakes lock poisoned") += 1;
+        if self.fail {
+            Err(SendError::QueueFull)
+        } else {
+            Ok(())
         }
     }
 }
@@ -60,18 +104,19 @@ fn req_036_req_037_priority_reserved_capacity_keeps_slot_for_priority_messages()
 #[test]
 fn req_014a_req_014b_req_036_priority_messages_can_receive_sender_reservations() {
     let queue = TaskQueue::<TestMessage, 1>::with_priority_reserved(1);
-    let first_sender = EndpointId(101);
-    let second_sender = EndpointId(102);
+    let first_sender = RecordingWakeupTarget::new(EndpointId(101));
+    let second_sender = RecordingWakeupTarget::new(EndpointId(102));
 
     queue.try_send(TestMessage::Priority(1)).unwrap();
     assert_eq!(
-        queue.try_send_from(first_sender, TestMessage::Priority(2)),
+        queue.try_send_from(first_sender.clone(), TestMessage::Priority(2)),
         Err(SendError::QueueFull)
     );
     assert_eq!(queue.snapshot().waiting_senders, 1);
 
     assert_eq!(queue.try_recv(), Some(TestMessage::Priority(1)));
     assert_eq!(queue.snapshot().reserved_len, 1);
+    assert_eq!(first_sender.wakes(), 1);
 
     assert_eq!(
         queue.try_send_from(second_sender, TestMessage::Priority(3)),
@@ -83,6 +128,38 @@ fn req_014a_req_014b_req_036_priority_messages_can_receive_sender_reservations()
 
     assert_eq!(queue.try_recv(), Some(TestMessage::Priority(2)));
     assert_eq!(queue.try_recv(), None);
+}
+
+#[test]
+fn req_014e_failed_queue_space_wakeup_releases_reservation_for_next_sender() {
+    let queue = TaskQueue::<TestMessage, 1>::with_priority_reserved(1);
+    let first_sender = RecordingWakeupTarget::failing(EndpointId(111));
+    let second_sender = RecordingWakeupTarget::new(EndpointId(112));
+
+    queue.try_send(TestMessage::Priority(1)).unwrap();
+    assert_eq!(
+        queue.try_send_from(first_sender.clone(), TestMessage::Priority(2)),
+        Err(SendError::QueueFull)
+    );
+    assert_eq!(
+        queue.try_send_from(second_sender.clone(), TestMessage::Priority(3)),
+        Err(SendError::QueueFull)
+    );
+
+    assert_eq!(queue.try_recv(), Some(TestMessage::Priority(1)));
+
+    assert_eq!(first_sender.wakes(), 1);
+    assert_eq!(second_sender.wakes(), 1);
+    assert_eq!(queue.snapshot().reserved_len, 1);
+
+    assert_eq!(
+        queue.try_send_from(first_sender, TestMessage::Priority(2)),
+        Err(SendError::QueueFull)
+    );
+    queue
+        .try_send_from(second_sender, TestMessage::Priority(3))
+        .unwrap();
+    assert_eq!(queue.try_recv(), Some(TestMessage::Priority(3)));
 }
 
 #[test]
@@ -312,6 +389,7 @@ fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
 
 enum CtxRuntimeMessage {
     Normal(u8),
+    QueueSpaceWakeup,
     CallResponse {
         session_id: SessionId,
         value: Box<dyn Any + Send>,
@@ -338,11 +416,25 @@ impl TaskMessage for CtxRuntimeMessage {
     fn placement(&self) -> MessagePlacement {
         match self {
             Self::Normal(_) => MessagePlacement::Normal,
-            Self::CallResponse { .. }
+            Self::QueueSpaceWakeup
+            | Self::CallResponse { .. }
             | Self::CallRelease { .. }
             | Self::StreamPull { .. }
             | Self::StreamCancel { .. }
             | Self::StreamEvent { .. } => MessagePlacement::Priority,
+        }
+    }
+}
+
+impl QueueSpaceWakeupMessage for CtxRuntimeMessage {
+    fn queue_space_wakeup() -> Self {
+        Self::QueueSpaceWakeup
+    }
+
+    fn into_queue_space_wakeup(self) -> Result<mpi::QueueSpaceWakeup, Self> {
+        match self {
+            Self::QueueSpaceWakeup => Ok(mpi::QueueSpaceWakeup),
+            other => Err(other),
         }
     }
 }

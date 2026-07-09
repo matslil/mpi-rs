@@ -1003,6 +1003,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
+    variants.push(quote! { __QueueSpaceWakeup });
+    placements.push(quote! { Self::__QueueSpaceWakeup => ::mpi::MessagePlacement::Priority });
+    dispatch_arms.push(quote! {
+        #message_ident::__QueueSpaceWakeup => {}
+    });
+
     variants.push(quote! {
         __CallResponse {
             session_id: ::mpi::SessionId,
@@ -1188,7 +1194,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 &mut *deferred,
                             );
                             let _ = reply.send_from(
-                                inner_handle.endpoint(),
+                                inner_handle.queue_space_wakeup_target(),
                                 ::mpi::Response::new(session_id, value),
                             );
                         }
@@ -1308,13 +1314,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { session_id, mut events #(, #arg_idents)* } => {
-                        let __sender_endpoint = inner_handle.endpoint();
+                        let __sender = inner_handle.queue_space_wakeup_target();
                         let mut out = ::mpi::StreamSink::new_flow_controlled_from(
-                            __sender_endpoint,
+                            __sender.clone(),
                             session_id,
                             #batch_size,
                             Box::new(move |event: ::mpi::StreamEvent<#item, #error>| {
-                                events.send_from(__sender_endpoint, event)
+                                events.send_from(__sender.clone(), event)
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
@@ -1566,6 +1572,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             late_reply_policy,
                         ))
                     }
+                    other => Err(other),
+                }
+            }
+        }
+
+        impl ::mpi::QueueSpaceWakeupMessage for #message_ident {
+            fn queue_space_wakeup() -> Self {
+                Self::__QueueSpaceWakeup
+            }
+
+            fn into_queue_space_wakeup(self) -> Result<::mpi::QueueSpaceWakeup, Self> {
+                match self {
+                    Self::__QueueSpaceWakeup => Ok(::mpi::QueueSpaceWakeup),
                     other => Err(other),
                 }
             }

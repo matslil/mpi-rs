@@ -12,8 +12,9 @@ use std::task::{Context, Poll};
 
 use crate::error::SendError;
 use crate::message::{HasSessionId, LateReplyPolicy};
+use crate::queue::QueueSpaceWakeupTarget;
 use crate::scope::TaskScope;
-use crate::session::{EndpointId, SessionId};
+use crate::session::SessionId;
 
 const STREAM_PULL_CREDIT: u32 = 1;
 const STREAM_INITIAL_CREDIT: u32 = 64;
@@ -330,7 +331,7 @@ pub trait StreamEventSink<T, E> {
     /// Send one task-internal stream event produced by the given endpoint.
     fn send_event_from(
         &mut self,
-        _sender: EndpointId,
+        _sender: Arc<dyn QueueSpaceWakeupTarget>,
         event: StreamEvent<T, E>,
     ) -> Result<(), SendError> {
         self.send_event(event)
@@ -353,15 +354,17 @@ impl<T, E> StreamEventSink<T, E> for Box<dyn StreamEventSink<T, E> + Send> {
 
     fn send_event_from(
         &mut self,
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         event: StreamEvent<T, E>,
     ) -> Result<(), SendError> {
         (**self).send_event_from(sender, event)
     }
 }
 
-type StreamSendFn<T, E> =
-    Box<dyn FnMut(Option<EndpointId>, StreamEvent<T, E>) -> Result<(), SendError> + Send>;
+type StreamSendFn<T, E> = Box<
+    dyn FnMut(Option<Arc<dyn QueueSpaceWakeupTarget>>, StreamEvent<T, E>) -> Result<(), SendError>
+        + Send,
+>;
 
 /// Owned sender endpoint used by stream producers to emit events.
 pub struct StreamEventSender<T, E> {
@@ -380,7 +383,12 @@ impl<T: 'static, E: 'static> StreamEventSender<T, E> {
     #[must_use]
     pub fn new_with_sender<F>(sink: F) -> Self
     where
-        F: FnMut(Option<EndpointId>, StreamEvent<T, E>) -> Result<(), SendError> + Send + 'static,
+        F: FnMut(
+                Option<Arc<dyn QueueSpaceWakeupTarget>>,
+                StreamEvent<T, E>,
+            ) -> Result<(), SendError>
+            + Send
+            + 'static,
     {
         Self {
             sink: Box::new(sink),
@@ -395,7 +403,7 @@ impl<T: 'static, E: 'static> StreamEventSender<T, E> {
     /// Send one task-internal stream event produced by the given endpoint.
     pub fn send_from(
         &mut self,
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         event: StreamEvent<T, E>,
     ) -> Result<(), SendError> {
         self.send_inner(Some(sender), event)
@@ -403,7 +411,7 @@ impl<T: 'static, E: 'static> StreamEventSender<T, E> {
 
     fn send_inner(
         &mut self,
-        sender: Option<EndpointId>,
+        sender: Option<Arc<dyn QueueSpaceWakeupTarget>>,
         event: StreamEvent<T, E>,
     ) -> Result<(), SendError> {
         if let StreamEvent::Batch { session_id, values } = &event {
@@ -430,7 +438,7 @@ where
     session_id: SessionId,
     batch_size: usize,
     sink: S,
-    sender: Option<EndpointId>,
+    sender: Option<Arc<dyn QueueSpaceWakeupTarget>>,
     buffer: Vec<T>,
     finished: bool,
     flow_controlled: bool,
@@ -472,7 +480,7 @@ where
     /// given task endpoint.
     #[must_use]
     pub fn new_flow_controlled_from(
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         session_id: SessionId,
         batch_size: usize,
         sink: S,
@@ -543,7 +551,7 @@ where
 
     fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
         match self.sender {
-            Some(sender) => self.sink.send_event_from(sender, event),
+            Some(ref sender) => self.sink.send_event_from(sender.clone(), event),
             None => self.sink.send_event(event),
         }
     }
