@@ -15,9 +15,10 @@ use crate::call::{
 };
 use crate::error::{CallError, RecvError, SendError};
 use crate::message::{
-    HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef, TaskMessage,
+    HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
+    QueueSpaceWakeupMessage, TaskMessage,
 };
-use crate::queue::TaskQueue;
+use crate::queue::{QueueSpaceWakeupTarget, TaskQueue};
 use crate::scope::TaskScope;
 use crate::session::{
     EndpointId, Response, SessionId, SessionIdAllocator, SyncReplySender, sync_reply_channel,
@@ -99,7 +100,11 @@ where
     }
 
     /// Enqueue one task-internal message from another endpoint.
-    pub fn send_message_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+    pub fn send_message_from(
+        &self,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
+        message: M,
+    ) -> Result<(), SendError> {
         if !self.is_accepting() {
             return Err(SendError::TaskStopped);
         }
@@ -107,17 +112,17 @@ where
         self.queue.try_send_from(sender, message)
     }
 
-    /// Enqueue one task-internal message, waiting for receiver-owned capacity.
-    pub fn send_message_from_blocking(
+    /// Enqueue one task-internal message, waiting for a framework wakeup.
+    pub fn send_message_from_waiting(
         &self,
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         message: M,
     ) -> Result<(), SendError> {
         if !self.is_accepting() {
             return Err(SendError::TaskStopped);
         }
 
-        self.queue.send_blocking_from(sender, message)
+        self.queue.send_waiting_from(sender, message)
     }
 
     /// Receive one message through this endpoint.
@@ -215,17 +220,21 @@ where
     }
 
     /// Enqueue one task-internal message from another endpoint.
-    pub fn send_message_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+    pub fn send_message_from(
+        &self,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
+        message: M,
+    ) -> Result<(), SendError> {
         self.endpoint.send_message_from(sender, message)
     }
 
-    /// Enqueue one task-internal message, waiting for receiver-owned capacity.
-    pub fn send_message_from_blocking(
+    /// Enqueue one task-internal message, waiting for a framework wakeup.
+    pub fn send_message_from_waiting(
         &self,
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         message: M,
     ) -> Result<(), SendError> {
-        self.endpoint.send_message_from_blocking(sender, message)
+        self.endpoint.send_message_from_waiting(sender, message)
     }
 
     /// Receive one message from this handle's endpoint.
@@ -264,6 +273,30 @@ where
     /// Close the target task queue.
     pub fn close(&self) {
         self.endpoint.close();
+    }
+}
+
+impl<M, const N: usize> QueueSpaceWakeupTarget for TaskHandle<M, N>
+where
+    M: TaskMessage + QueueSpaceWakeupMessage,
+{
+    fn endpoint(&self) -> EndpointId {
+        TaskHandle::endpoint(self)
+    }
+
+    fn try_wake(&self) -> Result<(), SendError> {
+        self.send_message(M::queue_space_wakeup())
+    }
+}
+
+impl<M, const N: usize> TaskHandle<M, N>
+where
+    M: TaskMessage + QueueSpaceWakeupMessage,
+{
+    /// Return this handle as a framework queue-space wakeup target.
+    #[must_use]
+    pub fn queue_space_wakeup_target(&self) -> Arc<dyn QueueSpaceWakeupTarget> {
+        Arc::new(self.clone())
     }
 }
 
@@ -610,7 +643,7 @@ where
 
 impl<M, const N: usize> TaskContext<M, N>
 where
-    M: TaskMessage + CallResponseMessage,
+    M: TaskMessage + CallResponseMessage + QueueSpaceWakeupMessage,
 {
     /// Allocate one task-local call session and its queued reply sender.
     pub fn begin_call<T: Send + 'static>(&self) -> CallSession<T> {
@@ -644,7 +677,7 @@ where
                 late_reply_policy,
             );
             match sender {
-                Some(sender) => self_handle.send_message_from_blocking(sender, message),
+                Some(sender) => self_handle.send_message_from_waiting(sender, message),
                 None => self_handle.send_message(message),
             }
         });
@@ -655,7 +688,7 @@ where
 
 impl<M, const N: usize> TaskContext<M, N>
 where
-    M: TaskMessage + StreamEventMessage,
+    M: TaskMessage + StreamEventMessage + QueueSpaceWakeupMessage,
 {
     /// Allocate one task-local stream session and its queued event sender.
     pub fn begin_stream<T: Send + 'static, E: Send + 'static>(
@@ -694,7 +727,7 @@ where
                 late_reply_policy,
             );
             match sender {
-                Some(sender) => self_handle.send_message_from_blocking(sender, message),
+                Some(sender) => self_handle.send_message_from_waiting(sender, message),
                 None => self_handle.send_message(message),
             }
         });
@@ -705,7 +738,7 @@ where
 
 impl<M, const N: usize> TaskScope for TaskContext<M, N>
 where
-    M: TaskMessage + CallResponseMessage + StreamEventMessage,
+    M: TaskMessage + CallResponseMessage + StreamEventMessage + QueueSpaceWakeupMessage,
 {
     type Message = M;
 

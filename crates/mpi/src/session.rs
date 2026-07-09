@@ -1,10 +1,12 @@
 //! Session identifiers and typed call responses.
 
 use core::fmt;
+use std::sync::Arc;
 use std::sync::mpsc;
 
 use crate::error::SendError;
 use crate::message::HasSessionId;
+use crate::queue::QueueSpaceWakeupTarget;
 
 /// Identifies the task or external endpoint that allocated a session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -110,8 +112,11 @@ impl<T> HasSessionId for Response<T> {
     }
 }
 
-type ReplySendFn<T> =
-    Box<dyn FnOnce(Option<EndpointId>, Response<T>) -> Result<(), SendError> + Send + 'static>;
+type ReplySendFn<T> = Box<
+    dyn FnOnce(Option<Arc<dyn QueueSpaceWakeupTarget>>, Response<T>) -> Result<(), SendError>
+        + Send
+        + 'static,
+>;
 
 /// Sender endpoint used by call handlers to return one typed reply.
 ///
@@ -137,7 +142,9 @@ impl<T> SyncReplySender<T> {
     #[must_use]
     pub fn new_with_sender<F>(send: F) -> Self
     where
-        F: FnOnce(Option<EndpointId>, Response<T>) -> Result<(), SendError> + Send + 'static,
+        F: FnOnce(Option<Arc<dyn QueueSpaceWakeupTarget>>, Response<T>) -> Result<(), SendError>
+            + Send
+            + 'static,
     {
         Self {
             send: Some(Box::new(send)),
@@ -151,7 +158,11 @@ impl<T> SyncReplySender<T> {
     }
 
     /// Send a task-internal reply produced by the given endpoint.
-    pub fn send_from(mut self, sender: EndpointId, response: Response<T>) -> Result<(), SendError> {
+    pub fn send_from(
+        mut self,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
+        response: Response<T>,
+    ) -> Result<(), SendError> {
         let send = self.send.take().expect("reply sender used after send");
         send(Some(sender), response)
     }

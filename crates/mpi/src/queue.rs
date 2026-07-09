@@ -1,18 +1,30 @@
 //! Bounded task queue with normal and priority FIFO placement.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::error::{RecvError, SendError};
 use crate::message::{MessagePlacement, TaskMessage};
 use crate::session::EndpointId;
 
-#[derive(Debug)]
+/// Type-erased target for framework queue-space wakeups.
+pub trait QueueSpaceWakeupTarget: Send + Sync {
+    /// Return the task endpoint waiting for receiver-owned queue capacity.
+    fn endpoint(&self) -> EndpointId;
+
+    /// Try to deliver one framework-only queue-space wakeup to the waiting task.
+    fn try_wake(&self) -> Result<(), SendError>;
+}
+
 struct QueueState<M> {
     priority: VecDeque<M>,
     normal: VecDeque<M>,
     reservations: HashMap<EndpointId, MessagePlacement>,
-    waiters: VecDeque<(EndpointId, MessagePlacement)>,
+    waiters: VecDeque<(
+        EndpointId,
+        MessagePlacement,
+        Arc<dyn QueueSpaceWakeupTarget>,
+    )>,
     closed: bool,
 }
 
@@ -181,14 +193,19 @@ where
     ///
     /// When capacity is exhausted, the queue records the sender for a future
     /// receiver-owned reservation and returns `SendError::QueueFull`.
-    pub fn try_send_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+    pub fn try_send_from(
+        &self,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
+        message: M,
+    ) -> Result<(), SendError> {
         let mut state = self.state.lock().expect("queue mutex poisoned");
+        let sender_endpoint = sender.endpoint();
 
         if state.closed {
             return Err(SendError::TaskStopped);
         }
 
-        if state.reservations.remove(&sender).is_some()
+        if state.reservations.remove(&sender_endpoint).is_some()
             || self.has_unreserved_capacity(&state, message.placement())
         {
             Self::push_message(&mut state, message);
@@ -202,10 +219,20 @@ where
     }
 
     /// Enqueue one message from a task endpoint, waiting until the receiving
-    /// queue grants capacity or closes.
-    pub fn send_blocking_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+    /// queue grants capacity by sending a framework wakeup message.
+    pub fn send_waiting_from(
+        &self,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
+        message: M,
+    ) -> Result<(), SendError> {
         let mut state = self.state.lock().expect("queue mutex poisoned");
         let mut message = Some(message);
+        let sender_endpoint = sender.endpoint();
+        let (wakeup_tx, wakeup_rx) = std::sync::mpsc::channel();
+        let sender = Arc::new(QueueSpaceWakeupAttempt {
+            target: sender,
+            wakeup: Mutex::new(Some(wakeup_tx)),
+        });
 
         loop {
             if state.closed {
@@ -216,7 +243,7 @@ where
                 .as_ref()
                 .expect("message missing before successful send")
                 .placement();
-            if state.reservations.remove(&sender).is_some()
+            if state.reservations.remove(&sender_endpoint).is_some()
                 || self.has_unreserved_capacity(&state, placement)
             {
                 Self::push_message(
@@ -230,8 +257,15 @@ where
                 return Ok(());
             }
 
-            self.register_waiter(&mut state, sender, placement);
-            state = self.available.wait(state).expect("queue mutex poisoned");
+            self.register_waiter(&mut state, sender.clone(), placement);
+            drop(state);
+
+            match wakeup_rx.recv() {
+                Ok(()) => {}
+                Err(_) => return Err(SendError::TaskStopped),
+            }
+
+            state = self.state.lock().expect("queue mutex poisoned");
         }
     }
 
@@ -304,28 +338,59 @@ where
     fn register_waiter(
         &self,
         state: &mut QueueState<M>,
-        sender: EndpointId,
+        sender: Arc<dyn QueueSpaceWakeupTarget>,
         placement: MessagePlacement,
     ) {
-        if state.reservations.contains_key(&sender)
+        let sender_endpoint = sender.endpoint();
+        if state.reservations.contains_key(&sender_endpoint)
             || state
                 .waiters
                 .iter()
-                .any(|(waiting_sender, _)| *waiting_sender == sender)
+                .any(|(waiting_sender, _, _)| *waiting_sender == sender_endpoint)
         {
             return;
         }
-        state.waiters.push_back((sender, placement));
+        state
+            .waiters
+            .push_back((sender_endpoint, placement, sender));
         self.grant_reservations(state);
     }
 
     fn grant_reservations(&self, state: &mut QueueState<M>) {
-        while let Some((sender, placement)) = state.waiters.front().copied() {
+        while let Some((sender, placement, target)) = state.waiters.front().cloned() {
             if !self.has_unreserved_capacity(state, placement) {
                 break;
             }
             state.waiters.pop_front();
             state.reservations.insert(sender, placement);
+            if target.try_wake().is_err() {
+                state.reservations.remove(&sender);
+                continue;
+            }
         }
+    }
+}
+
+struct QueueSpaceWakeupAttempt {
+    target: Arc<dyn QueueSpaceWakeupTarget>,
+    wakeup: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+}
+
+impl QueueSpaceWakeupTarget for QueueSpaceWakeupAttempt {
+    fn endpoint(&self) -> EndpointId {
+        self.target.endpoint()
+    }
+
+    fn try_wake(&self) -> Result<(), SendError> {
+        self.target.try_wake()?;
+        if let Some(wakeup) = self
+            .wakeup
+            .lock()
+            .expect("queue wakeup mutex poisoned")
+            .take()
+        {
+            let _ = wakeup.send(());
+        }
+        Ok(())
     }
 }
