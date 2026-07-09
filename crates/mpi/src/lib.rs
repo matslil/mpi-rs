@@ -18,10 +18,10 @@ pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, StdFutureCtx, from_std_future
 pub use error::{CallError, RecvError, SendError};
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
-    MessagePlacement, ProtocolReceive, TaskMessage,
+    MessagePlacement, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage, TaskMessage,
 };
 pub use mpi_macros::{call, event, late_reply, protocol, start, stream, task};
-pub use queue::{TaskQueue, TaskQueueSnapshot};
+pub use queue::{QueueSpaceWakeupTarget, TaskQueue, TaskQueueSnapshot};
 pub use runtime::{
     block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_handler, block_on_task,
 };
