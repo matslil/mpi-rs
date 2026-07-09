@@ -2,7 +2,7 @@
 
 This document identifies the initial stakeholders and needs for `mpi-rs`.
 
-This document is part of the authoritative systems-engineering baseline under `docs/se/`.
+This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
 ## Project purpose
 
@@ -95,7 +95,7 @@ CON-001: The implementation language is Rust.
 
 CON-002: The user-facing API should remain idiomatic for Rust.
 
-CON-003: The authoritative systems-engineering baseline is stored under `docs/se/`.
+CON-003: The authoritative systems-engineering baseline is stored in current documents named `se-*.md`, with workspace-level documents under `docs/` and crate-level documents beside the crate they describe.
 
 CON-004: The process should remain lightweight enough for a private open-source repository.
 
