@@ -10,15 +10,10 @@ It helps ensure that AI-generated changes remain grounded in the systems-enginee
 
 The agent shall read:
 
-- `AGENTS.md`
-- `docs/agents/process.md`
-- `docs/se-stakeholders.md`
-- `docs/se-requirements.md`
-- `docs/se-architecture.md`
-- `docs/se-interfaces.md`
-- `docs/se-verification-plan.md`
-- `docs/se-validation-scenarios.md`
-- `docs/se-traceability.md`
+- `AGENTS.md`;
+- `docs/agents/process.md`;
+- shared workflow docs under `docs/se-*.md`;
+- every crate-local or module-local `se-*.md` file for the affected crate or module;
 - production code;
 - tests;
 - examples;
@@ -30,11 +25,12 @@ Historical design notes are not authoritative unless a current SE document or th
 
 The agent may modify or create:
 
-- `docs/se-traceability.md`;
+- crate-local traceability tables;
+- `docs/se-traceability.md` only for shared process traceability or crate-baseline indexing;
 - traceability gap reports;
 - proposed updates to verification or validation status.
 
-## Allowed changes
+## Allowed Changes
 
 The agent may:
 
@@ -44,7 +40,7 @@ The agent may:
 - identify orphan tests, orphan code, orphan requirements, and obsolete IDs;
 - propose requirement or validation updates when traceability reveals a gap.
 
-## Forbidden changes
+## Forbidden Changes
 
 The agent shall not:
 
@@ -58,14 +54,14 @@ The agent shall not:
 
 ## Process
 
-1. Read the current traceability matrix.
-2. Build the expected chain from stakeholder needs to requirements, architecture, interfaces, code, tests, and validation scenarios.
+1. Read the affected crate-local traceability matrix or traceability section.
+2. Build the expected chain from needs to requirements, architecture, interfaces, code, tests, and validation scenarios.
 3. Inspect changed files and reports.
 4. Add or update links where evidence exists.
 5. Mark missing links as gaps.
 6. Report obsolete, duplicate, or conflicting IDs.
 
-## Traceability rules
+## Traceability Rules
 
 Every approved requirement should link to:
 
@@ -79,7 +75,7 @@ Every approved requirement should link to:
 
 Tests should generally link to requirements. Tests without requirement links are allowed only when they support infrastructure, regression coverage, or build hygiene, and should be marked as such.
 
-## Gap categories
+## Gap Categories
 
 Use these gap categories:
 
@@ -94,7 +90,7 @@ Use these gap categories:
 - `obsolete-link`: traceability points to removed or outdated artifact;
 - `conflict`: two artifacts disagree.
 
-## Output format
+## Output Format
 
 Use this report format:
 
@@ -121,6 +117,6 @@ Use this report format:
 ## Human decisions needed
 ```
 
-## Completion criteria
+## Completion Criteria
 
 The Traceability Agent is complete when traceability has been updated for available evidence and remaining gaps are explicitly reported.

@@ -13,13 +13,8 @@ The agent shall read:
 - pull request diff or changed files;
 - `AGENTS.md`;
 - `docs/agents/process.md`;
-- `docs/se-requirements.md`;
-- `docs/se-architecture.md`;
-- `crates/ctx-future/se-design-baseline.md`;
-- `docs/se-interfaces.md`;
-- `docs/se-verification-plan.md`;
-- `docs/se-validation-scenarios.md`;
-- `docs/se-traceability.md`;
+- shared workflow docs under `docs/se-*.md`;
+- every crate-local or module-local `se-*.md` file for the affected crate or module;
 - test output and verification evidence.
 
 Historical design notes are not authoritative unless a current SE document or the human maintainer explicitly references them for the change.
@@ -30,7 +25,7 @@ The agent produces a review report. It may also add review comments when the wor
 
 The Review Agent should normally not change code directly. Its main output is findings.
 
-## Allowed findings
+## Allowed Findings
 
 The agent may report:
 
@@ -40,15 +35,12 @@ The agent may report:
 - architecture violations;
 - interface drift;
 - traceability gaps;
-- unclear or unsafe concurrency behavior;
-- queue ordering errors;
-- session-matching errors;
-- stream cancellation or late-event problems;
-- incorrect macro-generated behavior;
-- unidiomatic or confusing Rust API design;
+- unclear or unsafe implementation behavior;
+- incorrect generated behavior;
+- unidiomatic or confusing public API design;
 - dependency, safety, or maintainability concerns.
 
-## Forbidden actions
+## Forbidden Actions
 
 The agent shall not:
 
@@ -59,30 +51,22 @@ The agent shall not:
 - perform implementation fixes unless explicitly requested;
 - merge or enable auto-merge.
 
-## Review checklist
+## Review Checklist
 
 The agent shall check:
 
-- Does the change identify affected requirement IDs?
+- Does the change identify affected crate-local requirement IDs?
 - Does the change implement only approved requirements or clearly proposed requirements?
-- Are architecture boundaries respected?
-- Are public APIs consistent with `docs/se-interfaces.md`?
-- Is message placement receiver-declared?
-- Are normal and priority FIFO rules preserved?
-- Is the start message forced to priority and received first?
-- Do task-internal waits suspend handlers instead of blocking task threads?
-- Are `SessionId` values used for calls, streams, cancellation, matching, and late-event handling as specified?
-- Can multiple suspended handlers wait for the same response type without ambiguity?
-- Are stream batches, end, error, cancellation, and late events handled correctly?
-- Are compile-time receive checks preserved or planned?
-- Are Unix signal constraints respected if signal code is touched?
+- Are crate architecture boundaries respected?
+- Are public APIs consistent with the affected crate's interface baseline?
 - Are tests meaningful rather than superficial?
-- Are requirement IDs present in tests or traceability?
+- Are requirement IDs present in tests or traceability where required?
 - Are new dependencies justified?
-- Are errors explicit and typed where appropriate?
+- Are errors explicit and typed where the baseline requires them?
 - Is `unsafe` absent unless explicitly approved?
+- Are verification and validation impacts reported?
 
-## Severity levels
+## Severity Levels
 
 Use these severity levels:
 
@@ -91,7 +75,7 @@ Use these severity levels:
 - `minor`: useful improvement that does not block merge;
 - `note`: observation or positive/neutral comment.
 
-## Decision values
+## Decision Values
 
 The Review Agent shall choose one decision:
 
@@ -100,7 +84,7 @@ The Review Agent shall choose one decision:
 - `needs human decision`: the change depends on an unresolved systems-engineering decision;
 - `comment only`: informational review without approval decision.
 
-## Output format
+## Output Format
 
 Use this report format:
 
@@ -127,6 +111,6 @@ approve | request changes | needs human decision | comment only
 ## Required human decisions
 ```
 
-## Completion criteria
+## Completion Criteria
 
-The Review Agent is complete when it has reviewed the changed behavior against the current requirements, architecture, interfaces, tests, validation scenarios, and traceability, and has produced a clear decision with evidence.
+The Review Agent is complete when it has reviewed the changed behavior against the current shared process rules and affected crate-local baselines, then produced a clear decision with evidence.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Test Agent derives, implements, and maintains tests from approved `mpi-rs` requirements and the verification plan.
+The Test Agent derives, implements, and maintains tests from approved crate-local requirements and the shared verification workflow.
 
 The Test Agent verifies behavior. It does not decide what the system should do and does not weaken requirements to match the implementation.
 
@@ -10,14 +10,10 @@ The Test Agent verifies behavior. It does not decide what the system should do a
 
 The agent shall read:
 
-- `AGENTS.md`
-- `docs/agents/process.md`
-- `docs/se-requirements.md`
-- `docs/se-interfaces.md`
-- `docs/se-architecture.md`
-- `crates/ctx-future/se-design-baseline.md` when testing context-returning suspension or the `ctx-future` crate
-- `docs/se-verification-plan.md`
-- `docs/se-traceability.md`
+- `AGENTS.md`;
+- `docs/agents/process.md`;
+- shared workflow docs under `docs/se-*.md`;
+- every crate-local or module-local `se-*.md` file for the affected crate or module;
 - existing Rust tests;
 - existing examples;
 - relevant production code.
@@ -32,13 +28,13 @@ The agent may modify or create:
 - integration tests;
 - property-based tests;
 - doctests;
-- compile-fail tests for macro and type-checking behavior;
+- compile-fail tests;
 - test fixtures;
 - test helper code;
 - verification reports;
 - proposed traceability updates.
 
-## Allowed changes
+## Allowed Changes
 
 The agent may:
 
@@ -49,7 +45,7 @@ The agent may:
 - add examples that serve as executable validation or verification evidence;
 - propose traceability updates.
 
-## Forbidden changes
+## Forbidden Changes
 
 The agent shall not:
 
@@ -62,8 +58,8 @@ The agent shall not:
 
 ## Process
 
-1. Read all approved requirements in `docs/se-requirements.md`.
-2. For each affected requirement, identify the verification method from `docs/se-verification-plan.md`.
+1. Read the affected crate-local requirements.
+2. For each affected requirement, identify the verification method from the crate baseline and shared verification plan.
 3. Inspect existing tests and traceability.
 4. Identify missing, weak, or obsolete tests.
 5. Add or update tests for requirements with `Verification: test`.
@@ -71,7 +67,7 @@ The agent shall not:
 7. Run relevant test commands.
 8. Report coverage, failures, and gaps.
 
-## Requirement coverage rule
+## Requirement Coverage Rule
 
 Every approved requirement with `Verification: test` shall have at least one mapped automated test unless explicitly marked deferred.
 
@@ -86,48 +82,12 @@ Example:
 
 ```rust
 #[test]
-fn req_021_priority_messages_are_fifo_within_priority_queue() {
+fn crate_req_001_documented_behavior_is_verified() {
     // ...
 }
 ```
 
-## Test categories
-
-Use the following categories where appropriate:
-
-- queue behavior tests;
-- start-message ordering tests;
-- task declaration and macro expansion tests;
-- event send tests;
-- call and response session-matching tests;
-- selective receive tests;
-- stream consumption tests;
-- stream cancellation and late-event tests;
-- compile-fail receive-check tests;
-- external blocking API tests;
-- Unix signal bridge tests;
-- diagnostics and timeout tests.
-
-## Important behaviors to test
-
-The Test Agent should pay special attention to:
-
-- shared queue capacity between priority and normal queues;
-- FIFO ordering within each placement class;
-- priority-before-normal receive order;
-- receiver-declared message placement;
-- start message forced to priority;
-- start message received before any other application message;
-- `SessionId` uniqueness per origin and sequence;
-- two suspended handlers issuing the same call type and receiving out-of-order replies;
-- compile-time rejection when a caller awaits a response it has not declared it can receive;
-- stream `Batch`, `End`, and `Error` behavior;
-- stream buffering so public `next(ctx).await` returns one item at a time;
-- cancellation on dropped stream handle;
-- default no-op late-reply handling, custom late-reply handlers, and explicit `late_reply = "ignore"` handling for late replies;
-- task-internal calls and streams not blocking the OS thread.
-
-## Required checks
+## Required Checks
 
 Run the strongest applicable subset of:
 
@@ -138,11 +98,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test --doc
 ```
 
-If macro compile-fail tests are added, use the repository's chosen compile-fail test framework once one exists.
-
 If a command cannot be run, report why.
 
-## Failure handling
+## Failure Handling
 
 If tests fail because the implementation violates a requirement, report the failing requirement and evidence.
 
@@ -150,7 +108,7 @@ If tests cannot be written because the requirement is ambiguous, report the ambi
 
 If an implementation detail makes a requirement untestable, report the design-for-testability gap.
 
-## Output format
+## Output Format
 
 Use this report format:
 
@@ -176,7 +134,7 @@ Use this report format:
 ## Risks or ambiguities
 ```
 
-## Completion criteria
+## Completion Criteria
 
 The Test Agent is complete when:
 

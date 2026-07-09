@@ -8,7 +8,7 @@ The human maintainer acts as the system engineer and approval authority. AI agen
 
 The authoritative project baseline is the systems-engineering document set named `se-*.md`.
 
-Workspace-level systems-engineering documents live under `docs/`. Crate-level systems-engineering documents live beside the crate they describe. Module-level systems-engineering documents may live beside the module they describe.
+Workspace-level systems-engineering documents live under `docs/` and cover builds, process, workflows, change control, verification/reporting conventions, and traceability conventions. Crate-level systems-engineering documents live beside the crate they describe and cover crate behavior. Module-level systems-engineering documents may live beside the module they describe.
 
 The most important baseline documents are:
 
@@ -16,7 +16,6 @@ The most important baseline documents are:
 - `docs/se-index.md`
 - `docs/se-requirements.md`
 - `docs/se-architecture.md`
-- `crates/ctx-future/se-design-baseline.md`
 - `docs/se-protocols.md`
 - `docs/se-interfaces.md`
 - `docs/se-verification-plan.md`
@@ -24,6 +23,15 @@ The most important baseline documents are:
 - `docs/se-traceability.md`
 - `docs/se-glossary.md`
 - `docs/se-change-process.md`
+
+Current crate-level baseline documents include:
+
+- `crates/ctx-future/se-design-baseline.md`
+- `crates/mpi/se-design-baseline.md`
+- `crates/mpi-macros/se-design-baseline.md`
+- `crates/mpi-os-events/se-design-baseline.md`
+- `crates/mpi/se-send-scope.md`
+- `crates/mpi/se-task-topology.md`
 
 When there is a conflict between generated code and the systems-engineering documents, the systems-engineering documents win. When two current systems-engineering documents conflict, report the conflict instead of guessing.
 
@@ -35,7 +43,6 @@ Before changing production code, tests, examples, or process documents, read:
 - the role-specific document under `docs/agents/`
 - `docs/se-requirements.md`
 - `docs/se-architecture.md`
-- `crates/ctx-future/se-design-baseline.md`
 - `docs/se-protocols.md`
 - `docs/se-interfaces.md`
 - `docs/se-verification-plan.md`
@@ -45,26 +52,13 @@ Also read any crate-level or module-level `se-*.md` files under the crate or mod
 
 Read `docs/se-stakeholders.md` when changing needs, scope, constraints, or process assumptions.
 
-Read `docs/se-validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, external APIs, signal handling, or diagnostics.
+Read `docs/se-validation-scenarios.md` when the change affects shared process validation. Read affected crate-local validation scenarios when changing public usability, examples, crate behavior, external APIs, diagnostics, or other crate-defined behavior.
 
 Read `docs/se-glossary.md` when adding or changing terminology.
 
-## Core project intent
+## Crate behavior
 
-`mpi-rs` provides a message-passing model for Rust applications while keeping the user-facing API idiomatic for Rust.
-
-The core concepts are:
-
-- a task is an operating-system thread with an associated bounded message queue;
-- a task declares, at compile time, the messages it can receive;
-- `Message` is the umbrella term for all received items;
-- an `event` is an asynchronous message with no reply;
-- a `call` is a synchronous exchange with exactly one typed response;
-- a `stream` is a generator-style exchange with zero or more typed stream events followed by end, error, or cancellation;
-- `SessionId` identifies logical interactions for calls and streams;
-- normal and priority messages are placed according to the receiver's declaration, not the sender's choice;
-- the start message is forced to priority and must be the first application message received by a new task;
-- handlers suspend while waiting for replies or stream events instead of blocking the task thread.
+Crate behavior, product terminology, public APIs, architecture, validation scenarios, and traceability live in crate-local `se-*.md` files. Agents shall read the affected crate-local baseline before changing production code, tests, examples, or crate-specific documentation.
 
 ## Agent authority model
 
@@ -113,7 +107,7 @@ Example:
 
 ```rust
 #[test]
-fn req_030_start_message_is_received_first() {
+fn crate_req_001_documented_behavior_is_verified() {
     // ...
 }
 ```

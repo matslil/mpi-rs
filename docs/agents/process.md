@@ -19,7 +19,7 @@ The process shall:
 
 The authoritative systems-engineering baseline is the set of current systems-engineering documents named `se-*.md`.
 
-Workspace-level systems-engineering documents live under `docs/`. Crate-level systems-engineering documents live beside the crate they describe. Module-level systems-engineering documents may live beside the module they describe.
+Workspace-level systems-engineering documents live under `docs/` and cover builds, process, workflows, change control, verification/reporting conventions, and traceability conventions. Crate-level systems-engineering documents live beside the crate they describe and cover crate behavior. Module-level systems-engineering documents may live beside the module they describe.
 
 The baseline index is:
 
@@ -30,7 +30,6 @@ The most important baseline documents are:
 - `docs/se-stakeholders.md`
 - `docs/se-requirements.md`
 - `docs/se-architecture.md`
-- `crates/ctx-future/se-design-baseline.md`
 - `docs/se-protocols.md`
 - `docs/se-interfaces.md`
 - `docs/se-verification-plan.md`
@@ -38,6 +37,15 @@ The most important baseline documents are:
 - `docs/se-traceability.md`
 - `docs/se-glossary.md`
 - `docs/se-change-process.md`
+
+Current crate-level baselines include:
+
+- `crates/ctx-future/se-design-baseline.md`
+- `crates/mpi/se-design-baseline.md`
+- `crates/mpi-macros/se-design-baseline.md`
+- `crates/mpi-os-events/se-design-baseline.md`
+- `crates/mpi/se-send-scope.md`
+- `crates/mpi/se-task-topology.md`
 
 Agents changing a crate or module shall also read any crate-level or module-level `se-*.md` files under the affected crate or module.
 
@@ -55,7 +63,7 @@ Historical design notes are non-authoritative unless a current systems-engineeri
 
 ## Normal change flow
 
-1. The human system engineer updates or approves changes to needs, requirements, architecture, interfaces, validation scenarios, or process documents.
+1. The human system engineer updates or approves changes to needs, requirements, architecture, interfaces, validation scenarios, crate baselines, or process documents.
 2. The System Engineering Agent checks the consistency of the engineering documents.
 3. The Implementation Agent implements the approved requirements in Rust.
 4. The Test Agent derives or updates tests from the requirements and verification plan.
