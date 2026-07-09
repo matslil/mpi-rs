@@ -43,7 +43,7 @@ OS threads and synchronization primitives
 | CMP-001 | Task | Owns state, queue, context, and dispatch loop on one OS thread. |
 | CMP-002 | TaskHandle | Public send surface used by other code to enqueue messages to a task. |
 | CMP-002A | TaskEndpoint | Shared runtime endpoint behind task handles and in-flight sessions; owns queue reference, endpoint identity, external session allocation, and message-acceptance lifecycle. |
-| CMP-003 | TaskQueue | Bounded queue with separate internal FIFO queues for normal and priority messages. |
+| CMP-003 | TaskQueue | Bounded queue with separate internal FIFO queues for normal and priority messages, receiver-owned send reservations, and configurable priority-reserved capacity. |
 | CMP-004 | TaskContext | Generated handler context containing self handle, session allocation, task-local receive state, and control operations. |
 | CMP-005 | TaskMessage | Trait implemented by generated task message enums to expose receiver-declared placement. |
 | CMP-006 | Dispatch loop | Receives messages, resumes matching waiters, or dispatches messages to handlers. |
@@ -159,6 +159,28 @@ The queue uses two internal FIFO queues:
 - normal queue;
 - priority queue.
 
+Queue capacity is accounted as queued messages plus receiver-owned reserved
+slots. A reservation reserves capacity only; it does not reserve a position in
+the normal or priority FIFO queue.
+
+When a task-internal send cannot enqueue because the receiver has no available
+capacity for that send, the receiving task endpoint may register the sender in
+a FIFO queue-capacity wait list. A sender task appears at most once in a
+receiver's wait list. When unreserved capacity becomes available, the receiver
+reserves one slot for the first registered sender and sends that sender a
+framework-only queue-space wakeup. If that wakeup cannot be delivered, the
+reservation is released and the receiver may try the next registered sender.
+
+When a sender with an existing reservation next enqueues to the receiver, the
+receiver consumes that reservation before using unreserved capacity. If the same
+sender sends additional messages while no unreserved capacity remains, it is
+registered again at the tail of the receiver's wait list.
+
+Priority-reserved capacity is part of the task queue's total capacity but is
+held back from normal messages. It is intended to leave room for urgent priority
+messages such as shutdown or termination requests when normal senders are
+filling the queue.
+
 Architecture rules:
 
 ARCH-020: Normal messages are inserted at the tail of the normal queue.
@@ -172,6 +194,18 @@ ARCH-023: Total queue capacity is shared between normal and priority queues.
 ARCH-024: Message placement is determined by the receiving task's declaration.
 
 ARCH-025: The sender cannot override placement.
+
+ARCH-026: Receiver-owned send reservations count against total queue capacity but do not affect message ordering until consumed by an enqueue operation.
+
+ARCH-027: Queue-capacity wait lists are maintained per receiving task endpoint and are ordered FIFO by sending task.
+
+ARCH-028: Queue-space wakeups are framework-only messages and are not part of user protocol or task declarations.
+
+ARCH-029: If delivery of a queue-space wakeup fails, the associated reservation is released before another sender is considered.
+
+ARCH-029A: Each task queue reserves configurable capacity for priority messages; normal messages may not consume priority-reserved capacity, while priority messages may use either unreserved capacity or priority-reserved capacity.
+
+ARCH-029B: The default priority-reserved capacity is one queue slot unless the task declaration configures another value.
 
 ## Start message architecture
 
@@ -262,6 +296,8 @@ ARCH-066: Reported late replies are passed by borrowed reference to the receivin
 
 ARCH-067: A task without a declared late-reply handler uses a default no-op handler that returns `Ignore`; future diagnostics or logging infrastructure may change the default handler implementation without changing the task declaration model.
 
+ARCH-068: Call response enqueue operations from task-internal handlers use the receiver-owned queue-capacity reservation mechanism when the caller queue has no available capacity for the response. The callee handler continuation suspends rather than blocking the task OS thread or silently dropping the response.
+
 ## Stream architecture
 
 A stream is a request message followed by zero or more stream events and then end, error, or cancellation.
@@ -289,6 +325,8 @@ ARCH-077A: Producer-side `yield_item()` and `yield_batch()` are the preferred st
 ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 
 ARCH-079: Late stream replies are passed to the receiving task's late-reply handler by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
+
+ARCH-079A: Stream item, end, and error reply enqueue operations use the receiver-owned queue-capacity reservation mechanism when the consumer queue has no available capacity for the stream reply. The stream handler continuation suspends rather than requiring ordinary stream handler code to manually retry queue-full failures.
 
 ## External caller architecture
 
@@ -342,5 +380,8 @@ Recommended order:
 9. Protocol declarations and compile-time `CanReceive<T>` checks for responses.
 10. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
 11. Stream batching and credit-based flow control.
-12. Safe Unix signal bridge.
-13. Diagnostics, timeouts, tracing, and deadlock/debug support.
+12. Receiver-owned queue-capacity reservations for task-internal call responses
+    and stream replies, including framework-only queue-space wakeups and
+    priority-reserved queue capacity.
+13. Safe Unix signal bridge.
+14. Diagnostics, timeouts, tracing, and deadlock/debug support.
