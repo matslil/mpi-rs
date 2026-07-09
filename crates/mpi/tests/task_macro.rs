@@ -30,7 +30,7 @@ protocol! {
 
 protocol! {
     pub protocol ProducerProtocolV1 {
-        stream numbers(NumbersRequest) -> u32 error NumbersError;
+        stream numbers(NumbersRequest) -> u32, NumbersError;
     }
 }
 

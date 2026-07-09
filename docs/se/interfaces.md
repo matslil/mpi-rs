@@ -27,7 +27,7 @@ protocol! {
     pub protocol InventoryV1 {
         event reindex(ReindexRequest);
         call get_item(GetItemRequest) -> GetItemReply;
-        stream watch_stock(WatchStockRequest) -> StockEvent error WatchStockError;
+        stream watch_stock(WatchStockRequest) -> StockEvent, WatchStockError;
     }
 }
 ```
@@ -49,6 +49,8 @@ INT-009B: Generated send, call, and stream methods shall be produced from a prot
 INT-009C: Protocol interaction names should be declared in `snake_case`; generated Rust modules for protocol interactions shall use `snake_case`, while generated receive identity types inside those modules shall use `PascalCase`.
 
 INT-009D: A call named `get` shall expose its protocol-qualified reply receive identity as `get::Reply`. A stream named `list_directories` shall expose protocol-qualified stream receive identities as `list_directories::Item`, `list_directories::Finish`, and `list_directories::Error`. Rendered non-Rust protocol names are equivalent to `get_reply`, `list_directories_item`, `list_directories_finish`, and `list_directories_error`.
+
+INT-009E: A protocol stream declaration shall write stream item and stream error return types as a comma-separated return type list, for example `stream list_directories(ListRequest) -> DirectoryEntry, ListError;`.
 
 Conceptual protocol-instance binding:
 
@@ -132,7 +134,7 @@ INT-012: `#[start]` shall identify the start handler.
 
 INT-013: `#[event]` shall identify an asynchronous message with no reply.
 
-INT-014: `#[call]` shall identify a synchronous request handler. For non-protocol task calls, the reply payload type shall be inferred from the handler return type. For protocol-bound calls, the protocol-declared reply type shall remain authoritative and the handler return type shall be type-checked against it.
+INT-014: `#[call]` shall identify a synchronous request handler. The `#[call]` attribute shall not accept a `reply` argument. For non-protocol task calls, the reply payload type shall be inferred from the handler return type. For protocol-bound calls, the protocol-declared reply type shall remain authoritative and the handler return type shall be type-checked against it.
 
 INT-015: `#[stream(item = T, error = E)]` shall identify a streaming handler with item type `T` and error type `E`.
 

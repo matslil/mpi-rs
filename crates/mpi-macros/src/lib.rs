@@ -15,7 +15,6 @@ mod kw {
     syn::custom_keyword!(event);
     syn::custom_keyword!(call);
     syn::custom_keyword!(stream);
-    syn::custom_keyword!(error);
 }
 
 struct TaskArgs {
@@ -98,14 +97,12 @@ impl Parse for EventArgs {
 }
 
 struct CallArgs {
-    reply: Option<Type>,
     late_reply_policy: TokenStream2,
     protocol: Option<Path>,
 }
 
 impl Parse for CallArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut reply = None;
         let mut late_reply_policy = None;
         let mut protocol = None;
 
@@ -113,16 +110,14 @@ impl Parse for CallArgs {
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
-            if key == "reply" {
-                reply = Some(input.parse()?);
-            } else if key == "late_reply" {
+            if key == "late_reply" {
                 late_reply_policy = Some(parse_late_reply_policy(input.parse()?)?);
             } else if key == "protocol" {
                 protocol = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `reply`, `late_reply`, or `protocol`",
+                    "expected `late_reply` or `protocol`",
                 ));
             }
 
@@ -134,7 +129,6 @@ impl Parse for CallArgs {
         let late_reply_policy =
             late_reply_policy.unwrap_or_else(|| quote! { ::mpi::LateReplyPolicy::Report });
         Ok(Self {
-            reply,
             late_reply_policy,
             protocol,
         })
@@ -261,7 +255,7 @@ impl Parse for ProtocolDecl {
                 let request = Box::new(args.parse()?);
                 content.parse::<Token![->]>()?;
                 let item = Box::new(content.parse()?);
-                content.parse::<kw::error>()?;
+                content.parse::<Token![,]>()?;
                 let error = Box::new(content.parse()?);
                 (
                     name,
@@ -381,7 +375,6 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
             "call" => {
                 let args = if matches!(attr.meta, syn::Meta::Path(_)) {
                     CallArgs {
-                        reply: None,
                         late_reply_policy: quote! { ::mpi::LateReplyPolicy::Report },
                         protocol: None,
                     }
@@ -389,7 +382,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                     attr.parse_args::<CallArgs>()?
                 };
                 HandlerKind::Call {
-                    reply: args.reply.map(Box::new),
+                    reply: None,
                     late_reply_policy: args.late_reply_policy,
                     protocol: args.protocol,
                 }
@@ -431,7 +424,7 @@ fn infer_call_reply(method: &ImplItemFn) -> syn::Result<Type> {
         ReturnType::Type(_, ty) => Ok((**ty).clone()),
         ReturnType::Default => Err(syn::Error::new_spanned(
             &method.sig,
-            "call handler must return a reply payload type or declare `reply = T`",
+            "call handler must return a reply payload type",
         )),
     }
 }
