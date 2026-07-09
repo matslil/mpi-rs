@@ -10,7 +10,7 @@ Status values are defined in `docs/agents/process.md`.
 
 ### REQ-001: Authoritative SE baseline
 
-The repository shall treat the systems-engineering documents under `docs/se/` as the authoritative product and engineering baseline.
+The repository shall treat the current systems-engineering documents named `se-*.md` as the authoritative product and engineering baseline.
 
 Verification: inspection
 
@@ -1002,7 +1002,7 @@ Status: approved
 
 ### REQ-150: Incremental implementation order
 
-Implementation should follow the phases in `docs/se/architecture.md` unless the human maintainer approves a different order.
+Implementation should follow the phases in `docs/se-architecture.md` unless the human maintainer approves a different order.
 
 Source: SN-022
 
@@ -1012,7 +1012,7 @@ Status: approved
 
 ### REQ-151: Suggested crate structure
 
-The repository should organize runtime primitives and macros along the conceptual crate structure described in `docs/se/architecture.md`, unless implementation evidence justifies a different structure.
+The repository should organize runtime primitives and macros along the conceptual crate structure described in `docs/se-architecture.md`, unless implementation evidence justifies a different structure.
 
 Source: SN-021, SN-022
 

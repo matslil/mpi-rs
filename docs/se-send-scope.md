@@ -1,6 +1,6 @@
 # Send API Scope
 
-This document is part of the authoritative systems-engineering baseline under `docs/se/`.
+This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
 It records the human-approved design decision that generated send APIs are split by caller scope:
 
@@ -83,12 +83,12 @@ The send API scope decision clarifies an existing ambiguity in REQ-120 and REQ-1
 - `AGENTS.md`
 - `docs/agents/process.md`
 - `docs/agents/system-engineering-agent.md`
-- `docs/se/requirements.md`
-- `docs/se/architecture.md`
-- `docs/se/interfaces.md`
-- `docs/se/verification-plan.md`
-- `docs/se/validation-scenarios.md`
-- `docs/se/traceability.md`
+- `docs/se-requirements.md`
+- `docs/se-architecture.md`
+- `docs/se-interfaces.md`
+- `docs/se-verification-plan.md`
+- `docs/se-validation-scenarios.md`
+- `docs/se-traceability.md`
 
 ### Requirements affected
 
@@ -106,4 +106,4 @@ The send API scope decision clarifies an existing ambiguity in REQ-120 and REQ-1
 
 ### Traceability impact
 
-This addendum extends the external caller requirement group with REQ-122 and REQ-123. A future cleanup may fold these entries directly into `docs/se/requirements.md`, `docs/se/architecture.md`, `docs/se/interfaces.md`, and `docs/se/traceability.md` when the baseline is next reorganized.
+This addendum extends the external caller requirement group with REQ-122 and REQ-123. A future cleanup may fold these entries directly into `docs/se-requirements.md`, `docs/se-architecture.md`, `docs/se-interfaces.md`, and `docs/se-traceability.md` when the baseline is next reorganized.

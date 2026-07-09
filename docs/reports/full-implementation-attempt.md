@@ -3,8 +3,8 @@
 > Superseded status: this is a historical implementation-attempt report. The
 > current implementation-readiness summary is
 > `docs/reports/final-implementation-readiness.md`, and authoritative current
-> status remains in `docs/se/traceability.md` and
-> `docs/se/verification-report.md`.
+> status remains in `docs/se-traceability.md` and
+> `docs/se-verification-report.md`.
 
 ## Summary
 
@@ -109,4 +109,4 @@ The following remain incomplete after this attempt:
 
 The runtime design still appears implementable, and this attempt adds more of the runtime needed for calls and streams.
 
-The documented split macro interface is the current blocker for a complete macro-generated implementation. The next system-engineering action should be to revise `docs/se/interfaces.md` and related requirements to choose a macro declaration shape that can be implemented robustly.
+The documented split macro interface is the current blocker for a complete macro-generated implementation. The next system-engineering action should be to revise `docs/se-interfaces.md` and related requirements to choose a macro declaration shape that can be implemented robustly.

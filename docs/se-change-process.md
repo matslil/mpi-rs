@@ -149,7 +149,7 @@ Architecture or interface changes should identify:
 - test impact;
 - validation impact.
 
-Interface changes that affect user-facing Rust API should update `docs/se/interfaces.md` and relevant validation scenarios.
+Interface changes that affect user-facing Rust API should update `docs/se-interfaces.md` and relevant validation scenarios.
 
 ## Test change rules
 

@@ -39,7 +39,7 @@ without contacting the network.
 
 | Requirement area | Method | Evidence | Result | Notes |
 |---|---|---|---|---|
-| Process source-of-truth handling | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se/*` | partial | Source-of-truth process exists; human approval remains required. |
+| Process source-of-truth handling | inspection | `AGENTS.md`, `docs/agents/process.md`, `docs/se-*.md`, crate-local `se-*.md` | partial | Source-of-truth process exists; human approval remains required. |
 | Queue behavior | test | `crates/mpi/tests/runtime_baseline.rs` | passed | Covers static/shared capacity, queue-full error, normal FIFO, priority FIFO, and priority-before-normal. |
 | Start message behavior | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | passed | Covers start enqueue/priority/first behavior and macro-forced priority. |
 | Task endpoint and handle lifecycle | test, inspection | `crates/mpi/src/task.rs`, `crates/mpi/src/runtime.rs`, `crates/mpi/tests/runtime_baseline.rs` | passed | `TaskHandle` wraps a shared `TaskEndpoint` that owns queue reference, endpoint ID, external session sequence, accepting lifecycle, and receive helpers used by task-local runtime drivers. Tests cover shared endpoint direct enqueue, closed-endpoint send failure, endpoint receive use, and clone-shared external session allocation. |
@@ -81,7 +81,7 @@ The following areas remain later-phase or explicitly incomplete:
   example;
 - timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support;
 - full validation examples for the public workflows listed in
-  `docs/se/validation-scenarios.md`.
+  `docs/se-validation-scenarios.md`.
 
 ## Human Decisions Needed
 
