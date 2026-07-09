@@ -65,7 +65,7 @@ implements that protocol message.
 
 ## Task declaration interface
 
-The task state is a normal Rust struct. The `#[task]` attribute is applied to the `impl` block that contains the task handlers. The `impl` attribute shall contain the queue-size configuration so that one macro invocation has all information needed to generate the task message enum, context type, handle type, send methods, spawn helper, placement implementation, and dispatch plumbing.
+The task state is a normal Rust struct. The `#[task]` attribute is applied to the `impl` block that contains the task handlers. The `impl` attribute shall contain the queue-size configuration so that one macro invocation has all information needed to generate the task message enum, context type, handle type, send methods, spawn helper, placement implementation, and dispatch plumbing. It may also configure how many queue slots are reserved for priority messages.
 
 Example declaration style:
 
@@ -74,7 +74,7 @@ struct ServerTask {
     state: ServerState,
 }
 
-#[task(queue_size = 32)]
+#[task(queue_size = 32, priority_reserved = 1)]
 impl ServerTask {
     #[start]
     fn start(ctx: &mut ServerTaskContext, config: ServerConfig) {
@@ -129,6 +129,8 @@ Interface rules:
 INT-010: The task declaration macro shall be named `task`.
 
 INT-011: The task declaration interface shall support static queue-size configuration on the `#[task]` impl attribute.
+
+INT-011A: The task declaration interface shall support static priority-reserved queue capacity configuration on the `#[task]` impl attribute. If omitted, the default priority-reserved capacity shall be one queue slot.
 
 INT-012: `#[start]` shall identify the start handler.
 
@@ -201,6 +203,10 @@ INT-026: Generated external blocking call methods shall be explicitly named with
 
 INT-027: Runtime task handles may expose or wrap a shared `TaskEndpoint` that owns the target queue reference and task lifecycle state. Task-local runtime drivers may receive through this endpoint rather than accepting a raw queue reference. This endpoint is an implementation support interface; ordinary users still send through generated task-handle methods.
 
+INT-027A: Queue-capacity wakeups used by the runtime reservation mechanism shall be generated framework-only messages. Users shall not declare them in `protocol!`, `#[task(..., receives(...))]`, or handler declarations.
+
+INT-027B: Task-internal generated call-response and stream-reply paths shall suspend through the runtime queue-capacity reservation mechanism when the receiving queue has no available capacity, rather than exposing queue-full retry loops to ordinary handler code.
+
 ## Message interface
 
 Runtime message placement is exposed through a trait conceptually equivalent to:
@@ -227,6 +233,8 @@ INT-030: Every generated task message enum shall implement the task message plac
 INT-031: Placement shall be computed from the receiving task's message declaration.
 
 INT-032: Start messages shall report priority placement.
+
+INT-033: Priority-reserved queue capacity shall reserve capacity only; it shall not change normal FIFO ordering, priority FIFO ordering, or priority-before-normal receive ordering.
 
 ## Compile-time receive check interface
 
