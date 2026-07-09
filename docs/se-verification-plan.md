@@ -296,6 +296,18 @@ Relevant requirements:
 
 - REQ-120
 - REQ-121
+- REQ-122
+- REQ-123
+
+### Task topology verification
+
+Task topology verification should inspect that generated task-to-task APIs use a closed-world topology known to generated code. Repeated task instances should use const-sized arrays or equivalent compile-time-known shapes rather than runtime-discovered task participants for task-internal call, stream, reply, or suspension routing.
+
+Relevant requirements:
+
+- REQ-124
+- REQ-125
+- REQ-126
 
 ### Unix signal verification
 
