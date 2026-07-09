@@ -1,406 +1,48 @@
-# Architecture
+# Shared Repository Architecture
 
-This document describes the authoritative `mpi-rs` architecture baseline.
+This document describes repository-level process and workflow architecture.
 
-It should be used to guide implementation, testing, review, and validation.
+It intentionally does not define the architecture of any crate. Crate architecture belongs in crate-local `se-*.md` files.
 
-## Architecture goals
+## Documentation Structure
 
-ARCH-001: `mpi-rs` shall provide message passing while exposing an idiomatic Rust API.
+Workspace-level systems-engineering documents under `docs/` describe:
 
-ARCH-002: The architecture shall separate runtime primitives from proc-macro generated task plumbing.
+- source-of-truth rules;
+- AI agent workflows;
+- build and verification command conventions;
+- change-control process;
+- traceability conventions;
+- release evidence expectations.
 
-ARCH-003: The architecture shall support incremental implementation of queues, task handles, start messages, dispatch, suspending handlers, sessions, calls, streams, flow control, OS event bridging, and diagnostics.
+Crate-level systems-engineering documents beside each crate describe that crate's:
 
-ARCH-004: The architecture shall keep streams within the current task model rather than creating separate tasks merely to produce stream items.
+- product purpose and scope;
+- requirements;
+- architecture;
+- public and internal interfaces;
+- verification expectations;
+- validation scenarios;
+- traceability.
 
-## System context
+## Architecture Rules
 
-`mpi-rs` is a Rust library used by applications that want task-oriented message passing.
+REPO-ARCH-001: `docs/se-index.md` is the entry point for the systems-engineering document set.
 
-Conceptually:
+REPO-ARCH-002: Workspace-level documents shall not define crate message models, runtime behavior, macro behavior, platform bridge behavior, or crate public APIs.
 
-```text
-Rust application
-  |
-  | declares protocols, tasks, handlers, events, calls, streams
-  v
-mpi-rs macros
-  |
-  | generate task handles, message enums, contexts, dispatch, protocol plumbing
-  v
-mpi-rs runtime
-  |
-  | manages queues, receive loop, sessions, streams, cancellation, diagnostics
-  v
-OS threads and synchronization primitives
-```
+REPO-ARCH-003: Crate-level documents shall not rely on shared documents for crate product behavior.
 
-## Major components
+REPO-ARCH-004: If a change affects more than one crate, each affected crate shall update or reference its own crate-local baseline for its responsibilities.
+
+REPO-ARCH-005: Shared workflow documents may describe how agents coordinate cross-crate changes, but not what any crate's behavior shall be.
+
+## Workflow Components
 
 | ID | Component | Responsibility |
 |---|---|---|
-| CMP-001 | Task | Owns state, queue, context, and dispatch loop on one OS thread. |
-| CMP-002 | TaskHandle | Public send surface used by other code to enqueue messages to a task. |
-| CMP-002A | TaskEndpoint | Shared runtime endpoint behind task handles and in-flight sessions; owns queue reference, endpoint identity, external session allocation, and message-acceptance lifecycle. |
-| CMP-003 | TaskQueue | Bounded queue with separate internal FIFO queues for normal and priority messages, receiver-owned send reservations, and configurable priority-reserved capacity. |
-| CMP-004 | TaskContext | Generated handler context containing self handle, session allocation, task-local receive state, and control operations. |
-| CMP-005 | TaskMessage | Trait implemented by generated task message enums to expose receiver-declared placement. |
-| CMP-006 | Dispatch loop | Receives messages, resumes matching waiters, or dispatches messages to handlers. |
-| CMP-007 | Task-local runtime | Runs generated context-returning handler continuations without blocking the task OS thread. |
-| CMP-008 | Session subsystem | Allocates and matches `SessionId` values for calls and streams. |
-| CMP-009 | Call subsystem | Sends typed call requests and typed `Response<T>` messages. |
-| CMP-010 | Stream subsystem | Sends stream requests, stream events, stream cancellation, and stream flow-control messages. |
-| CMP-011 | Compile-time receive check subsystem | Ensures a caller task can only wait for messages it declares it can receive. |
-| CMP-012 | Macro crate | Generates task message enums, contexts, handles, send methods, dispatch plumbing, and protocol integration. |
-| CMP-013 | OS event bridge crate | Converts native OS and framework events into typed `mpi` messages outside restricted callback context. |
-| CMP-014 | Diagnostics subsystem | Supports tracing, timeouts, deadlock/debug support, session debugging, and queue diagnostics. |
-| CMP-015 | ctx-future crate | Provides reusable context-borrowing resumable computation primitives used by the task-local runtime. |
-| CMP-016 | Protocol definition subsystem | Defines namespace-qualified message contracts used by generated APIs and compile-time receive checks. |
-
-## Suggested crate structure
-
-The initial conceptual crate structure is:
-
-```text
-crates/
-  ctx-future/
-    src/
-      lib.rs
-      future.rs
-      poll.rs
-  mpi/
-    src/
-      lib.rs
-      task.rs
-      queue.rs
-      message.rs
-      runtime.rs
-      receive.rs
-      session.rs
-      stream.rs
-      error.rs
-  mpi-macros/
-    src/
-      lib.rs
-      task_macro.rs
-      protocol_macro.rs
-      message_macro.rs
-  mpi-os-events/
-    src/
-      lib.rs
-      signal.rs
-examples/
-  ping_pong.rs
-  synchronous_call.rs
-  streaming_query.rs
-  priority_shutdown.rs
-```
-
-The implementation may evolve, but deviations should be reported in implementation and review evidence.
-
-## Task architecture
-
-A task consists of:
-
-- a task state object;
-- a task handle used by other code to send messages;
-- a task endpoint shared by task handles and in-flight sessions;
-- a bounded message queue;
-- a generated task context passed to handlers;
-- a dispatch loop running on one OS thread.
-
-Architecture rules:
-
-ARCH-010: Each task owns exactly one logical message queue.
-
-ARCH-011: Each task has a generated message enum representing received messages.
-
-ARCH-012: Each task has a generated context type passed to handlers.
-
-ARCH-013: Each task has a generated handle type exposing send methods.
-
-ARCH-014: Task initialization is performed through the start message; there is no separate normal out-of-band initialization path.
-
-ARCH-015: A task handle should enqueue through a shared task endpoint that keeps the queue allocation valid while handles or sessions exist and represents whether the task still accepts messages.
-
-## Protocol architecture
-
-A protocol declaration is the reusable contract for user-visible events, calls,
-streams, replies, stream events, and stream errors. Generated task APIs and
-compile-time receive checks are derived from protocol message declarations or
-from derivatives that bind a protocol to concrete implementing task endpoints.
-
-Architecture rules:
-
-ARCH-100: A protocol definition has a namespace-qualified identity.
-
-ARCH-101: A protocol message identity includes the namespace, protocol name, and message name.
-
-ARCH-101A: Protocol call and stream response identities are derived from the declared interaction name using idiomatic Rust generated names: call replies use an interaction module `reply` identity exposed as `Reply`, and stream replies use `Item`, `Finish`, and `Error` identities inside the stream interaction module. External rendered names are equivalent to appending `_reply`, `_item`, `_finish`, or `_error` to the snake_case interaction name.
-
-ARCH-102: Protocol message declarations explicitly bind request, reply, stream item, and stream error Rust types as applicable.
-
-ARCH-103: Compatible protocol evolution is append-only.
-
-ARCH-104: Incompatible protocol evolution uses a new protocol name rather than changing or removing an existing protocol message declaration.
-
-ARCH-105: The compile-time receive check subsystem uses protocol-declared response and stream event types as its type-level source of truth.
-
-ARCH-106: The baseline does not require a protocol fingerprint; remote capability discovery may still be added for separate-binary deployments.
-
-ARCH-107: A task receive declaration matches a protocol reply or stream event by protocol message identity and declared Rust type.
-
-ARCH-108: Generated send, call, and stream APIs are derived from protocol declarations or protocol-instance bindings that preserve the protocol message identity and declared Rust types.
-
-ARCH-109: A protocol-instance binding identifies the concrete task, endpoint, or handle that implements a protocol message without redefining the message contract.
-
-## Queue architecture
-
-The queue uses two internal FIFO queues:
-
-- normal queue;
-- priority queue.
-
-Queue capacity is accounted as queued messages plus receiver-owned reserved
-slots. A reservation reserves capacity only; it does not reserve a position in
-the normal or priority FIFO queue.
-
-When a task-internal send cannot enqueue because the receiver has no available
-capacity for that send, the receiving task endpoint may register the sender in
-a FIFO queue-capacity wait list. A sender task appears at most once in a
-receiver's wait list. When unreserved capacity becomes available, the receiver
-reserves one slot for the first registered sender and sends that sender a
-framework-only queue-space wakeup. If that wakeup cannot be delivered, the
-reservation is released and the receiver may try the next registered sender.
-
-When a sender with an existing reservation next enqueues to the receiver, the
-receiver consumes that reservation before using unreserved capacity. If the same
-sender sends additional messages while no unreserved capacity remains, it is
-registered again at the tail of the receiver's wait list.
-
-Priority-reserved capacity is part of the task queue's total capacity but is
-held back from normal messages. It is intended to leave room for urgent priority
-messages such as shutdown or termination requests when normal senders are
-filling the queue.
-
-Architecture rules:
-
-ARCH-020: Normal messages are inserted at the tail of the normal queue.
-
-ARCH-021: Priority messages are inserted at the tail of the priority queue.
-
-ARCH-022: Receive first tries the head of the priority queue, then the head of the normal queue.
-
-ARCH-023: Total queue capacity is shared between normal and priority queues.
-
-ARCH-024: Message placement is determined by the receiving task's declaration.
-
-ARCH-025: The sender cannot override placement.
-
-ARCH-026: Receiver-owned send reservations count against total queue capacity but do not affect message ordering until consumed by an enqueue operation.
-
-ARCH-027: Queue-capacity wait lists are maintained per receiving task endpoint and are ordered FIFO by sending task.
-
-ARCH-028: Queue-space wakeups are framework-only messages and are not part of user protocol or task declarations.
-
-ARCH-029: If delivery of a queue-space wakeup fails, the associated reservation is released before another sender is considered.
-
-ARCH-029A: Each task queue reserves configurable capacity for priority messages; normal messages may not consume priority-reserved capacity, while priority messages may use either unreserved capacity or priority-reserved capacity.
-
-ARCH-029B: The default priority-reserved capacity is one queue slot unless the task declaration configures another value.
-
-## Start message architecture
-
-Task creation sequence:
-
-```text
-create task queue
-enqueue Start message as priority
-spawn OS thread running task loop
-first receive returns Start message
-Start handler initializes task state
-```
-
-Architecture rules:
-
-ARCH-030: Start messages are forced to priority.
-
-ARCH-031: No other priority message can be enqueued before the start message during task creation.
-
-ARCH-032: FIFO ordering within priority messages guarantees the start message is received first.
-
-## Handler execution and selective receive architecture
-
-Handlers are declared as ordinary Rust functions on the task impl. The task
-macro owns the lowering into task-local suspended execution so the declaration
-syntax does not expose whether the runtime uses compiler futures, `CtxFuture`
-state machines, or another compatible implementation strategy.
-
-When a handler awaits a reply or stream event:
-
-```text
-handler sends request
-handler awaits reply/event
-handler continuation is suspended
-task returns to receive loop
-task handles other messages
-matching reply/event arrives
-suspended handler resumes
-```
-
-Architecture rules:
-
-ARCH-040: Task-internal waits suspend handler continuations.
-
-ARCH-041: Task-internal waits do not block the task OS thread.
-
-ARCH-042: The receive loop checks suspended waiters before normal handler dispatch.
-
-ARCH-043: Waiter matching uses message kind and `SessionId` for protocol messages.
-
-ARCH-044: Suspended handler continuations shall not retain mutable borrows of task state or task context while suspended; any required mutable access is reacquired when the continuation is resumed.
-
-## Session architecture
-
-`SessionId` identifies a logical interaction that can produce future messages.
-
-Architecture rules:
-
-ARCH-050: `SessionId` is shared by calls, streams, cancellation, matching, late-event handling, tracing, and debugging.
-
-ARCH-051: `SessionId` is a logical interaction identifier, not a physical message identifier.
-
-ARCH-052: The preferred structure is `origin: EndpointId` plus `sequence: u64`.
-
-ARCH-053: A task context allocates session IDs using task-local sequence state.
-
-ARCH-054: Protocol messages that belong to a session implement or support a `HasSessionId` mechanism.
-
-## Call architecture
-
-A synchronous call is a request message followed by exactly one response message.
-
-Architecture rules:
-
-ARCH-060: Call requests carry a `SessionId` and reply address.
-
-ARCH-061: Responses are represented using a typed `Response<T>` wrapper containing `session_id` and `value`.
-
-ARCH-062: A call handler can return the reply payload; runtime or macro plumbing converts it into `Response<T>`.
-
-ARCH-063: Concurrent calls with the same request and response type are disambiguated by `SessionId`.
-
-ARCH-064: Late one-shot responses are passed to the receiving task's late-reply handler rather than silently discarded by default.
-
-ARCH-065: Reply and stream-reply protocol messages carry a `late_reply` policy derived from the call or stream declaration; `Report` is the default and `Ignore` is an explicit opt-in for unknown-session replies that the application protocol considers obsolete.
-
-ARCH-066: Reported late replies are passed by borrowed reference to the receiving task's late-reply handler, which returns either `Ignore` or `Terminate`.
-
-ARCH-067: A task without a declared late-reply handler uses a default no-op handler that returns `Ignore`; future diagnostics or logging infrastructure may change the default handler implementation without changing the task declaration model.
-
-ARCH-068: Call response enqueue operations from task-internal handlers use the receiver-owned queue-capacity reservation mechanism when the caller queue has no available capacity for the response. The callee handler continuation suspends rather than blocking the task OS thread or silently dropping the response.
-
-## Stream architecture
-
-A stream is a request message followed by zero or more stream events and then end, error, or cancellation.
-
-Architecture rules:
-
-ARCH-070: Streams use the same `SessionId` model as calls.
-
-ARCH-071: Stream events include `Batch`, `End`, and `Error` variants.
-
-ARCH-072: The public stream API returns one item at a time while internally supporting batches.
-
-ARCH-073: Dropping an unfinished stream object attempts asynchronous cancellation.
-
-ARCH-074: Stream cancellation uses the same `SessionId` as the stream.
-
-ARCH-075: Stream producers remain within the current task model.
-
-ARCH-076: Credit-based flow control is the recommended mechanism to avoid flooding the consumer queue.
-
-ARCH-077: A stream producer may suspend when backpressured or waiting for stream control messages while the task continues handling other messages.
-
-ARCH-077A: Producer-side `yield_item()` and `yield_batch()` are the preferred stream-handler suspension points for credit-based flow control; they should wait for additional credit instead of exposing ordinary no-credit states as handler-visible retry errors.
-
-ARCH-078: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
-
-ARCH-079: Late stream replies are passed to the receiving task's late-reply handler by default and are silently ignored only when their stream declaration uses `late_reply = "ignore"`.
-
-ARCH-079A: Stream item, end, and error reply enqueue operations use the receiver-owned queue-capacity reservation mechanism when the consumer queue has no available capacity for the stream reply. The stream handler continuation suspends rather than requiring ordinary stream handler code to manually retry queue-full failures.
-
-## External caller architecture
-
-External callers do not have task queues.
-
-Architecture rules:
-
-ARCH-080: External blocking APIs may use one-shot channels internally.
-
-ARCH-081: External blocking APIs must be explicit, for example `get_blocking`.
-
-ARCH-082: Task-internal APIs must remain distinct from external blocking APIs.
-
-## OS event bridge architecture
-
-Operating-system and application-framework event bridges observe native events
-and translate them into typed `mpi` messages. These bridges live in
-`mpi-os-events` rather than in `mpi` core, so platform-specific dependencies do
-not become part of the message runtime.
-
-Some source events are asynchronous notifications and naturally map to `mpi`
-events. Other source events are synchronous callbacks where the operating system
-or framework expects a reply, decision, or cancellation result; those shall be
-modeled with synchronous `mpi` interactions or another explicit reply path.
-
-POSIX signal handlers cannot safely allocate normal Rust messages.
-
-Architecture rules:
-
-ARCH-090: The signal handler part performs only async-signal-safe operations.
-
-ARCH-091: A signal bridge task or thread observes signal state or notification.
-
-ARCH-092: The signal bridge constructs and sends normal Rust messages outside signal-handler context.
-
-ARCH-093: Unix signal bridge support is packaged in `mpi-os-events` behind a default-enabled crate feature so applications may opt out of the platform dependency.
-
-ARCH-094: Linux, Windows, and macOS OS-event bridges use native platform event APIs.
-
-ARCH-095: Android and iOS OS-event bridges are framework-mediated. Tauri is the initial mobile framework adapter, and framework-specific code is kept behind adapter boundaries so another framework can be added later.
-
-ARCH-096: Each OS-event bridge documents whether the source event maps to an asynchronous event message, a synchronous call, or another typed interaction.
-
-## Diagnostics architecture
-
-Diagnostics are not first-phase implementation, but architecture should preserve room for:
-
-- queue diagnostics;
-- session tracing;
-- stream lifecycle tracing;
-- timeout reporting;
-- deadlock/debug support;
-- late response and late stream reply reporting through task late-reply handlers, with explicit `late_reply = "ignore"` opt-out.
-
-## Implementation phases
-
-Recommended order:
-
-1. Bounded task queues with separate FIFO queues for normal and priority messages.
-2. Task handles and generated event send methods.
-3. Start message and task spawn API, with start forced to priority and guaranteed first.
-4. Generated message enums, task context types, and dispatch loops.
-5. `ctx-future` context-returning suspension primitives.
-6. Async handlers or generated handler continuations run by a task-local executor.
-7. Selective receive by message kind.
-8. `SessionId`, `Response<T>`, and synchronous calls.
-9. Protocol declarations and compile-time `CanReceive<T>` checks for responses.
-10. `StreamEvent<T, E>`, `MessageStream<T, E>`, and stream cancellation.
-11. Stream batching and credit-based flow control.
-12. Receiver-owned queue-capacity reservations for task-internal call responses
-    and stream replies, including framework-only queue-space wakeups and
-    priority-reserved queue capacity.
-13. OS event bridge crate, beginning with safe Unix signal forwarding.
-14. Diagnostics, timeouts, tracing, and deadlock/debug support.
+| REPO-CMP-001 | Human maintainer | Approves requirements, architecture, interfaces, releases, and merge decisions. |
+| REPO-CMP-002 | Agent instructions | Define role-specific AI workflow behavior. |
+| REPO-CMP-003 | Shared SE docs | Define repository process, build, workflow, and traceability conventions. |
+| REPO-CMP-004 | Crate SE docs | Define crate-specific engineering baselines. |
+| REPO-CMP-005 | Verification commands | Provide repeatable evidence for build and test status. |

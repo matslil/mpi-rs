@@ -149,7 +149,7 @@ Architecture or interface changes should identify:
 - test impact;
 - validation impact.
 
-Interface changes that affect user-facing Rust API should update `docs/se-interfaces.md` and relevant validation scenarios.
+Interface changes that affect user-facing Rust API should update the affected crate-local interface baseline and relevant validation scenarios.
 
 ## Test change rules
 
@@ -177,7 +177,7 @@ Traceability should be updated when:
 Escalate to the human maintainer when:
 
 - requirements conflict;
-- the implementation would require changing the message model;
+- the implementation would require changing crate behavior outside the approved crate-local baseline;
 - a testable behavior is ambiguous;
 - public API ergonomics are unclear;
 - a dependency or runtime choice is needed;

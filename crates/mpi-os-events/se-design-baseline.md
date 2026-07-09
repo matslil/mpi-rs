@@ -17,7 +17,29 @@ normal Rust message construction begins. It shall not require `mpi` core users
 to depend on GUI, mobile, signal, or platform-event packages unless they opt
 into this crate.
 
+## Stakeholder Needs
+
+The following original stakeholder need IDs remain part of this crate baseline:
+
+- SN-044: Runtime users need POSIX signal integration to avoid unsafe allocation or non-async-signal-safe operations in signal handlers.
+- SN-046: Runtime users need operating-system and application-framework events to be translated into typed `mpi` messages without making the core message runtime depend on every supported platform integration.
+
 ## Requirements
+
+The original workspace-level `REQ-*` IDs remain stable after migration. The
+`OS-EVT-REQ-*` IDs below are local grouping aliases; they do not replace the
+original IDs used by tests, reports, and traceability.
+
+### Migrated stable requirements
+
+- REQ-130: The POSIX signal handler portion of any Unix signal support shall perform only async-signal-safe operations.
+- REQ-131: Unix signal forwarding shall use a bridge that observes async-signal-safe state or notification and then sends normal Rust messages outside the signal handler.
+- REQ-132: Unix signal bridge support shall be controlled by an optional `mpi-os-events` crate feature that is included in that crate's default feature set.
+- REQ-133: Operating-system and application-framework event bridge support shall live in a separate workspace crate named `mpi-os-events`.
+- REQ-134: The OS event bridge shall support translating native operating-system events into typed `mpi` messages.
+- REQ-135: For each supported OS or framework event, the bridge design shall consider whether the source event is asynchronous or synchronous.
+- REQ-136: The OS event bridge shall support Linux, Windows, and macOS through native platform event APIs.
+- REQ-137: The OS event bridge shall support Android and iOS through framework adapters; Tauri shall be the initial Android and iOS framework adapter, preserving a path to future adapters.
 
 ### OS-EVT-REQ-001: Native OS event bridge
 
@@ -103,6 +125,14 @@ Status: approved
 
 ## Architecture
 
+The original architecture IDs CMP-013 and ARCH-090 through ARCH-096 remain
+stable for this crate. The `OS-EVT-ARCH-*` IDs below are grouping aliases.
+
+Stable architecture ID anchors:
+
+- CMP-013
+- ARCH-090, ARCH-091, ARCH-092, ARCH-093, ARCH-094, ARCH-095, ARCH-096
+
 OS-EVT-ARCH-001: `mpi-os-events` depends on `mpi` and sends messages through
 `TaskHandle` or equivalent public task-handle APIs.
 
@@ -124,6 +154,13 @@ OS-EVT-ARCH-006: A bridge shall document whether each source event maps to an
 asynchronous event message, a synchronous call, or another typed interaction.
 
 ## Interface
+
+The original interface IDs INT-110 through INT-115 remain stable for this
+crate. The `OS-EVT-INT-*` IDs below are grouping aliases.
+
+Stable interface ID anchors:
+
+- INT-110, INT-111, INT-112, INT-113, INT-114, INT-115
 
 OS-EVT-INT-001: Bridge APIs shall accept a target task handle or equivalent
 send surface and a mapping from platform event data to the target task's message
@@ -151,16 +188,49 @@ Verification should include:
 - framework-adapter tests for Android and iOS lifecycle events, beginning with
   Tauri and leaving evidence for future adapter portability.
 
+## Validation
+
+The original validation ID VAL-012 remains stable for this crate. The
+`OS-EVT-VAL-*` IDs below are grouping aliases.
+
+### OS-EVT-VAL-001: Forward Unix signals safely
+
+Status: approved
+
+A developer forwards a Unix signal into a target `mpi` task as an ordinary Rust message.
+
+Expected outcome:
+
+- the POSIX signal handler performs only async-signal-safe operations;
+- a bridge thread constructs and sends the normal Rust message;
+- disabling default features removes Unix signal bridge APIs from this crate.
+
+Evidence type: inspection, Unix-host test, and demonstration
+
+### OS-EVT-VAL-002: Preserve OS interaction kind
+
+Status: approved
+
+A developer maps an operating-system or framework event into a target `mpi` interaction.
+
+Expected outcome:
+
+- asynchronous source events map to event-style messages when no reply is required;
+- synchronous source events map to call-style interactions or another explicit reply path when the platform expects a decision;
+- platform-specific dependencies remain outside the core `mpi` crate.
+
+Evidence type: inspection and adapter-specific tests as adapters are added
+
 ## Traceability
 
-| Requirement | Architecture | Interface | Verification |
-|---|---|---|---|
-| OS-EVT-REQ-001 | OS-EVT-ARCH-001, OS-EVT-ARCH-002 | OS-EVT-INT-001 | inspection |
-| OS-EVT-REQ-002 | OS-EVT-ARCH-006 | OS-EVT-INT-002, OS-EVT-INT-003 | inspection |
-| OS-EVT-REQ-003 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test |
-| OS-EVT-REQ-004 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test |
-| OS-EVT-REQ-005 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test |
-| OS-EVT-REQ-006 | OS-EVT-ARCH-005 | OS-EVT-INT-001 | inspection |
-| OS-EVT-REQ-007 | OS-EVT-ARCH-003 | OS-EVT-INT-004 | inspection |
-| OS-EVT-REQ-008 | OS-EVT-ARCH-003 | OS-EVT-INT-001, OS-EVT-INT-004 | inspection |
-| OS-EVT-REQ-009 | OS-EVT-ARCH-003 | OS-EVT-INT-004 | test |
+| Requirement | Architecture | Interface | Verification | Validation |
+|---|---|---|---|---|
+| OS-EVT-REQ-001 | OS-EVT-ARCH-001, OS-EVT-ARCH-002 | OS-EVT-INT-001 | inspection | OS-EVT-VAL-002 |
+| OS-EVT-REQ-002 | OS-EVT-ARCH-006 | OS-EVT-INT-002, OS-EVT-INT-003 | inspection | OS-EVT-VAL-002 |
+| OS-EVT-REQ-003 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test | OS-EVT-VAL-002 |
+| OS-EVT-REQ-004 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test | OS-EVT-VAL-002 |
+| OS-EVT-REQ-005 | OS-EVT-ARCH-004 | OS-EVT-INT-001 | inspection, test | OS-EVT-VAL-002 |
+| OS-EVT-REQ-006 | OS-EVT-ARCH-005 | OS-EVT-INT-001 | inspection | OS-EVT-VAL-002 |
+| OS-EVT-REQ-007 | OS-EVT-ARCH-003 | OS-EVT-INT-004 | inspection | OS-EVT-VAL-001 |
+| OS-EVT-REQ-008 | OS-EVT-ARCH-003 | OS-EVT-INT-001, OS-EVT-INT-004 | inspection | OS-EVT-VAL-001 |
+| OS-EVT-REQ-009 | OS-EVT-ARCH-003 | OS-EVT-INT-004 | test | OS-EVT-VAL-001 |
