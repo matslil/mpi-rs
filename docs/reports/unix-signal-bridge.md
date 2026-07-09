@@ -3,7 +3,7 @@
 ## Summary
 
 `mpi-rs` now provides Unix-only signal forwarding through
-`mpi::forward_signals` when the default-enabled `unix-signals` feature is
+`mpi_os_events::forward_signals` when the default-enabled `unix-signals` feature is
 active. The API registers POSIX signals, observes them through a background
 bridge thread, and enqueues normal task messages from that ordinary Rust thread.
 
@@ -22,11 +22,11 @@ bridge thread, and enqueues normal task messages from that ordinary Rust thread.
 
 ## Implementation Evidence
 
-- `crates/mpi/src/signal.rs` implements `forward_signals`, `SignalBridge`, and
+- `crates/mpi-os-events/src/signal.rs` implements `forward_signals`, `SignalBridge`, and
   `SignalBridgeError` behind `cfg(all(unix, feature = "unix-signals"))`.
-- `crates/mpi/src/lib.rs` exports the signal API only on Unix targets when the
+- `crates/mpi-os-events/src/lib.rs` exports the signal API only on Unix targets when the
   `unix-signals` feature is active.
-- `crates/mpi/examples/unix_signal_bridge.rs` demonstrates forwarding a Unix
+- `crates/mpi-os-events/examples/unix_signal_bridge.rs` demonstrates forwarding a Unix
   signal into a generated task event.
 - The bridge uses `signal-hook`'s `Signals` iterator. The dependency is used
   because Unix signal registration requires platform-specific async-signal-safe
@@ -40,14 +40,14 @@ bridge thread, and enqueues normal task messages from that ordinary Rust thread.
   inside the spawned bridge thread, not in the POSIX signal handler.
 - Unix-only test: `req_130_req_131_signal_bridge_forwards_signal_outside_handler`
   raises `SIGUSR1` and observes the generated task message in the target queue.
-- Feature opt-out evidence should include `cargo check -p mpi
+- Feature opt-out evidence should include `cargo check -p mpi-os-events
   --no-default-features`.
-- Unix-host validation should include running `cargo run -p mpi --example
+- Unix-host validation should include running `cargo run -p mpi-os-events --example
   unix_signal_bridge`.
 
 ## Platform Note
 
 The public module is compiled only for `cfg(all(unix, feature =
 "unix-signals"))`. Windows builds keep the existing API surface unchanged, and
-Unix applications can opt out of the signal bridge dependency with
+Unix applications can opt out of the `mpi-os-events` signal bridge dependency with
 `default-features = false`.

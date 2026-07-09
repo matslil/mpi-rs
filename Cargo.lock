@@ -28,7 +28,6 @@ version = "0.1.0"
 dependencies = [
  "ctx-future",
  "mpi-macros",
- "signal-hook",
 ]
 
 [[package]]
@@ -38,6 +37,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "mpi-os-events"
+version = "0.1.0"
+dependencies = [
+ "mpi",
+ "signal-hook",
 ]
 
 [[package]]

@@ -309,15 +309,25 @@ Relevant requirements:
 - REQ-125
 - REQ-126
 
-### Unix signal verification
+### OS event bridge verification
 
-Unix signal support verification should inspect that signal handlers perform only async-signal-safe operations and that normal message construction occurs in a bridge task or thread. It should also verify that the signal bridge API is feature-gated behind a default-enabled optional feature.
+OS event bridge verification should inspect that bridge dependencies are
+isolated in `mpi-os-events`, that native or framework source events are mapped
+to the correct asynchronous or synchronous `mpi` interaction kind, and that
+platform-specific code remains behind bridge adapters.
+
+Unix signal support verification should inspect that signal handlers perform only async-signal-safe operations and that normal message construction occurs in a bridge task or thread. It should also verify that the signal bridge API is feature-gated behind a default-enabled optional feature in `mpi-os-events`.
 
 Relevant requirements:
 
 - REQ-130
 - REQ-131
 - REQ-132
+- REQ-133
+- REQ-134
+- REQ-135
+- REQ-136
+- REQ-137
 
 ### Diagnostics verification
 

@@ -89,6 +89,8 @@ SN-044: Runtime users need POSIX signal integration to avoid unsafe allocation o
 
 SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, unknown-session replies, and stream lifecycle issues.
 
+SN-046: Runtime users need operating-system and application-framework events to be translated into typed `mpi` messages without making the core message runtime depend on every supported platform integration.
+
 ## Constraints
 
 CON-001: The implementation language is Rust.

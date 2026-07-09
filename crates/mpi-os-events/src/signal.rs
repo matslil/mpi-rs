@@ -3,11 +3,10 @@
 use std::fmt;
 use std::thread::{self, JoinHandle};
 
+use mpi::error::SendError;
+use mpi::message::TaskMessage;
+use mpi::task::TaskHandle;
 use signal_hook::iterator::{Handle as SignalsHandle, Signals};
-
-use crate::error::SendError;
-use crate::message::TaskMessage;
-use crate::task::TaskHandle;
 
 /// Error returned while creating or joining a Unix signal bridge.
 #[derive(Debug)]
@@ -117,10 +116,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use mpi::message::MessagePlacement;
+    use mpi::queue::TaskQueue;
     use signal_hook::consts::signal::SIGUSR1;
-
-    use crate::message::MessagePlacement;
-    use crate::queue::TaskQueue;
 
     #[derive(Debug, Eq, PartialEq)]
     enum SignalMessage {

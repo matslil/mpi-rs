@@ -38,7 +38,7 @@ fn main() {
     use signal_hook::consts::signal::SIGUSR1;
 
     let (task, runtime) = SignalTask::spawn(SignalTask::default()).unwrap();
-    let bridge = mpi::forward_signals(task.clone(), [SIGUSR1], |signal| {
+    let bridge = mpi_os_events::forward_signals(task.clone(), [SIGUSR1], |signal| {
         SignalTaskMessage::Signal { signal }
     })
     .expect("signal bridge starts");
@@ -61,5 +61,7 @@ fn main() {
 
 #[cfg(not(all(unix, feature = "unix-signals")))]
 fn main() {
-    println!("unix_signal_bridge requires a Unix target with the mpi unix-signals feature");
+    println!(
+        "unix_signal_bridge requires a Unix target with the mpi-os-events unix-signals feature"
+    );
 }

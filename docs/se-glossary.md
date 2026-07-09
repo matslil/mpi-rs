@@ -266,6 +266,24 @@ An API used from outside a task. It may block the calling thread and should be e
 
 ## Signal terms
 
+### OS event
+
+A native operating-system notification or callback that may be translated into
+an `mpi` message or interaction by an OS event bridge. An OS event can be
+asynchronous, requiring only an event message, or synchronous, requiring a
+reply-producing interaction.
+
+### Framework event
+
+An application-shell or mobile-framework notification or callback, such as a
+Tauri mobile lifecycle event, that represents platform behavior but is delivered
+through a framework adapter rather than a native OS API.
+
+### OS event bridge
+
+A bridge that observes native OS events or framework events and sends typed
+`mpi` messages or interactions to task handles.
+
 ### POSIX signal handler
 
 The low-level function or handler invoked by the operating system for a Unix signal. It must perform only async-signal-safe operations.

@@ -10,7 +10,7 @@ ARCH-001: `mpi-rs` shall provide message passing while exposing an idiomatic Rus
 
 ARCH-002: The architecture shall separate runtime primitives from proc-macro generated task plumbing.
 
-ARCH-003: The architecture shall support incremental implementation of queues, task handles, start messages, dispatch, suspending handlers, sessions, calls, streams, flow control, Unix signal bridging, and diagnostics.
+ARCH-003: The architecture shall support incremental implementation of queues, task handles, start messages, dispatch, suspending handlers, sessions, calls, streams, flow control, OS event bridging, and diagnostics.
 
 ARCH-004: The architecture shall keep streams within the current task model rather than creating separate tasks merely to produce stream items.
 
@@ -53,7 +53,7 @@ OS threads and synchronization primitives
 | CMP-010 | Stream subsystem | Sends stream requests, stream events, stream cancellation, and stream flow-control messages. |
 | CMP-011 | Compile-time receive check subsystem | Ensures a caller task can only wait for messages it declares it can receive. |
 | CMP-012 | Macro crate | Generates task message enums, contexts, handles, send methods, dispatch plumbing, and protocol integration. |
-| CMP-013 | Unix signal bridge | Converts POSIX signal notifications into normal Rust messages outside signal-handler context. |
+| CMP-013 | OS event bridge crate | Converts native OS and framework events into typed `mpi` messages outside restricted callback context. |
 | CMP-014 | Diagnostics subsystem | Supports tracing, timeouts, deadlock/debug support, session debugging, and queue diagnostics. |
 | CMP-015 | ctx-future crate | Provides reusable context-borrowing resumable computation primitives used by the task-local runtime. |
 | CMP-016 | Protocol definition subsystem | Defines namespace-qualified message contracts used by generated APIs and compile-time receive checks. |
@@ -80,13 +80,16 @@ crates/
       session.rs
       stream.rs
       error.rs
-      signal.rs
   mpi-macros/
     src/
       lib.rs
       task_macro.rs
       protocol_macro.rs
       message_macro.rs
+  mpi-os-events/
+    src/
+      lib.rs
+      signal.rs
 examples/
   ping_pong.rs
   synchronous_call.rs
@@ -340,7 +343,17 @@ ARCH-081: External blocking APIs must be explicit, for example `get_blocking`.
 
 ARCH-082: Task-internal APIs must remain distinct from external blocking APIs.
 
-## Unix signal architecture
+## OS event bridge architecture
+
+Operating-system and application-framework event bridges observe native events
+and translate them into typed `mpi` messages. These bridges live in
+`mpi-os-events` rather than in `mpi` core, so platform-specific dependencies do
+not become part of the message runtime.
+
+Some source events are asynchronous notifications and naturally map to `mpi`
+events. Other source events are synchronous callbacks where the operating system
+or framework expects a reply, decision, or cancellation result; those shall be
+modeled with synchronous `mpi` interactions or another explicit reply path.
 
 POSIX signal handlers cannot safely allocate normal Rust messages.
 
@@ -352,7 +365,13 @@ ARCH-091: A signal bridge task or thread observes signal state or notification.
 
 ARCH-092: The signal bridge constructs and sends normal Rust messages outside signal-handler context.
 
-ARCH-093: Unix signal bridge support is packaged behind a default-enabled crate feature so applications may opt out of the platform dependency.
+ARCH-093: Unix signal bridge support is packaged in `mpi-os-events` behind a default-enabled crate feature so applications may opt out of the platform dependency.
+
+ARCH-094: Linux, Windows, and macOS OS-event bridges use native platform event APIs.
+
+ARCH-095: Android and iOS OS-event bridges are framework-mediated. Tauri is the initial mobile framework adapter, and framework-specific code is kept behind adapter boundaries so another framework can be added later.
+
+ARCH-096: Each OS-event bridge documents whether the source event maps to an asynchronous event message, a synchronous call, or another typed interaction.
 
 ## Diagnostics architecture
 
@@ -383,5 +402,5 @@ Recommended order:
 12. Receiver-owned queue-capacity reservations for task-internal call responses
     and stream replies, including framework-only queue-space wakeups and
     priority-reserved queue capacity.
-13. Safe Unix signal bridge.
+13. OS event bridge crate, beginning with safe Unix signal forwarding.
 14. Diagnostics, timeouts, tracing, and deadlock/debug support.
