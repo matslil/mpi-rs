@@ -2,7 +2,7 @@
 
 > Superseded status: this is a historical implementation-attempt report. The
 > current implementation-readiness summary is
-> `docs/reports/final-implementation-readiness.md`, and authoritative current
+> `crates/mpi/reports/final-implementation-readiness.md`, and authoritative current
 > status remains in `docs/se-traceability.md` and
 > `docs/se-verification-report.md`.
 

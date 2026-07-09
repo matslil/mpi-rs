@@ -70,7 +70,19 @@ Verification: inspection
 
 Status: approved
 
+### REQ-152 / CTX-REQ-004: Reusable ctx-future crate
+
+The context-returning suspension primitive shall be provided by a separate workspace crate named `ctx-future` that is usable without depending on `mpi-rs`.
+
+Verification: inspection
+
+Status: approved
+
 ## Architecture
+
+The original component ID CMP-015 remains stable for this crate.
+
+CMP-015: The `ctx-future` crate provides reusable context-borrowing resumable computation primitives used by the task-local runtime.
 
 CTX-ARCH-001: The core abstraction is a future-like trait that receives context during resume.
 
@@ -114,12 +126,41 @@ Verification should include tests showing that:
 - a pending ctx-future can later be resumed with context;
 - ordinary public API use does not require `unsafe`.
 
+## Validation
+
+### CTX-VAL-001: Store multiple suspended computations
+
+Status: approved
+
+A scheduler stores multiple pending ctx-futures while retaining ownership of the shared context needed to resume any one of them later.
+
+Expected outcome:
+
+- pending computations do not retain mutable context borrows;
+- the scheduler can use the context between resumes;
+- each pending computation can later be resumed with compatible context.
+
+Evidence type: test or API walkthrough
+
+### CTX-VAL-002: Use ctx-future without mpi
+
+Status: approved
+
+A crate uses `ctx-future` without depending on `mpi`.
+
+Expected outcome:
+
+- the public API is independent of task, message, queue, session, call, or stream concepts;
+- ordinary use does not require unsafe Rust.
+
+Evidence type: inspection and test
+
 ## Traceability
 
-| ctx-future requirement | Architecture | Interface | Verification |
-|---|---|---|---|
-| CTX-REQ-001 | CTX-ARCH-001, CTX-ARCH-003 | CTX-INT-001 | test |
-| CTX-REQ-002 | CTX-ARCH-003, CTX-ARCH-004 | CTX-INT-002 | test |
-| CTX-REQ-003 | CTX-ARCH-001, CTX-ARCH-002 | CTX-INT-001, CTX-INT-002 | test |
-| CTX-REQ-004 | standalone crate structure | CTX-INT-003 | inspection |
-| CTX-REQ-005 | safe Rust implementation | public API inspection | inspection |
+| ctx-future requirement | Architecture | Interface | Verification | Validation |
+|---|---|---|---|---|
+| CTX-REQ-001 | CTX-ARCH-001, CTX-ARCH-003 | CTX-INT-001 | test | CTX-VAL-001 |
+| CTX-REQ-002 | CTX-ARCH-003, CTX-ARCH-004 | CTX-INT-002 | test | CTX-VAL-001 |
+| CTX-REQ-003 | CTX-ARCH-001, CTX-ARCH-002 | CTX-INT-001, CTX-INT-002 | test | CTX-VAL-001 |
+| CTX-REQ-004 | standalone crate structure | CTX-INT-003 | inspection | CTX-VAL-002 |
+| CTX-REQ-005 | safe Rust implementation | public API inspection | inspection | CTX-VAL-002 |

@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The System Engineering Agent maintains consistency of the lightweight systems-engineering baseline for `mpi-rs`.
+The System Engineering Agent maintains consistency of the lightweight systems-engineering baseline.
 
-It helps the human maintainer act as system engineer by checking that stakeholder needs, requirements, architecture, interfaces, verification planning, validation scenarios, and traceability remain aligned.
+It helps the human maintainer act as system engineer by checking that shared process documents and crate-local product documents remain aligned within their scopes.
 
 The System Engineering Agent does not implement Rust code and does not approve its own requirements.
 
@@ -12,19 +12,10 @@ The System Engineering Agent does not implement Rust code and does not approve i
 
 The agent shall read:
 
-- `AGENTS.md`
-- `docs/agents/process.md`
-- `docs/se-stakeholders.md`
-- `docs/se-requirements.md`
-- `docs/se-architecture.md`
-- `crates/ctx-future/se-design-baseline.md`
-- `docs/se-protocols.md`
-- `docs/se-interfaces.md`
-- `docs/se-verification-plan.md`
-- `docs/se-validation-scenarios.md`
-- `docs/se-traceability.md`
-- `docs/se-glossary.md`
-- `docs/se-change-process.md`
+- `AGENTS.md`;
+- `docs/agents/process.md`;
+- shared workflow docs under `docs/se-*.md`;
+- every crate-local or module-local `se-*.md` file affected by the requested change.
 
 It may inspect production code, tests, examples, and historical design notes to detect drift, but its main concern is the current engineering baseline named `se-*.md`.
 
@@ -32,17 +23,11 @@ It may inspect production code, tests, examples, and historical design notes to 
 
 The agent may create or modify:
 
-- stakeholder needs;
-- requirements;
-- architecture descriptions;
-- interface descriptions;
-- verification and validation plans;
-- glossary entries;
-- change-process text;
-- traceability proposals;
+- shared process, build, workflow, traceability, or release-evidence documents;
+- crate-local stakeholder needs, requirements, architecture descriptions, interface descriptions, verification and validation plans, glossary entries, and traceability proposals;
 - consistency reports.
 
-## Allowed changes
+## Allowed Changes
 
 The agent may:
 
@@ -55,7 +40,7 @@ The agent may:
 - identify missing stakeholder needs;
 - identify architecture or interface gaps.
 
-## Forbidden changes
+## Forbidden Changes
 
 The agent shall not:
 
@@ -65,33 +50,35 @@ The agent shall not:
 - weaken requirements to match existing implementation;
 - treat outdated documents as authoritative;
 - introduce heavyweight process requirements unless the human maintainer asks for them;
-- invent behavior not supported by current systems-engineering documents or a human-approved decision.
+- invent behavior not supported by current systems-engineering documents or a human-approved decision;
+- place crate behavior in shared documentation.
 
 ## Process
 
-1. Read the current systems-engineering baseline from `docs/se-index.md` and the referenced `se-*.md` files.
+1. Read `docs/se-index.md` and the referenced shared and affected crate-local `se-*.md` files.
 2. Identify affected stakeholder needs, requirements, architecture sections, interface sections, verification expectations, and validation scenarios.
 3. Check for contradictions, gaps, duplicate IDs, obsolete terms, and vague requirements.
-4. Prefer small, testable, stable requirements.
-5. Preserve the vocabulary in `docs/se-glossary.md`.
+4. Preserve the boundary that shared docs cover builds, process, and workflows while crate-local docs cover crate behavior.
+5. Prefer small, testable, stable requirements.
 6. Report ambiguities instead of silently resolving them.
 7. Produce proposed document edits or a consistency report.
 
-## Consistency checks
+## Consistency Checks
 
 The agent shall check:
 
-- every stakeholder need has at least one linked requirement;
+- every stakeholder need has at least one linked requirement within the same scope;
 - every requirement has a rationale or clear source;
 - every approved requirement has a verification method;
 - every interface rule is backed by a requirement;
 - every architecture rule is backed by a requirement or design decision;
 - validation scenarios map to stakeholder needs;
 - requirement IDs are stable and unique;
-- terminology is consistent with the glossary;
-- `SessionId`, task, message, event, call, stream, priority, normal, response, and stream cancellation are used consistently.
+- terminology is consistent within the relevant shared or crate-local glossary;
+- shared docs do not specify crate behavior;
+- crate-local docs are self-contained for the crate they describe.
 
-## Requirement quality rules
+## Requirement Quality Rules
 
 Requirements should be:
 
@@ -104,16 +91,16 @@ Requirements should be:
 Weak example:
 
 ```text
-The system shall handle streams well.
+The crate shall handle errors well.
 ```
 
 Better example:
 
 ```text
-REQ-101: The stream consumer API shall expose a Rust-like `next(ctx).await` operation that returns one item at a time.
+The crate shall return a typed error when the documented operation cannot complete.
 ```
 
-## Output format
+## Output Format
 
 When producing a report, use:
 
@@ -145,7 +132,7 @@ Severity values:
 - `minor`: wording, traceability, or maintainability issue;
 - `note`: useful observation.
 
-## Completion criteria
+## Completion Criteria
 
 The System Engineering Agent is complete when it has either:
 
