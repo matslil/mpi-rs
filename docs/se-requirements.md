@@ -952,9 +952,9 @@ Verification: inspection
 
 Status: approved
 
-## Unix signal requirements
+## OS event bridge requirements
 
-### REQ-130: Async-signal-safe signal handling
+### REQ-130: Async-signal-safe Unix signal handling
 
 The POSIX signal handler portion of any Unix signal support shall perform only async-signal-safe operations.
 
@@ -964,7 +964,7 @@ Verification: inspection
 
 Status: approved
 
-### REQ-131: Signal bridge
+### REQ-131: Unix signal bridge
 
 Unix signal forwarding shall use a bridge that observes async-signal-safe state or notification and then sends normal Rust messages outside the signal handler.
 
@@ -976,13 +976,65 @@ Status: approved
 
 ### REQ-132: Optional default Unix signal feature
 
-Unix signal bridge support shall be controlled by an optional crate feature that is included in the default feature set.
+Unix signal bridge support shall be controlled by an optional `mpi-os-events` crate feature that is included in that crate's default feature set.
 
-Rationale: Applications that do not want the Unix signal dependency should be able to disable it with `default-features = false`, while default `mpi-rs` users still receive the supported signal bridge API on Unix targets.
+Rationale: Applications that do not want the Unix signal dependency should be able to disable it with `default-features = false`, while OS-event bridge users still receive the supported signal bridge API by default on Unix targets.
 
 Source: Human maintainer decision, SN-044
 
 Verification: test
+
+Status: approved
+
+### REQ-133: OS event bridge crate
+
+Operating-system and application-framework event bridge support shall live in a separate workspace crate named `mpi-os-events`.
+
+Rationale: The core `mpi` crate should remain focused on message-passing primitives and should not force applications to accept platform integration dependencies.
+
+Source: Human maintainer decision, SN-021, SN-044, SN-046
+
+Verification: inspection
+
+Status: approved
+
+### REQ-134: Native OS event translation
+
+The OS event bridge shall support translating native operating-system events into typed `mpi` messages.
+
+Source: Human maintainer decision, SN-046
+
+Verification: inspection
+
+Status: approved
+
+### REQ-135: OS event interaction kind
+
+For each supported OS or framework event, the bridge design shall consider whether the source event is asynchronous or synchronous. Asynchronous source events shall be translated to asynchronous messages when no reply is required. Synchronous source events shall be translated to synchronous `mpi` interactions when the operating system or framework expects a reply or decision.
+
+Source: Human maintainer decision, SN-046
+
+Verification: inspection
+
+Status: approved
+
+### REQ-136: Native Linux, Windows, and macOS support
+
+The OS event bridge shall support Linux, Windows, and macOS through native platform event APIs.
+
+Source: Human maintainer decision, SN-046
+
+Verification: inspection and platform tests where available
+
+Status: approved
+
+### REQ-137: Android and iOS framework adapters
+
+The OS event bridge shall support Android and iOS through framework adapters. Tauri shall be the initial Android and iOS framework adapter, and the design shall preserve a path to future adapters for other mobile frameworks.
+
+Source: Human maintainer decision, SN-046
+
+Verification: inspection
 
 Status: approved
 

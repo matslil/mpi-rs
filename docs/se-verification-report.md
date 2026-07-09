@@ -25,6 +25,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo check -p mpi --no-default-features
+cargo check -p mpi-os-events --no-default-features
 ```
 
 Result: all commands passed.
@@ -50,7 +51,7 @@ without contacting the network.
 | Sessions and calls | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/tests/scope_compile_fail.rs` | partial | Session IDs, typed responses, external blocking calls, out-of-order response matching, late replies, and receive-check enforcement are covered; task-local ordinary-message scheduling while suspended remains incomplete. |
 | Stream basics | test | `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs`, `crates/mpi/src/stream.rs` unit tests | passed | Batch hiding, end, error, drop cancellation attempt, generated cancellation routing, producer credit cleanup, explicit stream-flow and stream-cancelled send errors, late stream replies, ordinary-message non-discard, mapped credit enforcement, and REQ-115 no-credit `yield_item()`/`yield_batch()` suspension are covered. |
 | External blocking APIs | test, inspection | `crates/mpi/tests/task_macro.rs`, generated `_blocking` methods | passed | External APIs are explicit and distinct from context-aware task-internal APIs. |
-| Unix signal bridge | inspection, Unix-only test, feature check | `crates/mpi/src/signal.rs`, `crates/mpi/examples/unix_signal_bridge.rs`, `docs/reports/unix-signal-bridge.md` | partial | `forward_signals` delegates handler registration to `signal-hook` and constructs task messages on an ordinary bridge thread. The API is behind the default-enabled `unix-signals` feature. The mapped unit test and real example execution require a Unix host. |
+| OS event bridge | inspection, Unix-only test, feature check | `crates/mpi-os-events/src/signal.rs`, `crates/mpi-os-events/examples/unix_signal_bridge.rs`, `crates/mpi-os-events/se-design-baseline.md`, `docs/reports/unix-signal-bridge.md` | partial | `forward_signals` delegates handler registration to `signal-hook` and constructs task messages on an ordinary bridge thread in `mpi-os-events`. The API is behind the default-enabled `unix-signals` feature. The mapped unit test and real example execution require a Unix host. Native Windows/macOS/Linux adapters and Tauri Android/iOS framework adapters are documented but not yet implemented. |
 | Diagnostics | inspection, test | `docs/reports/diagnostics-roadmap.md`, `crates/mpi/tests/runtime_baseline.rs`, `crates/mpi/tests/task_macro.rs` | partial | Roadmap plus read-only queue and task-context snapshots exist; timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support remain deferred. |
 
 ## Failing or Blocked Verification
@@ -79,6 +80,8 @@ The following areas remain later-phase or explicitly incomplete:
 
 - Unix-host validation of the Unix signal bridge through the application
   example;
+- native Windows/macOS/Linux OS event adapters;
+- Android/iOS framework adapters, beginning with Tauri;
 - timeout APIs, tracing, richer session lifecycle diagnostics, and deadlock/debug support;
 - full validation examples for the public workflows listed in
   `docs/se-validation-scenarios.md`.
