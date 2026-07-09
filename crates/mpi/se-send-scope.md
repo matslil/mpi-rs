@@ -2,6 +2,8 @@
 
 This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
+Scope: `crates/mpi`.
+
 It records the human-approved design decision that generated send APIs are split by caller scope:
 
 - external code may use explicit blocking send APIs;
@@ -106,4 +108,4 @@ The send API scope decision clarifies an existing ambiguity in REQ-120 and REQ-1
 
 ### Traceability impact
 
-This addendum extends the external caller requirement group with REQ-122 and REQ-123. A future cleanup may fold these entries directly into `docs/se-requirements.md`, `docs/se-architecture.md`, `docs/se-interfaces.md`, and `docs/se-traceability.md` when the baseline is next reorganized.
+This crate-level addendum extends the external caller requirement group with REQ-122 and REQ-123. Workspace-level traceability should continue to index these requirements when they affect cross-document review.

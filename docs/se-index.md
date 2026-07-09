@@ -6,6 +6,7 @@ Current systems-engineering documents are named `se-*.md`. Workspace-level docum
 
 ## Workspace-Level Baseline
 
+- `docs/se-index.md`
 - `docs/se-stakeholders.md`
 - `docs/se-requirements.md`
 - `docs/se-architecture.md`
@@ -16,13 +17,13 @@ Current systems-engineering documents are named `se-*.md`. Workspace-level docum
 - `docs/se-traceability.md`
 - `docs/se-glossary.md`
 - `docs/se-change-process.md`
-- `docs/se-send-scope.md`
-- `docs/se-task-topology.md`
 - `docs/se-verification-report.md`
 
 ## Crate-Level Baseline
 
 - `crates/ctx-future/se-design-baseline.md`
+- `crates/mpi/se-send-scope.md`
+- `crates/mpi/se-task-topology.md`
 
 ## Scope Rules
 
