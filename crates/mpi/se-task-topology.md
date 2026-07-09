@@ -2,6 +2,8 @@
 
 This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
+Scope: `crates/mpi`.
+
 It records a human-approved design restriction for task instance topology: tasks that participate in the `mpi-rs` task system must be known at compile time. This restriction is intended to make generated task routing, task-local suspension, waiter matching, and compile-time receive checks simpler and more Rust-like.
 
 ## Scope
@@ -147,4 +149,4 @@ The compile-time task topology restriction is consistent with the existing basel
 
 ### Traceability impact
 
-This addendum includes local traceability rows for REQ-124 through REQ-126. A future cleanup may fold the new requirement, architecture, interface, and traceability IDs into the main baseline documents.
+This crate-level addendum includes local traceability rows for REQ-124 through REQ-126. Workspace-level traceability should continue to index these requirements when they affect cross-document review.

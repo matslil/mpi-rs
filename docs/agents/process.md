@@ -39,6 +39,8 @@ The most important baseline documents are:
 - `docs/se-glossary.md`
 - `docs/se-change-process.md`
 
+Agents changing a crate or module shall also read any crate-level or module-level `se-*.md` files under the affected crate or module.
+
 Role instructions are stored in:
 
 - `docs/agents/system-engineering-agent.md`
