@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::call::{CallResponseMessage, CallSession};
 use crate::message::LateReplyPolicy;
 use crate::message::TaskMessage;
+use crate::session::EndpointId;
 use crate::stream::StreamEventMessage;
 use crate::stream::{StreamControl, StreamSession};
 
@@ -12,6 +13,9 @@ use crate::stream::{StreamControl, StreamSession};
 pub trait TaskScope {
     /// Generated task message enum associated with this scope.
     type Message: TaskMessage + CallResponseMessage + StreamEventMessage;
+
+    /// Return the endpoint represented by this task-local scope.
+    fn endpoint(&self) -> EndpointId;
 
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.

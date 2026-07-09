@@ -13,7 +13,7 @@ use std::task::{Context, Poll};
 use crate::error::SendError;
 use crate::message::{HasSessionId, LateReplyPolicy};
 use crate::scope::TaskScope;
-use crate::session::SessionId;
+use crate::session::{EndpointId, SessionId};
 
 const STREAM_PULL_CREDIT: u32 = 1;
 const STREAM_INITIAL_CREDIT: u32 = 64;
@@ -326,6 +326,15 @@ pub trait StreamControl: Send + Sync + 'static {
 pub trait StreamEventSink<T, E> {
     /// Send one stream event to the consumer side.
     fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError>;
+
+    /// Send one task-internal stream event produced by the given endpoint.
+    fn send_event_from(
+        &mut self,
+        _sender: EndpointId,
+        event: StreamEvent<T, E>,
+    ) -> Result<(), SendError> {
+        self.send_event(event)
+    }
 }
 
 impl<T, E, F> StreamEventSink<T, E> for F
@@ -341,28 +350,68 @@ impl<T, E> StreamEventSink<T, E> for Box<dyn StreamEventSink<T, E> + Send> {
     fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
         (**self).send_event(event)
     }
+
+    fn send_event_from(
+        &mut self,
+        sender: EndpointId,
+        event: StreamEvent<T, E>,
+    ) -> Result<(), SendError> {
+        (**self).send_event_from(sender, event)
+    }
 }
+
+type StreamSendFn<T, E> =
+    Box<dyn FnMut(Option<EndpointId>, StreamEvent<T, E>) -> Result<(), SendError> + Send>;
 
 /// Owned sender endpoint used by stream producers to emit events.
 pub struct StreamEventSender<T, E> {
-    sink: Box<dyn StreamEventSink<T, E> + Send>,
+    sink: StreamSendFn<T, E>,
 }
 
-impl<T, E> StreamEventSender<T, E> {
+impl<T: 'static, E: 'static> StreamEventSender<T, E> {
     /// Create a stream-event sender from a sink implementation.
     #[must_use]
-    pub fn new(sink: Box<dyn StreamEventSink<T, E> + Send>) -> Self {
-        Self { sink }
+    pub fn new(mut sink: Box<dyn StreamEventSink<T, E> + Send>) -> Self {
+        Self::new_with_sender(move |_sender, event| sink.send_event(event))
+    }
+
+    /// Create a stream-event sender from a sink function that can observe the
+    /// task endpoint that produced a task-internal event.
+    #[must_use]
+    pub fn new_with_sender<F>(sink: F) -> Self
+    where
+        F: FnMut(Option<EndpointId>, StreamEvent<T, E>) -> Result<(), SendError> + Send + 'static,
+    {
+        Self {
+            sink: Box::new(sink),
+        }
     }
 
     /// Send one stream event.
     pub fn send(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
+        self.send_inner(None, event)
+    }
+
+    /// Send one task-internal stream event produced by the given endpoint.
+    pub fn send_from(
+        &mut self,
+        sender: EndpointId,
+        event: StreamEvent<T, E>,
+    ) -> Result<(), SendError> {
+        self.send_inner(Some(sender), event)
+    }
+
+    fn send_inner(
+        &mut self,
+        sender: Option<EndpointId>,
+        event: StreamEvent<T, E>,
+    ) -> Result<(), SendError> {
         if let StreamEvent::Batch { session_id, values } = &event {
             consume_stream_credit(*session_id, values.len())?;
         }
         let terminal = event.is_terminal();
         let session_id = event.session_id();
-        let result = self.sink.send_event(event);
+        let result = (self.sink)(sender, event);
         if terminal {
             forget_stream_credit(session_id);
         }
@@ -381,6 +430,7 @@ where
     session_id: SessionId,
     batch_size: usize,
     sink: S,
+    sender: Option<EndpointId>,
     buffer: Vec<T>,
     finished: bool,
     flow_controlled: bool,
@@ -402,6 +452,7 @@ where
             session_id,
             batch_size,
             sink,
+            sender: None,
             buffer: Vec::with_capacity(batch_size),
             finished: false,
             flow_controlled: false,
@@ -414,6 +465,20 @@ where
     pub fn new_flow_controlled(session_id: SessionId, batch_size: usize, sink: S) -> Self {
         let mut stream = Self::new(session_id, batch_size, sink);
         stream.flow_controlled = true;
+        stream
+    }
+
+    /// Create a flow-controlled stream sink whose events are produced by the
+    /// given task endpoint.
+    #[must_use]
+    pub fn new_flow_controlled_from(
+        sender: EndpointId,
+        session_id: SessionId,
+        batch_size: usize,
+        sink: S,
+    ) -> Self {
+        let mut stream = Self::new_flow_controlled(session_id, batch_size, sink);
+        stream.sender = Some(sender);
         stream
     }
 
@@ -453,8 +518,7 @@ where
             return Ok(());
         }
         let values = std::mem::take(&mut self.buffer);
-        self.sink
-            .send_event(StreamEvent::batch(self.session_id, values))
+        self.send_event(StreamEvent::batch(self.session_id, values))
     }
 
     /// Flush any buffered items and send normal stream end.
@@ -464,7 +528,7 @@ where
         }
         self.flush()?;
         self.finished = true;
-        self.sink.send_event(StreamEvent::end(self.session_id))
+        self.send_event(StreamEvent::end(self.session_id))
     }
 
     /// Flush any buffered items and send stream error.
@@ -474,8 +538,14 @@ where
         }
         self.flush()?;
         self.finished = true;
-        self.sink
-            .send_event(StreamEvent::error(self.session_id, error))
+        self.send_event(StreamEvent::error(self.session_id, error))
+    }
+
+    fn send_event(&mut self, event: StreamEvent<T, E>) -> Result<(), SendError> {
+        match self.sender {
+            Some(sender) => self.sink.send_event_from(sender, event),
+            None => self.sink.send_event(event),
+        }
     }
 }
 

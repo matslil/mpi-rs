@@ -98,6 +98,28 @@ where
         self.queue.try_send(message)
     }
 
+    /// Enqueue one task-internal message from another endpoint.
+    pub fn send_message_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+        if !self.is_accepting() {
+            return Err(SendError::TaskStopped);
+        }
+
+        self.queue.try_send_from(sender, message)
+    }
+
+    /// Enqueue one task-internal message, waiting for receiver-owned capacity.
+    pub fn send_message_from_blocking(
+        &self,
+        sender: EndpointId,
+        message: M,
+    ) -> Result<(), SendError> {
+        if !self.is_accepting() {
+            return Err(SendError::TaskStopped);
+        }
+
+        self.queue.send_blocking_from(sender, message)
+    }
+
     /// Receive one message through this endpoint.
     pub fn recv_message(&self) -> Result<M, RecvError> {
         self.queue.recv()
@@ -190,6 +212,20 @@ where
     /// Enqueue one already-constructed message.
     pub fn send_message(&self, message: M) -> Result<(), SendError> {
         self.endpoint.send_message(message)
+    }
+
+    /// Enqueue one task-internal message from another endpoint.
+    pub fn send_message_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+        self.endpoint.send_message_from(sender, message)
+    }
+
+    /// Enqueue one task-internal message, waiting for receiver-owned capacity.
+    pub fn send_message_from_blocking(
+        &self,
+        sender: EndpointId,
+        message: M,
+    ) -> Result<(), SendError> {
+        self.endpoint.send_message_from_blocking(sender, message)
     }
 
     /// Receive one message from this handle's endpoint.
@@ -368,6 +404,12 @@ where
     #[must_use]
     pub fn self_handle(&self) -> TaskHandle<M, N> {
         self.inner.borrow().self_handle.clone()
+    }
+
+    /// Return this task context's endpoint.
+    #[must_use]
+    pub fn endpoint(&self) -> EndpointId {
+        self.inner.borrow().self_handle.endpoint()
     }
 
     /// Allocate the next task-local session ID.
@@ -591,16 +633,20 @@ where
         );
 
         let self_handle = self.self_handle();
-        let reply = SyncReplySender::new(move |response: Response<T>| {
+        let reply = SyncReplySender::new_with_sender(move |sender, response: Response<T>| {
             assert_eq!(
                 response.session_id, session_id,
                 "queued reply sender received response for wrong session"
             );
-            self_handle.send_message(M::call_response_with_late_reply_policy(
+            let message = M::call_response_with_late_reply_policy(
                 response.session_id,
                 Box::new(response.value) as Box<dyn Any + Send>,
                 late_reply_policy,
-            ))
+            );
+            match sender {
+                Some(sender) => self_handle.send_message_from_blocking(sender, message),
+                None => self_handle.send_message(message),
+            }
         });
 
         (session_id, reply, future)
@@ -640,14 +686,18 @@ where
         );
 
         let self_handle = self.self_handle();
-        let events = StreamEventSender::new(Box::new(move |event: StreamEvent<T, E>| {
+        let events = StreamEventSender::new_with_sender(move |sender, event: StreamEvent<T, E>| {
             let session_id = event.session_id();
-            self_handle.send_message(M::stream_event_with_late_reply_policy(
+            let message = M::stream_event_with_late_reply_policy(
                 session_id,
                 Box::new(event) as Box<dyn Any + Send>,
                 late_reply_policy,
-            ))
-        }));
+            );
+            match sender {
+                Some(sender) => self_handle.send_message_from_blocking(sender, message),
+                None => self_handle.send_message(message),
+            }
+        });
 
         (session_id, events, stream)
     }
@@ -658,6 +708,10 @@ where
     M: TaskMessage + CallResponseMessage + StreamEventMessage,
 {
     type Message = M;
+
+    fn endpoint(&self) -> EndpointId {
+        TaskContext::endpoint(self)
+    }
 
     fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T> {
         TaskContext::begin_call::<T>(self)
@@ -717,6 +771,7 @@ impl std::error::Error for TaskJoinError {}
 /// the first application message.
 pub fn spawn_task<M, T, F, const N: usize>(
     start_message: M,
+    priority_reserved: usize,
     run: F,
 ) -> Result<(TaskHandle<M, N>, TaskRuntime<T>), SendError>
 where
@@ -724,7 +779,9 @@ where
     T: Send + 'static,
     F: FnOnce(TaskHandle<M, N>) -> T + Send + 'static,
 {
-    let endpoint = Arc::new(TaskEndpoint::new(Arc::new(TaskQueue::<M, N>::new())));
+    let endpoint = Arc::new(TaskEndpoint::new(Arc::new(
+        TaskQueue::<M, N>::with_priority_reserved(priority_reserved),
+    )));
     endpoint.send_message(start_message)?;
     let handle = TaskHandle::from_endpoint(endpoint);
     let runtime_handle = handle.clone();
