@@ -19,6 +19,8 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-021: Contributors need clear architecture and interface boundaries between runtime primitives, task macros, queues, receive logic, sessions, streams, and signal support.
 - SN-023: Contributors need compile-time receive checks to prevent handlers from waiting for undeclared response or stream event messages.
 - SN-024: Contributors need protocol compatibility rules that distinguish compatible additions from incompatible message contract changes.
+- SN-046: Rust developers need ACID-style transaction scopes that can coordinate several typed message interactions while keeping invalid transaction participation visible at compile time.
+- SN-047: Rust developers need hierarchical transactions so nested transactional work is represented explicitly rather than relying on ad hoc handler-local rollback code.
 
 ## Scope
 
@@ -31,13 +33,16 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - start, event, call, stream, and late-reply handler plumbing;
 - receive declaration generation;
 - protocol declaration and protocol-instance binding generation;
-- generated compile-time receive checks.
+- generated compile-time receive checks;
+- transaction declaration parsing and generation;
+- generated transaction-kind marker types, transaction hierarchy checks, and side-effect send restrictions for generated `mpi` APIs.
 
 `mpi-macros` is not responsible for:
 
 - queue implementations;
 - session allocation algorithms;
 - stream buffering or flow control algorithms;
+- transaction coordination, durable logging, or recovery algorithms;
 - OS or framework event bridges.
 
 ## Requirements
@@ -188,6 +193,60 @@ Verification: inspection
 
 Status: proposed
 
+### MACRO-REQ-020: Transaction declaration
+
+A protocol macro shall support declaring named transaction kinds that list the
+protocol messages allowed to participate in each transaction kind.
+
+Verification: inspection
+
+Status: proposed
+
+### MACRO-REQ-021: Transaction child declaration
+
+A protocol transaction kind shall be able to list the child transaction kinds
+that are allowed directly beneath it.
+
+Verification: inspection
+
+Status: proposed
+
+### MACRO-REQ-022: Transaction message membership check
+
+A generated transactional send method shall compile only when the active
+transaction kind allows the target protocol message.
+
+Verification: compile-fail test
+
+Status: proposed
+
+### MACRO-REQ-023: Transaction hierarchy check
+
+A generated child transaction creation method shall compile only when the active
+parent transaction kind allows the child transaction kind.
+
+Verification: compile-fail test
+
+Status: proposed
+
+### MACRO-REQ-024: Side-effect message declaration
+
+A protocol message declaration may mark the message as side-effecting for
+generated send-effect checks.
+
+Verification: inspection
+
+Status: proposed
+
+### MACRO-REQ-025: Transactional side-effect restriction
+
+Generated transactional handler APIs shall not expose generated sends for
+non-transactional side-effecting messages.
+
+Verification: compile-fail test
+
+Status: proposed
+
 ## Architecture
 
 Architecture rules:
@@ -210,6 +269,9 @@ Stable architecture ID anchors:
 - MACRO-ARCH-005: Generated message enums implement the `mpi` runtime placement interface.
 - MACRO-ARCH-006: Protocol declaration output is the source of truth for protocol-qualified message identities and associated Rust types.
 - MACRO-ARCH-007: Protocol-instance bindings identify the concrete task, endpoint, or handle implementing a protocol message without redefining the message contract.
+- MACRO-ARCH-008: Protocol transaction declarations are the source of truth for transaction-kind identities, allowed transactional message membership, and allowed child transaction hierarchy.
+- MACRO-ARCH-009: Generated transaction-kind marker types and trait implementations encode whether a transaction kind allows a protocol message or child transaction kind.
+- MACRO-ARCH-010: Generated send-effect checks are limited to generated `mpi` APIs and do not attempt to prove arbitrary Rust side effects inside handler bodies.
 
 ## Interface
 
@@ -265,6 +327,36 @@ protocol! {
 }
 ```
 
+Conceptual transaction declaration:
+
+```rust
+protocol! {
+    pub protocol BankingV1 {
+        call reserve_debit(ReserveDebitRequest) -> ReserveDebitReply;
+        call reserve_credit(ReserveCreditRequest) -> ReserveCreditReply;
+        call stage_entry(StageEntryRequest) -> StageEntryReply;
+
+        #[side_effect]
+        event write_audit(AuditEntry);
+
+        transaction transfer_tx {
+            message reserve_debit;
+            message reserve_credit;
+            child ledger_tx;
+        }
+
+        transaction ledger_tx {
+            message stage_entry;
+        }
+    }
+}
+```
+
+In this shape, `transfer_tx` and `ledger_tx` are transaction kinds. Runtime
+transaction instances carry transaction paths, while generated transaction
+handle types carry the transaction kind needed for compile-time membership and
+hierarchy checks.
+
 Interface rules:
 
 - MACRO-INT-001: `#[start]` identifies the start handler.
@@ -277,6 +369,12 @@ Interface rules:
 - MACRO-INT-008: Protocol interaction names should be declared in `snake_case`.
 - MACRO-INT-009: Generated Rust modules for protocol interactions shall use `snake_case`, while generated receive identity types inside those modules shall use `PascalCase`.
 - MACRO-INT-010: Protocol stream item and error return types are written as a comma-separated return type list.
+- MACRO-INT-011: Transaction kind names should be declared in `snake_case`; generated Rust marker types shall use idiomatic Rust casing for type names.
+- MACRO-INT-012: A protocol transaction declaration shall list allowed messages by protocol interaction name.
+- MACRO-INT-013: A protocol transaction declaration shall list allowed direct child transactions by transaction kind name.
+- MACRO-INT-014: Generated transactional APIs should accept a typed transaction handle rather than requiring ordinary users to manually pass transaction identifiers.
+- MACRO-INT-015: Generated child transaction APIs should be named from the child transaction kind and should only exist or type-check for allowed parent-child pairs.
+- MACRO-INT-016: Generated non-transactional side-effecting send APIs should be unavailable from transactional handler contexts.
 
 ## Validation Scenarios
 
@@ -291,6 +389,9 @@ IDs below are grouping aliases.
 | MACRO-VAL-003 | Missing receive declarations fail at compile time. | approved |
 | MACRO-VAL-004 | A protocol declaration generates namespace-qualified identities and typed send surfaces. | proposed |
 | MACRO-VAL-005 | Unsupported handler shapes fail clearly instead of silently generating blocking behavior. | approved |
+| MACRO-VAL-006 | A transaction declaration generates typed transaction handles that allow only declared messages. | proposed |
+| MACRO-VAL-007 | A transaction declaration generates child transaction APIs only for declared parent-child relationships. | proposed |
+| MACRO-VAL-008 | Transactional handler contexts cannot send generated non-transactional side-effecting messages. | proposed |
 
 ## Verification
 
@@ -299,6 +400,9 @@ Verification should include:
 - macro expansion inspection for generated message enums, contexts, handles, placement arms, spawn helpers, dispatch arms, calls, streams, and protocol conversion plumbing;
 - runtime integration tests through `mpi` task-macro tests;
 - compile-fail tests for missing receive declarations, wrong protocol receive identities, unsupported handler receiver forms, and invalid scoped-state usage;
+- compile-fail tests for transactional sends whose message is not declared in the active transaction kind;
+- compile-fail tests for child transaction creation whose child kind is not declared under the active parent kind;
+- compile-fail tests for generated non-transactional side-effecting sends from transactional handler contexts;
 - examples demonstrating generated task APIs.
 
 ## Traceability
@@ -307,3 +411,4 @@ Verification should include:
 |---|---|---|---|
 | MACRO-REQ-001..MACRO-REQ-007 | MACRO-ARCH-001..MACRO-ARCH-005 | MACRO-INT-001..MACRO-INT-007 | MACRO-VAL-001, MACRO-VAL-002, MACRO-VAL-003, MACRO-VAL-005 |
 | MACRO-REQ-010..MACRO-REQ-017 | MACRO-ARCH-006, MACRO-ARCH-007 | MACRO-INT-008..MACRO-INT-010 | MACRO-VAL-004 |
+| MACRO-REQ-020..MACRO-REQ-025 | MACRO-ARCH-008..MACRO-ARCH-010 | MACRO-INT-011..MACRO-INT-016 | MACRO-VAL-006..MACRO-VAL-008 |

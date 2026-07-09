@@ -17,6 +17,10 @@ Core concepts:
 - a call is a synchronous exchange with exactly one typed response;
 - a stream is a generator-style exchange with zero or more typed stream events followed by end, error, or cancellation;
 - `SessionId` identifies logical interactions for calls and streams;
+- `TransactionId` identifies an ACID transaction root that may contain several
+  message interactions;
+- `TransactionPath` identifies a root or nested transaction instance within a
+  transaction hierarchy;
 - normal and priority messages are placed according to the receiver's declaration;
 - the start message is forced to priority and must be the first application message received by a new task;
 - handlers suspend while waiting for replies or stream events instead of blocking the task thread.
@@ -42,6 +46,9 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-042: Runtime users need calls and streams to match replies by logical interaction so concurrent handlers do not receive each other's replies.
 - SN-043: Runtime users need cancellation and late stream replies to be handled safely without hiding ordinary protocol flaws.
 - SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, unknown-session replies, and stream lifecycle issues.
+- SN-046: Rust developers need ACID-style transaction scopes that can coordinate several typed message interactions while keeping invalid transaction participation visible at compile time.
+- SN-047: Rust developers need hierarchical transactions so nested transactional work is represented explicitly rather than relying on ad hoc handler-local rollback code.
+- SN-048: Maintainers and operators need transaction decisions to be recoverable after crashes once a transaction has crossed the durable commit decision point.
 
 ## Scope
 
@@ -56,6 +63,8 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - task-internal calls and streams;
 - external blocking API support;
 - compile-time receive-check traits consumed by generated code.
+- runtime transaction identifiers, transaction paths, transaction coordination
+  state, transaction deadlines, and transaction recovery interfaces.
 
 `mpi` is not responsible for:
 
@@ -484,6 +493,156 @@ Verification: inspection
 
 Status: approved
 
+### MPI-REQ-110: Transaction identity
+
+A transaction instance shall be identified by a transaction path containing a
+root `TransactionId` and zero or more child path segments. `TransactionId`
+shall identify a multi-message transaction scope and shall be distinct from
+`SessionId`.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-111: Transactional session matching
+
+A transactional call or stream shall carry the transaction path for transaction
+membership while continuing to use `SessionId` for individual reply matching.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-112: Transaction outcome categories
+
+Transactional runtime APIs shall distinguish business rejection from
+infrastructure failure. Business rejection includes domain outcomes such as
+insufficient funds or unavailable inventory. Infrastructure failure includes
+task stop, cancellation, timeout, protocol violation, and unrecoverable send or
+receive failure.
+
+Verification: inspection and test
+
+Status: proposed
+
+### MPI-REQ-113: Transactional queue backpressure
+
+Task-internal transactional sends that cannot enqueue because the target queue
+has no available capacity shall suspend through the queue-capacity reservation
+mechanism until capacity, cancellation, task stop, or the transaction deadline.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-114: Transaction deadline
+
+A transaction deadline shall apply to queue-capacity waits, transactional
+operation replies, prepare votes, commit delivery, and abort delivery.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-115: Timeout before decision
+
+Before a durable commit decision exists, timeout or business rejection shall
+drive the transaction toward abort.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-116: Durable commit decision
+
+After a durable commit decision exists, timeout while delivering commit
+messages shall not roll the transaction back. Recovery shall continue
+rollforward until every prepared participant has received the commit decision
+or a defined unrecoverable hazard is reported.
+
+Verification: analysis and test
+
+Status: proposed
+
+### MPI-REQ-117: Durable abort decision
+
+After a durable abort decision exists, timeout while delivering abort messages
+shall not change the abort decision. Recovery shall continue abort delivery
+until every affected participant has received the abort decision or a defined
+unrecoverable hazard is reported.
+
+Verification: analysis and test
+
+Status: proposed
+
+### MPI-REQ-118: Durable participant prepare
+
+A transaction participant shall durably prepare the transaction work it owns
+before voting prepared.
+
+Verification: analysis and test
+
+Status: proposed
+
+### MPI-REQ-119: Durable coordinator decision
+
+A transaction coordinator shall durably record a commit decision before sending
+commit messages to participants, and shall durably record an abort decision
+before sending abort messages when an abort decision is required.
+
+Verification: analysis and test
+
+Status: proposed
+
+### MPI-REQ-120: Transaction recovery
+
+Recovery shall retry commit for any transaction with a durable commit decision
+that has incomplete participant commit delivery, and shall retry abort for any
+transaction with a durable abort decision that has incomplete participant abort
+delivery.
+
+Verification: analysis and test
+
+Status: proposed
+
+### MPI-REQ-121: Hierarchical transaction commit
+
+A child transaction may commit only into its parent transaction state until the
+root transaction reaches a durable commit decision.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-122: Hierarchical transaction abort
+
+Aborting a parent transaction shall abort every active or prepared descendant
+transaction.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-123: Hierarchical transaction prepare
+
+Preparing a parent transaction shall require every active child transaction in
+its subtree to be prepared or otherwise resolved according to a defined abort
+path.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-124: Side-effect enforcement boundary
+
+The runtime shall enforce transaction side-effect restrictions only for
+generated `mpi` send APIs and shall not claim to prevent arbitrary Rust side
+effects outside generated `mpi` APIs.
+
+Verification: inspection
+
+Status: proposed
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -518,6 +677,8 @@ Stable architecture ID anchors:
 | MPI-CMP-010 | Stream subsystem | Sends stream requests, stream events, cancellation, and flow-control messages. |
 | MPI-CMP-011 | Compile-time receive check subsystem | Ensures a caller task can wait only for messages it declares it can receive. |
 | MPI-CMP-012 | Diagnostics subsystem | Supports snapshots and future tracing, timeouts, and deadlock/debug support. |
+| MPI-CMP-013 | Transaction subsystem | Allocates transaction identifiers, tracks transaction paths, coordinates prepare/commit/abort, applies deadlines, and drives recovery. |
+| MPI-CMP-014 | Transaction log | Persists prepared participant state and coordinator commit or abort decisions needed for recovery. |
 
 Architecture rules:
 
@@ -538,6 +699,51 @@ Architecture rules:
 - MPI-ARCH-060: Call requests carry a `SessionId` and reply address; responses use `Response<T>`.
 - MPI-ARCH-070: Streams use the same `SessionId` model as calls and expose batch, end, and error stream events.
 - MPI-ARCH-080: External blocking APIs may use one-shot channels internally and must be explicit.
+- MPI-ARCH-090: `TransactionId` identifies the root transaction instance; `TransactionPath` identifies the root or a child transaction instance within a hierarchy.
+- MPI-ARCH-091: `SessionId` remains the matching key for each individual transactional call or stream, while `TransactionPath` identifies the enclosing transaction instance.
+- MPI-ARCH-092: A transaction participant stages or prepares transaction work before the coordinator records a durable commit decision; final persistent effects occur only during rollforward after that decision.
+- MPI-ARCH-093: Transaction coordination follows two-phase commit at the root: participants prepare, the coordinator records a durable commit or abort decision, and recovery continues the recorded decision after restart.
+- MPI-ARCH-094: Child transaction commit merges the child into its parent transaction state but does not make final effects globally committed before the root commit decision.
+- MPI-ARCH-095: Parent abort propagates to active and prepared descendants.
+- MPI-ARCH-096: Transaction deadlines bound waits for queue capacity, operation replies, prepare votes, commit delivery, and abort delivery.
+- MPI-ARCH-097: Business rejection is a valid transaction outcome that drives abort before a durable commit decision; it is distinct from infrastructure failure.
+
+## Transaction architecture
+
+Transactional messages coordinate several typed message interactions under one
+ACID transaction root. Each transactional call or stream carries a
+`TransactionPath` and still carries its own `SessionId`; the transaction path
+controls transaction membership and recovery, while the session ID controls
+reply matching for the individual interaction.
+
+Transactions use a two-phase commit model. During the open and prepare phases,
+participants may validate requests and stage transaction work, but final
+persistent effects are not committed. A business rejection, such as
+insufficient funds, is a normal outcome that drives the transaction toward
+abort before the coordinator records a durable commit decision.
+
+Once every required participant has prepared, the coordinator may durably record
+a commit decision. That record is the rollforward boundary. After it exists,
+rollback is no longer allowed; commit delivery may time out or be interrupted by
+restart, but recovery continues rollforward from the durable commit decision.
+Abort decisions follow the same durability rule: once an abort decision is
+durable, recovery continues abort delivery rather than changing the outcome.
+
+Hierarchical transactions represent nested transactional work explicitly. A
+child transaction commits into its parent transaction state, not into globally
+committed state. The root transaction's durable commit decision is the first
+point where the whole prepared tree may roll forward into final persistent
+effects. Aborting a parent aborts all active or prepared descendants.
+
+Queue-full conditions in task-internal transactional sends use the existing
+queue-capacity reservation model. A transactional send waits without blocking
+the task OS thread until capacity becomes available, the transaction is
+cancelled, the target stops, or the transaction deadline expires.
+
+`mpi` can enforce side-effect restrictions only for generated `mpi` APIs.
+Transaction handlers may still perform arbitrary Rust side effects if user code
+calls external APIs directly; those effects are outside the runtime's
+enforcement boundary and must be handled by application design and review.
 
 ## Interface
 
@@ -576,6 +782,21 @@ pub struct SessionId {
     sequence: u64,
 }
 
+pub struct TransactionId {
+    origin: EndpointId,
+    sequence: u64,
+}
+
+pub struct TransactionPath {
+    root: TransactionId,
+    path: Vec<u64>,
+}
+
+pub struct Transaction<TxKind> {
+    path: TransactionPath,
+    // runtime-owned coordinator or participant state
+}
+
 pub struct Response<T> {
     pub session_id: SessionId,
     pub value: T,
@@ -596,6 +817,27 @@ Interface rules:
 - MPI-INT-006: `SessionId` shall be available to runtime protocol messages for calls, streams, cancellation, matching, tracing, and debugging.
 - MPI-INT-007: Stream batching, stream end, stream error, stream cancellation, and stream flow-control details should be hidden from ordinary consumer code.
 - MPI-INT-008: Public API errors should be typed and documented.
+- MPI-INT-009: `TransactionId` and `TransactionPath` shall be available to runtime protocol messages that participate in transactions.
+- MPI-INT-010: User-facing transactional APIs should pass a typed transaction handle rather than requiring ordinary users to manually construct or route transaction identifiers.
+- MPI-INT-011: Transaction errors shall distinguish business rejection, timeout before decision, commit in progress, abort in progress, and unrecoverable transaction hazard.
+- MPI-INT-012: Transaction recovery APIs shall expose durable transactions that require continued commit or abort delivery after restart.
+
+Conceptual transaction API:
+
+```rust
+let mut tx = ctx.begin_transaction::<BankingV1::TransferTx>()
+    .deadline(deadline)
+    .await?;
+
+accounts.reserve_debit(&mut tx, debit).await?;
+accounts.reserve_credit(&mut tx, credit).await?;
+
+let mut ledger_tx = tx.begin_ledger_tx(ctx).await?;
+ledger.stage_entry(&mut ledger_tx, entry).await?;
+ledger_tx.commit_into_parent(ctx).await?;
+
+tx.commit(ctx).await?;
+```
 
 ## Validation Scenarios
 
@@ -616,6 +858,10 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-010 | Use priority shutdown while normal work is queued. | approved |
 | MPI-VAL-011 | Use external blocking APIs explicitly. | approved |
 | MPI-VAL-012 | Diagnose sessions and queues. | deferred |
+| MPI-VAL-013 | Coordinate a root transaction across several typed calls, abort on business rejection, and commit only after every participant prepares. | proposed |
+| MPI-VAL-014 | Run a hierarchical transaction where a child transaction commits into its parent and becomes globally committed only after the root durable commit decision. | proposed |
+| MPI-VAL-015 | Recover a transaction after restart by continuing rollforward from a durable commit decision or continuing abort delivery from a durable abort decision. | proposed |
+| MPI-VAL-016 | Reject generated non-transactional side-effecting sends from inside a transactional handler. | proposed |
 
 ## Verification
 
@@ -631,6 +877,11 @@ Verification should include:
 - stream batching, end, error, cancellation, and credit tests;
 - external blocking API tests or demonstrations;
 - diagnostics roadmap inspection.
+- transaction coordination tests covering business rejection, queue-capacity
+  suspension with deadlines, prepare, durable commit decision, durable abort
+  decision, hierarchical commit and abort, and recovery after restart;
+- compile-fail or inspection evidence showing generated APIs reject
+  non-transactional side-effecting sends from transactional scopes.
 
 ## Traceability
 
@@ -645,3 +896,4 @@ Verification should include:
 | MPI-REQ-080..MPI-REQ-087 | MPI-ARCH-070 | MPI-INT-007 | MPI-VAL-007, MPI-VAL-008, MPI-VAL-009 |
 | MPI-REQ-090..MPI-REQ-091 | MPI-ARCH-080 | MPI-INT-004, MPI-INT-005 | MPI-VAL-011 |
 | MPI-REQ-100 | MPI-CMP-012 | MPI-INT-006, MPI-INT-008 | MPI-VAL-012 |
+| MPI-REQ-110..MPI-REQ-124 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-097 | MPI-INT-009..MPI-INT-012 | MPI-VAL-013..MPI-VAL-016 |
