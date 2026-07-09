@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::call::{CallResponseMessage, CallSession};
 use crate::message::LateReplyPolicy;
-use crate::message::TaskMessage;
+use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
 use crate::session::EndpointId;
 use crate::stream::StreamEventMessage;
 use crate::stream::{StreamControl, StreamSession};
@@ -12,7 +12,7 @@ use crate::stream::{StreamControl, StreamSession};
 /// Marker trait implemented by generated task contexts.
 pub trait TaskScope {
     /// Generated task message enum associated with this scope.
-    type Message: TaskMessage + CallResponseMessage + StreamEventMessage;
+    type Message: TaskMessage + CallResponseMessage + StreamEventMessage + QueueSpaceWakeupMessage;
 
     /// Return the endpoint represented by this task-local scope.
     fn endpoint(&self) -> EndpointId;
