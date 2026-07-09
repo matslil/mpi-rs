@@ -1,15 +1,18 @@
 //! Bounded task queue with normal and priority FIFO placement.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 
 use crate::error::{RecvError, SendError};
 use crate::message::{MessagePlacement, TaskMessage};
+use crate::session::EndpointId;
 
 #[derive(Debug)]
 struct QueueState<M> {
     priority: VecDeque<M>,
     normal: VecDeque<M>,
+    reservations: HashMap<EndpointId, MessagePlacement>,
+    waiters: VecDeque<(EndpointId, MessagePlacement)>,
     closed: bool,
 }
 
@@ -18,6 +21,8 @@ impl<M> Default for QueueState<M> {
         Self {
             priority: VecDeque::new(),
             normal: VecDeque::new(),
+            reservations: HashMap::new(),
+            waiters: VecDeque::new(),
             closed: false,
         }
     }
@@ -34,6 +39,7 @@ where
 {
     state: Mutex<QueueState<M>>,
     available: Condvar,
+    priority_reserved: usize,
 }
 
 /// Read-only diagnostic snapshot of a task queue.
@@ -50,6 +56,15 @@ pub struct TaskQueueSnapshot {
 
     /// Number of queued normal messages.
     pub normal_len: usize,
+
+    /// Number of queue slots reserved for priority messages.
+    pub priority_reserved: usize,
+
+    /// Number of queue slots currently reserved for waiting senders.
+    pub reserved_len: usize,
+
+    /// Number of senders waiting for a receiver-owned reservation.
+    pub waiting_senders: usize,
 
     /// Whether the queue has been closed.
     pub closed: bool,
@@ -71,9 +86,16 @@ where
     /// Create an empty open queue.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_priority_reserved(1)
+    }
+
+    /// Create an empty open queue with an explicit priority reserve.
+    #[must_use]
+    pub fn with_priority_reserved(priority_reserved: usize) -> Self {
         Self {
             state: Mutex::new(QueueState::default()),
             available: Condvar::new(),
+            priority_reserved: priority_reserved.min(N),
         }
     }
 
@@ -102,6 +124,12 @@ where
         self.len() == N
     }
 
+    /// Return the number of queue slots reserved for priority messages.
+    #[must_use]
+    pub const fn priority_reserved(&self) -> usize {
+        self.priority_reserved
+    }
+
     /// Return a read-only diagnostic snapshot of the queue state.
     #[must_use]
     pub fn snapshot(&self) -> TaskQueueSnapshot {
@@ -113,6 +141,9 @@ where
             total_len: priority_len + normal_len,
             priority_len,
             normal_len,
+            priority_reserved: self.priority_reserved,
+            reserved_len: state.reservations.len(),
+            waiting_senders: state.waiters.len(),
             closed: state.closed,
         }
     }
@@ -124,10 +155,10 @@ where
         self.available.notify_all();
     }
 
-    /// Try to enqueue one message.
+    /// Try to enqueue one message from an external sender.
     ///
-    /// This method never blocks. It returns `SendError::QueueFull` if the shared
-    /// normal/priority capacity has been reached.
+    /// This method never blocks. It returns `SendError::QueueFull` if no
+    /// unreserved capacity is available for the message placement.
     pub fn try_send(&self, message: M) -> Result<(), SendError> {
         let mut state = self.state.lock().expect("queue mutex poisoned");
 
@@ -135,18 +166,73 @@ where
             return Err(SendError::TaskStopped);
         }
 
-        if state.priority.len() + state.normal.len() >= N {
+        if !self.has_unreserved_capacity(&state, message.placement()) {
             return Err(SendError::QueueFull);
         }
 
-        match message.placement() {
-            MessagePlacement::Normal => state.normal.push_back(message),
-            MessagePlacement::Priority => state.priority.push_back(message),
-        }
+        Self::push_message(&mut state, message);
 
         drop(state);
         self.available.notify_one();
         Ok(())
+    }
+
+    /// Try to enqueue one message from a task endpoint.
+    ///
+    /// When capacity is exhausted, the queue records the sender for a future
+    /// receiver-owned reservation and returns `SendError::QueueFull`.
+    pub fn try_send_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+        let mut state = self.state.lock().expect("queue mutex poisoned");
+
+        if state.closed {
+            return Err(SendError::TaskStopped);
+        }
+
+        if state.reservations.remove(&sender).is_some()
+            || self.has_unreserved_capacity(&state, message.placement())
+        {
+            Self::push_message(&mut state, message);
+            drop(state);
+            self.available.notify_one();
+            return Ok(());
+        }
+
+        self.register_waiter(&mut state, sender, message.placement());
+        Err(SendError::QueueFull)
+    }
+
+    /// Enqueue one message from a task endpoint, waiting until the receiving
+    /// queue grants capacity or closes.
+    pub fn send_blocking_from(&self, sender: EndpointId, message: M) -> Result<(), SendError> {
+        let mut state = self.state.lock().expect("queue mutex poisoned");
+        let mut message = Some(message);
+
+        loop {
+            if state.closed {
+                return Err(SendError::TaskStopped);
+            }
+
+            let placement = message
+                .as_ref()
+                .expect("message missing before successful send")
+                .placement();
+            if state.reservations.remove(&sender).is_some()
+                || self.has_unreserved_capacity(&state, placement)
+            {
+                Self::push_message(
+                    &mut state,
+                    message
+                        .take()
+                        .expect("message missing before successful send"),
+                );
+                drop(state);
+                self.available.notify_one();
+                return Ok(());
+            }
+
+            self.register_waiter(&mut state, sender, placement);
+            state = self.available.wait(state).expect("queue mutex poisoned");
+        }
     }
 
     /// Receive one message, blocking until a message is available or the queue closes.
@@ -155,10 +241,16 @@ where
 
         loop {
             if let Some(message) = state.priority.pop_front() {
+                self.grant_reservations(&mut state);
+                drop(state);
+                self.available.notify_all();
                 return Ok(message);
             }
 
             if let Some(message) = state.normal.pop_front() {
+                self.grant_reservations(&mut state);
+                drop(state);
+                self.available.notify_all();
                 return Ok(message);
             }
 
@@ -174,9 +266,66 @@ where
     #[must_use]
     pub fn try_recv(&self) -> Option<M> {
         let mut state = self.state.lock().expect("queue mutex poisoned");
-        state
+        let message = state
             .priority
             .pop_front()
-            .or_else(|| state.normal.pop_front())
+            .or_else(|| state.normal.pop_front());
+        if message.is_some() {
+            self.grant_reservations(&mut state);
+            drop(state);
+            self.available.notify_all();
+        }
+        message
+    }
+
+    fn push_message(state: &mut QueueState<M>, message: M) {
+        match message.placement() {
+            MessagePlacement::Normal => state.normal.push_back(message),
+            MessagePlacement::Priority => state.priority.push_back(message),
+        }
+    }
+
+    fn occupied_slots(state: &QueueState<M>) -> usize {
+        state.priority.len() + state.normal.len()
+    }
+
+    fn committed_slots(state: &QueueState<M>) -> usize {
+        Self::occupied_slots(state) + state.reservations.len()
+    }
+
+    fn has_unreserved_capacity(&self, state: &QueueState<M>, placement: MessagePlacement) -> bool {
+        let committed = Self::committed_slots(state);
+        match placement {
+            MessagePlacement::Priority => committed < N,
+            MessagePlacement::Normal => committed < N.saturating_sub(self.priority_reserved),
+        }
+    }
+
+    fn register_waiter(
+        &self,
+        state: &mut QueueState<M>,
+        sender: EndpointId,
+        placement: MessagePlacement,
+    ) {
+        if state.reservations.contains_key(&sender)
+            || state
+                .waiters
+                .iter()
+                .any(|(waiting_sender, _)| *waiting_sender == sender)
+        {
+            return;
+        }
+        state.waiters.push_back((sender, placement));
+        self.grant_reservations(state);
+    }
+
+    fn grant_reservations(&self, state: &mut QueueState<M>) {
+        while let Some((sender, placement)) = state.waiters.front().copied() {
+            if !self.has_unreserved_capacity(state, placement) {
+                break;
+            }
+            state.waiters.pop_front();
+            state.reservations.insert(sender, placement);
+        }
     }
 }

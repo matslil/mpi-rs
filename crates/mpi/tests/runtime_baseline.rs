@@ -43,6 +43,49 @@ fn req_012_req_013_req_014_queue_capacity_is_static_shared_and_explicit() {
 }
 
 #[test]
+fn req_036_req_037_priority_reserved_capacity_keeps_slot_for_priority_messages() {
+    let queue = TaskQueue::<TestMessage, 2>::with_priority_reserved(1);
+
+    queue.try_send(TestMessage::Normal(1)).unwrap();
+    assert_eq!(
+        queue.try_send(TestMessage::Normal(2)),
+        Err(SendError::QueueFull)
+    );
+
+    queue.try_send(TestMessage::Priority(3)).unwrap();
+    assert_eq!(queue.try_recv(), Some(TestMessage::Priority(3)));
+    assert_eq!(queue.try_recv(), Some(TestMessage::Normal(1)));
+}
+
+#[test]
+fn req_014a_req_014b_req_036_priority_messages_can_receive_sender_reservations() {
+    let queue = TaskQueue::<TestMessage, 1>::with_priority_reserved(1);
+    let first_sender = EndpointId(101);
+    let second_sender = EndpointId(102);
+
+    queue.try_send(TestMessage::Priority(1)).unwrap();
+    assert_eq!(
+        queue.try_send_from(first_sender, TestMessage::Priority(2)),
+        Err(SendError::QueueFull)
+    );
+    assert_eq!(queue.snapshot().waiting_senders, 1);
+
+    assert_eq!(queue.try_recv(), Some(TestMessage::Priority(1)));
+    assert_eq!(queue.snapshot().reserved_len, 1);
+
+    assert_eq!(
+        queue.try_send_from(second_sender, TestMessage::Priority(3)),
+        Err(SendError::QueueFull)
+    );
+    queue
+        .try_send_from(first_sender, TestMessage::Priority(2))
+        .unwrap();
+
+    assert_eq!(queue.try_recv(), Some(TestMessage::Priority(2)));
+    assert_eq!(queue.try_recv(), None);
+}
+
+#[test]
 fn req_140_queue_snapshot_reports_read_only_queue_diagnostics() {
     let queue = TaskQueue::<TestMessage, 4>::new();
     queue.try_send(TestMessage::Normal(1)).unwrap();
@@ -55,6 +98,9 @@ fn req_140_queue_snapshot_reports_read_only_queue_diagnostics() {
             total_len: 2,
             priority_len: 1,
             normal_len: 1,
+            priority_reserved: 1,
+            reserved_len: 0,
+            waiting_senders: 0,
             closed: false,
         }
     );
@@ -97,7 +143,7 @@ fn req_034_priority_messages_are_received_before_normal_messages() {
 
 #[test]
 fn req_040_req_041_req_042_start_message_is_first() {
-    let (handle, runtime) = spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, |handle| {
+    let (handle, runtime) = spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, 1, |handle| {
         handle.send_message(TestMessage::Priority(9)).unwrap();
         let first = handle.recv_message().unwrap();
         let second = handle.recv_message().unwrap();
@@ -244,7 +290,7 @@ impl TaskMessage for CallMessage {
 
 #[test]
 fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
-    let (handle, runtime) = spawn_task::<CallMessage, _, _, 4>(CallMessage::Start, |handle| {
+    let (handle, runtime) = spawn_task::<CallMessage, _, _, 4>(CallMessage::Start, 1, |handle| {
         assert!(matches!(handle.recv_message().unwrap(), CallMessage::Start));
         match handle.recv_message().unwrap() {
             CallMessage::Get { session_id, reply } => {
