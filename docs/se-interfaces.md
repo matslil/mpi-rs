@@ -517,7 +517,16 @@ INT-100: Queue-full behavior shall be represented as an explicit error.
 
 INT-101: Errors returned by public APIs should be typed and documented.
 
-## Unix signal interface
+## OS event bridge interface
+
+OS event bridge support should expose convenient forwarding to tasks while
+keeping platform-specific dependencies outside the core `mpi` crate.
+
+Bridge APIs should make the source event's interaction kind explicit. An
+asynchronous OS or framework notification should translate to an event-style
+message when no reply is required. A synchronous OS or framework callback should
+translate to a call-style interaction or another explicit reply path when the
+source expects a decision.
 
 Unix signal support should expose convenient forwarding to tasks, but the public API must not imply that normal Rust message construction happens inside the POSIX signal handler.
 
@@ -527,4 +536,10 @@ INT-110: Any signal forwarding API shall be implemented through a signal bridge.
 
 INT-111: The actual POSIX signal handler behavior shall be limited to async-signal-safe operations.
 
-INT-112: Unix signal bridge APIs shall be available on Unix targets when the default-enabled `unix-signals` feature is active, and shall be removable from the public API by disabling that feature.
+INT-112: Unix signal bridge APIs shall be available from `mpi-os-events` on Unix targets when the default-enabled `unix-signals` feature is active, and shall be removable from that crate's public API by disabling that feature.
+
+INT-113: OS-event bridge APIs shall accept a target task handle or equivalent send surface and a mapping from platform event data to a target task message or interaction.
+
+INT-114: Native Linux, Windows, and macOS event bridge APIs shall be implemented through platform-specific adapters in `mpi-os-events`.
+
+INT-115: Android and iOS event bridge APIs shall be implemented through framework adapters, beginning with Tauri while preserving an adapter boundary for future mobile frameworks.

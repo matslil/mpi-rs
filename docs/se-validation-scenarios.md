@@ -221,24 +221,29 @@ Expected outcome:
 
 Evidence type: example or API walkthrough
 
-## VAL-012: Forward Unix signals safely
+## VAL-012: Forward OS events safely
 
 Status: approved
 
-Stakeholder needs: SN-044
+Stakeholder needs: SN-044, SN-046
 
-A developer forwards POSIX signals into a task as normal Rust messages.
+A developer forwards operating-system or framework events into a task as normal
+Rust messages or typed interactions. The first implemented case forwards POSIX
+signals into a task as normal Rust messages.
 
 Expected outcome:
 
 - the signal handler performs only async-signal-safe operations;
 - a bridge task or thread constructs the normal message;
 - the receiving task handles the signal as a normal event.
-- Unix signal bridge support is available by default on Unix targets and can be removed from the public API by disabling the default `unix-signals` feature.
+- Unix signal bridge support is available by default from `mpi-os-events` on Unix targets and can be removed from that crate's public API by disabling the default `unix-signals` feature;
+- bridge documentation distinguishes asynchronous OS events that map to event messages from synchronous OS events that need calls or another explicit reply path;
+- Linux, Windows, and macOS support use native OS event adapters;
+- Android and iOS support use framework adapters, beginning with Tauri while preserving a path to other frameworks.
 
 Evidence type: inspection and demonstration
 
-Candidate example: `examples/unix_signal_bridge.rs`
+Candidate example: `crates/mpi-os-events/examples/unix_signal_bridge.rs`
 
 ## VAL-013: Diagnose sessions and queues
 

@@ -22,6 +22,7 @@ Current systems-engineering documents are named `se-*.md`. Workspace-level docum
 ## Crate-Level Baseline
 
 - `crates/ctx-future/se-design-baseline.md`
+- `crates/mpi-os-events/se-design-baseline.md`
 - `crates/mpi/se-send-scope.md`
 - `crates/mpi/se-task-topology.md`
 
