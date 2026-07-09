@@ -41,6 +41,8 @@ Before changing production code, tests, examples, or process documents, read:
 - `docs/se-verification-plan.md`
 - `docs/se-traceability.md`
 
+Also read any crate-level or module-level `se-*.md` files under the crate or module affected by the change.
+
 Read `docs/se-stakeholders.md` when changing needs, scope, constraints, or process assumptions.
 
 Read `docs/se-validation-scenarios.md` when the change affects public usability, examples, task behavior, calls, streams, cancellation, external APIs, signal handling, or diagnostics.
