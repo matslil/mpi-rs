@@ -6,6 +6,8 @@ Current systems-engineering documents are named `se-*.md`. Workspace-level docum
 
 ## Workspace-Level Baseline
 
+Workspace-level documents cover repository builds, process, workflows, change control, verification/reporting conventions, and traceability conventions. They do not define crate behavior.
+
 - `docs/se-index.md`
 - `docs/se-stakeholders.md`
 - `docs/se-requirements.md`
@@ -22,14 +24,16 @@ Current systems-engineering documents are named `se-*.md`. Workspace-level docum
 ## Crate-Level Baseline
 
 - `crates/ctx-future/se-design-baseline.md`
+- `crates/mpi/se-design-baseline.md`
+- `crates/mpi-macros/se-design-baseline.md`
 - `crates/mpi-os-events/se-design-baseline.md`
 - `crates/mpi/se-send-scope.md`
 - `crates/mpi/se-task-topology.md`
 
 ## Scope Rules
 
-- A workspace-level SE document applies to the whole repository or to behavior spanning multiple crates.
+- A workspace-level SE document applies only to builds, process, workflows, change control, verification/reporting conventions, and traceability conventions.
 - A crate-level SE document applies to the crate directory that contains it.
 - A module-level SE document applies to the module directory that contains it.
-- If a requirement affects more than one crate, define or index it at workspace level and trace it to each affected crate.
+- If a product change affects more than one crate, document each crate's responsibilities in that crate's own baseline and use shared docs only for workflow coordination.
 - If two current SE documents conflict, report the conflict instead of guessing.

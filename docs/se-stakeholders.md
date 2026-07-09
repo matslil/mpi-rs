@@ -1,110 +1,59 @@
-# Stakeholders and Needs
+# Shared Stakeholders and Process Needs
 
-This document identifies the initial stakeholders and needs for `mpi-rs`.
+This document identifies stakeholders and needs for repository builds, process, and AI-assisted workflows.
 
-This document is part of the authoritative systems-engineering baseline named `se-*.md`.
-
-## Project purpose
-
-`mpi-rs` shall provide a message-passing model for Rust applications while keeping the public API idiomatic for Rust.
-
-The library is intended to let developers structure software as tasks with typed messages, generated send methods, bounded queues, synchronous calls, streaming interactions, cancellation, and safe task-local receive behavior.
+Crate-specific users, product needs, and usability scenarios belong in crate-local systems-engineering documents.
 
 ## Stakeholders
 
 | ID | Stakeholder | Description |
 |---|---|---|
-| STK-001 | Human maintainer / system engineer | The repository owner who defines needs, approves requirements, reviews AI-generated work, and controls merge to `main`. |
-| STK-002 | Rust application developer | A developer using `mpi-rs` to build message-passing Rust applications. |
-| STK-003 | Library contributor | A human or AI-assisted contributor changing runtime, macro, tests, or documentation. |
-| STK-004 | Test and validation workflow | AI or CI workflow responsible for checking that requirements are verified and scenarios are validated. |
-| STK-005 | Runtime user / operator | A person or system running an application built with `mpi-rs` and needing predictable task behavior and diagnostics. |
-| STK-006 | Safety and maintainability reviewer | A reviewer concerned with blocking behavior, queue correctness, cancellation, compile-time guarantees, and dependency risk. |
+| REPO-STK-001 | Human maintainer / system engineer | Defines scope, approves requirements, reviews AI-generated work, and controls merge to `main`. |
+| REPO-STK-002 | Library contributor | A human or AI-assisted contributor changing code, tests, or documentation. |
+| REPO-STK-003 | Test and validation workflow | AI or CI workflow responsible for checking that requirements are verified and scenarios are validated. |
+| REPO-STK-004 | Release workflow | Human or AI-assisted workflow preparing release evidence. |
 
-## Stakeholder needs
+## Needs
 
-### Maintainer needs
+The original process-oriented stakeholder need IDs remain stable after this split:
 
-SN-001: The maintainer needs a repository structure where systems-engineering documents can drive implementation, testing, review, validation, and traceability.
+- SN-001: The maintainer needs a repository structure where systems-engineering documents can drive implementation, testing, review, validation, and traceability.
+- SN-002: The maintainer needs AI agents to work from explicit role instructions so implementation, testing, review, and validation remain separate activities.
+- SN-003: The maintainer needs human control over approval and merge decisions.
+- SN-004: The maintainer needs current authoritative documents to be clearly distinguished from outdated repository material.
+- SN-030: Test workflows need each testable requirement to have an identifiable verification method and evidence artifact.
+- SN-031: Validation workflows need scenario-level evidence that the public API supports intended developer workflows.
+- SN-032: Review workflows need traceability from needs to requirements, architecture, interfaces, code, tests, and validation scenarios.
 
-SN-002: The maintainer needs AI agents to work from explicit role instructions so implementation, testing, review, and validation remain separate activities.
+REPO-SN-001: The maintainer needs a repository structure where systems-engineering documents can drive implementation, testing, review, validation, and traceability.
 
-SN-003: The maintainer needs human control over approval and merge decisions.
+REPO-SN-002: The maintainer needs shared documentation to be limited to builds, process, and workflows so crate behavior is owned by crate-local documentation.
 
-SN-004: The maintainer needs current authoritative documents to be clearly distinguished from outdated repository material.
+REPO-SN-003: The maintainer needs AI agents to work from explicit role instructions so implementation, testing, review, validation, and traceability remain separate activities.
 
-### Rust developer needs
+REPO-SN-004: The maintainer needs human control over approval and merge decisions.
 
-SN-010: Rust developers need an idiomatic task API rather than an API that feels like a foreign actor or signal system.
+REPO-SN-005: Contributors need current authoritative documents to be clearly distinguished from outdated repository material.
 
-SN-011: Rust developers need tasks to declare at compile time which messages they can receive.
+REPO-SN-006: Test workflows need expected commands, reporting conventions, and traceability conventions.
 
-SN-012: Rust developers need generated task handles with send methods instead of manually constructing and enqueueing low-level message enums.
-
-SN-013: Rust developers need asynchronous events, typed synchronous calls, and generator-style streams to be expressed with clear Rust APIs.
-
-SN-014: Rust developers need queue-full errors to be explicit and recoverable.
-
-SN-015: Rust developers need task-internal synchronous waits to avoid blocking the task OS thread.
-
-SN-016: Rust developers need stream consumption to avoid one queued message per item by supporting batching behind a simple `next(ctx).await` API.
-
-SN-017: Rust developers need cancellation of dropped streams to be automatic and non-blocking.
-
-SN-018: Rust developers need reusable protocol declarations so independently
-built applications can share typed message contracts across separate binaries.
-
-### Contributor needs
-
-SN-020: Contributors need stable terminology for message, event, call, stream, task, placement, priority, response, and session.
-
-SN-021: Contributors need clear architecture and interface boundaries between runtime primitives, task macros, queues, receive logic, sessions, streams, and signal support.
-
-SN-022: Contributors need a practical implementation order that allows incremental development and review.
-
-SN-023: Contributors need compile-time receive checks to prevent handlers from waiting for undeclared response or stream event messages.
-
-SN-024: Contributors need protocol compatibility rules that distinguish
-compatible additions from incompatible message contract changes.
-
-### Testing and validation needs
-
-SN-030: Test workflows need each testable requirement to have an identifiable verification method and evidence artifact.
-
-SN-031: Validation workflows need scenario-level evidence that the public API supports intended developer workflows.
-
-SN-032: Review workflows need traceability from needs to requirements, architecture, interfaces, code, tests, and validation scenarios.
-
-### Runtime and safety needs
-
-SN-040: Runtime users need predictable queue ordering for normal and priority messages.
-
-SN-041: Runtime users need the start message to be the first application message received by a newly spawned task.
-
-SN-042: Runtime users need calls and streams to match replies by logical interaction so concurrent handlers do not receive each other's replies.
-
-SN-043: Runtime users need cancellation and late stream replies to be handled safely without hiding ordinary protocol flaws.
-
-SN-044: Runtime users need POSIX signal integration to avoid unsafe allocation or non-async-signal-safe operations in signal handlers.
-
-SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, unknown-session replies, and stream lifecycle issues.
-
-SN-046: Runtime users need operating-system and application-framework events to be translated into typed `mpi` messages without making the core message runtime depend on every supported platform integration.
+REPO-SN-007: Release workflows need enough evidence for human release decisions.
 
 ## Constraints
 
-CON-001: The implementation language is Rust.
+The original process constraints remain stable after this split:
 
-CON-002: The user-facing API should remain idiomatic for Rust.
+- CON-001: The implementation language is Rust.
+- CON-002: The user-facing API should remain idiomatic for Rust.
+- CON-003: The authoritative systems-engineering baseline is stored in current documents named `se-*.md`, with workspace-level documents under `docs/` and crate-level documents beside the crate they describe.
+- CON-004: The process should remain lightweight enough for a private open-source repository.
+- CON-005: Human approval is required for merge to `main`.
+- CON-006: AI implementation, testing, review, validation, and traceability activities should be separable.
 
-CON-003: The authoritative systems-engineering baseline is stored in current documents named `se-*.md`, with workspace-level documents under `docs/` and crate-level documents beside the crate they describe.
+REPO-CON-001: The implementation language for workspace crates is Rust.
 
-CON-004: The process should remain lightweight enough for a private open-source repository.
+REPO-CON-002: The process should remain lightweight enough for a private open-source repository.
 
-CON-005: Human approval is required for merge to `main`.
+REPO-CON-003: Human approval is required for merge to `main`.
 
-CON-006: AI implementation, testing, review, validation, and traceability activities should be separable.
-
-## Notes
-
-This document should evolve as the human maintainer makes explicit product, API, implementation, and release decisions.
+REPO-CON-004: AI implementation, testing, review, validation, and traceability activities should be separable.
