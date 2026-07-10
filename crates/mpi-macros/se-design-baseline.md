@@ -30,7 +30,9 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - task message enum generation;
 - task context and handle generation;
 - handler dispatch generation;
-- start, event, call, stream, and late-reply handler plumbing;
+- start, event, call, and stream handler plumbing;
+- late-reply callback plumbing;
+- generated service start, stop, and service-instance API support;
 - receive declaration generation;
 - protocol declaration and protocol-instance binding generation;
 - generated compile-time receive checks;
@@ -43,6 +45,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - session allocation algorithms;
 - stream buffering or flow control algorithms;
 - transaction coordination, durable logging, or recovery algorithms;
+- service-specific task behavior or service state;
 - OS or framework event bridges.
 
 ## Requirements
@@ -72,6 +75,21 @@ original IDs used by tests, reports, and traceability.
 - REQ-168: A receive declaration shall match a protocol reply or stream event by protocol message identity and by the Rust type declared for that reply or stream event.
 - REQ-169: Generated send, call, and stream APIs shall be derived from a protocol declaration or from a derivative that preserves protocol message identities and declared types.
 - REQ-170: A protocol derivative may bind a protocol declaration to the concrete task, endpoint, or handle that implements a specific protocol instance.
+- REQ-180: A service start function shall return a service instance that owns
+  one running service task and exposes that task's protocol bindings.
+- REQ-181: Dropping the final clone of a service instance shall send the
+  service stop call and wait for the stop reply.
+- REQ-182: A service stop call shall take no arguments and shall use its reply
+  only as a synchronization point for clean task termination.
+- REQ-183: Protocol bindings exposed by a service instance shall not outlive
+  that service instance.
+- REQ-184: Direct access to service task state or direct function calls into the
+  service task shall be unavailable unless an affected crate-local baseline
+  documents an explicit exception.
+- REQ-186: A service task may omit an explicit start handler; when omitted, the
+  macro shall generate an empty no-argument start handler.
+- REQ-187: A service task may omit an explicit stop handler; when omitted, the
+  macro shall generate an empty no-argument stop handler.
 
 ### MACRO-REQ-001: Task macro name
 
@@ -247,6 +265,53 @@ Verification: compile-fail test
 
 Status: proposed
 
+### MACRO-REQ-030: Service instance generation
+
+The macro shall support generation of service start APIs that return a service
+instance owning one running service task and exposing that task's protocol
+bindings.
+
+Verification: inspection and test
+
+Status: proposed
+
+### MACRO-REQ-031: Service instance binding lifetime
+
+Generated service protocol bindings shall be accessed through the service
+instance so ordinary Rust use cannot retain those bindings beyond the service
+instance lifetime.
+
+Verification: compile-fail test and inspection
+
+Status: proposed
+
+### MACRO-REQ-032: Service final-drop stop
+
+Generated service instance drop behavior shall send the no-argument service stop
+call and wait for the stop reply when the final clone is dropped.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MACRO-REQ-033: Omitted service start handler
+
+A generated service task may omit an explicit start handler. When omitted, the
+macro shall synthesize an empty no-argument start handler.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MACRO-REQ-034: Omitted service stop handler
+
+A generated service task may omit an explicit stop handler. When omitted, the
+macro shall synthesize an empty no-argument stop handler.
+
+Verification: test and inspection
+
+Status: proposed
+
 ## Architecture
 
 Architecture rules:
@@ -272,6 +337,13 @@ Stable architecture ID anchors:
 - MACRO-ARCH-008: Protocol transaction declarations are the source of truth for transaction-kind identities, allowed transactional message membership, and allowed child transaction hierarchy.
 - MACRO-ARCH-009: Generated transaction-kind marker types and trait implementations encode whether a transaction kind allows a protocol message or child transaction kind.
 - MACRO-ARCH-010: Generated send-effect checks are limited to generated `mpi` APIs and do not attempt to prove arbitrary Rust side effects inside handler bodies.
+- MACRO-ARCH-011: Generated service instances own service task lifetime and
+  expose service protocol bindings without allowing those bindings to outlive
+  the service instance.
+- MACRO-ARCH-012: Generated service final-drop logic uses the service stop call
+  as the shutdown synchronization point.
+- MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
+  as empty no-argument handlers when the service task declaration omits them.
 
 ## Interface
 
@@ -364,7 +436,7 @@ Interface rules:
 - MACRO-INT-003: `#[call]` identifies a synchronous request handler.
 - MACRO-INT-004: `#[stream(item = T, error = E)]` identifies a streaming handler with item type `T` and error type `E`.
 - MACRO-INT-005: `priority` is declared on the receiver's message declaration, not at each send site.
-- MACRO-INT-006: `#[late_reply]` identifies an optional task handler for reported late replies.
+- MACRO-INT-006: `#[late_reply]` identifies an optional task callback for reported late replies.
 - MACRO-INT-007: A `#[task]` attribute on a struct is non-authoritative and should not be required.
 - MACRO-INT-008: Protocol interaction names should be declared in `snake_case`.
 - MACRO-INT-009: Generated Rust modules for protocol interactions shall use `snake_case`, while generated receive identity types inside those modules shall use `PascalCase`.
@@ -375,6 +447,14 @@ Interface rules:
 - MACRO-INT-014: Generated transactional APIs should accept a typed transaction handle rather than requiring ordinary users to manually pass transaction identifiers.
 - MACRO-INT-015: Generated child transaction APIs should be named from the child transaction kind and should only exist or type-check for allowed parent-child pairs.
 - MACRO-INT-016: Generated non-transactional side-effecting send APIs should be unavailable from transactional handler contexts.
+- MACRO-INT-017: A service declaration shall identify the generated service
+  instance type and the protocol binding or bindings exposed by that instance.
+- MACRO-INT-018: Generated service instances may be cloneable, but only final
+  clone drop shall stop the service task.
+- MACRO-INT-019: `#[stop]` identifies the service stop call handler when a
+  service task declares custom stop behavior.
+- MACRO-INT-020: Omitted service start and stop handlers shall mean empty
+  no-argument handlers, not missing message variants.
 
 ## Validation Scenarios
 
@@ -392,6 +472,7 @@ IDs below are grouping aliases.
 | MACRO-VAL-006 | A transaction declaration generates typed transaction handles that allow only declared messages. | proposed |
 | MACRO-VAL-007 | A transaction declaration generates child transaction APIs only for declared parent-child relationships. | proposed |
 | MACRO-VAL-008 | Transactional handler contexts cannot send generated non-transactional side-effecting messages. | proposed |
+| MACRO-VAL-009 | A service declaration generates a service instance whose protocol bindings cannot outlive the instance and whose final drop stops the task. | proposed |
 
 ## Verification
 
@@ -403,6 +484,8 @@ Verification should include:
 - compile-fail tests for transactional sends whose message is not declared in the active transaction kind;
 - compile-fail tests for child transaction creation whose child kind is not declared under the active parent kind;
 - compile-fail tests for generated non-transactional side-effecting sends from transactional handler contexts;
+- tests or macro expansion inspection for generated service instance lifetime,
+  synthesized empty start and stop handlers, and final-drop stop behavior;
 - examples demonstrating generated task APIs.
 
 ## Traceability
@@ -412,3 +495,4 @@ Verification should include:
 | MACRO-REQ-001..MACRO-REQ-007 | MACRO-ARCH-001..MACRO-ARCH-005 | MACRO-INT-001..MACRO-INT-007 | MACRO-VAL-001, MACRO-VAL-002, MACRO-VAL-003, MACRO-VAL-005 |
 | MACRO-REQ-010..MACRO-REQ-017 | MACRO-ARCH-006, MACRO-ARCH-007 | MACRO-INT-008..MACRO-INT-010 | MACRO-VAL-004 |
 | MACRO-REQ-020..MACRO-REQ-025 | MACRO-ARCH-008..MACRO-ARCH-010 | MACRO-INT-011..MACRO-INT-016 | MACRO-VAL-006..MACRO-VAL-008 |
+| MACRO-REQ-030..MACRO-REQ-034 | MACRO-ARCH-011..MACRO-ARCH-013 | MACRO-INT-017..MACRO-INT-020 | MACRO-VAL-009 |
