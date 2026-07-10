@@ -14,8 +14,10 @@ without being folded into the core `mpi` crate.
 through a caller-specified index, durably discards log entries through a
 caller-specified index, and reads back durable log entries after restart. The
 public storage boundary is message based: callers use the
-`persistent_log_storage.v1` protocol to submit store, commit, discard, and read
-messages and receive typed replies.
+`PersistentLogStorageProtocolV1` protocol to submit store, commit, discard, and
+read calls and receive typed replies. The only public crate surface is the
+protocol, protocol-binding helper methods, and the file-backed task start
+function.
 
 The intended first consumer is transactional messaging recovery. A transaction
 coordinator can append transaction decision records, commit through those
@@ -33,8 +35,9 @@ records, and recover committed records after a crash.
 - discarding log entries through a specific index by durably recording a discard
   watermark;
 - reading back complete non-discarded log entries after restart;
-- exposing a named protocol with store, commit, discard, and read request
-  messages and their reply messages;
+- exposing a named MPI protocol with store, commit, discard, and read calls;
+- providing a public task start function for the default file-backed storage
+  task;
 - providing typed serialization helpers through a general serde interface;
 - tolerating torn trailing records caused by crash or power loss.
 
@@ -175,8 +178,8 @@ Status: proposed
 ### PLS-REQ-009: Message-based log operations
 
 The crate shall expose a named persistent log storage protocol with store,
-commit, discard, and read request messages and corresponding reply messages,
-rather than exposing only primitive parameter lists.
+commit, discard, and read calls and corresponding return payloads, rather than
+exposing only primitive parameter lists.
 
 Source: PLS-SN-006.
 
@@ -211,11 +214,11 @@ Status: proposed
 
 | ID | Component | Responsibility |
 |---|---|---|
-| PLS-CMP-001 | Persistent log trait | Implements the protocol behavior for store, commit, discard, and read-back messages. |
+| PLS-CMP-001 | Persistent log task | Serves the public MPI protocol for store, commit, discard, and read-back calls. |
 | PLS-CMP-002 | File log storage | Provides the default crash-safe file-backed implementation. |
 | PLS-CMP-003 | Log record codec | Encodes and validates append and discard records. |
 | PLS-CMP-004 | Recovery scanner | Reads complete records, applies the latest discard watermark, and ignores torn trailing records. |
-| PLS-CMP-005 | Persistent log storage protocol | Defines the protocol name, request messages, and reply messages for store, commit, discard, and read operations. |
+| PLS-CMP-005 | Persistent log storage protocol | Defines the protocol calls and return payloads for store, commit, discard, and read operations. |
 | PLS-CMP-006 | Serialization adapter | Encodes serde-serializable objects with Wincode before store and deserializes retrieved payloads after read. |
 
 Architecture rules:
@@ -235,144 +238,54 @@ Architecture rules:
 - PLS-ARCH-008: Serialization helpers shall be feature-gated, shall use
   Wincode for encoded bytes, and shall not require transaction-specific payload
   knowledge in this crate.
-- PLS-ARCH-009: The public protocol name shall be
-  `persistent_log_storage.v1`. Compatible protocol evolution may add request or
-  reply message variants, while incompatible changes require a new protocol
-  name.
+- PLS-ARCH-009: The public protocol shall be declared as
+  `PersistentLogStorageProtocolV1`. Compatible protocol evolution may add
+  request or reply message variants, while incompatible changes require a new
+  protocol version.
 
 ## Interface
 
-Conceptual interface:
+Public interface:
 
 ```rust
-pub type LogIndex = u64;
-
-pub struct PersistentLogStorageProtocol;
-
-impl PersistentLogStorageProtocol {
-    pub const NAME: &'static str = "persistent_log_storage.v1";
+protocol! {
+    pub protocol PersistentLogStorageProtocolV1 {
+        call store(Vec<u8>) -> Result<u64, String>;
+        call commit(u64) -> Result<(), String>;
+        call discard(u64) -> Result<(), String>;
+        call read(Option<u64>) -> Result<Vec<(u64, Vec<u8>)>, String>;
+    }
 }
 
-pub struct LogEntry {
-    pub index: LogIndex,
-    pub payload: Vec<u8>,
-}
+pub fn start_file_log_storage(
+    path: impl AsRef<Path>,
+) -> Result<(PersistentLogStorageProtocolV1::Binding<impl ...>, mpi::TaskRuntime<()>), String>;
 
-pub struct StoreLogEntry<T = Vec<u8>> {
-    pub payload: T,
-}
-
-pub struct StoredLogEntry {
-    pub index: LogIndex,
-}
-
-pub struct CommitLogEntries {
-    pub through: LogIndex,
-}
-
-pub struct CommittedLogEntries {
-    pub through: LogIndex,
-}
-
-pub struct DiscardLogEntries {
-    pub through: LogIndex,
-}
-
-pub struct DiscardedLogEntries {
-    pub through: LogIndex,
-}
-
-pub struct ReadLogEntries {
-    pub from: Option<LogIndex>,
-}
-
-pub struct RetrievedLogEntry<T = Vec<u8>> {
-    pub index: LogIndex,
-    pub payload: T,
-}
-
-pub struct RetrievedLogEntries<T = Vec<u8>> {
-    pub entries: Vec<RetrievedLogEntry<T>>,
-}
-
-pub enum PersistentLogStorageMessage {
-    Store(StoreLogEntry<Vec<u8>>),
-    Commit(CommitLogEntries),
-    Discard(DiscardLogEntries),
-    Read(ReadLogEntries),
-}
-
-pub enum PersistentLogStorageReply {
-    Stored(StoredLogEntry),
-    Committed(CommittedLogEntries),
-    Discarded(DiscardedLogEntries),
-    Retrieved(RetrievedLogEntries<Vec<u8>>),
-}
-
-pub trait PersistentLogStorage {
-    fn store(
-        &mut self,
-        message: StoreLogEntry<Vec<u8>>,
-    ) -> Result<StoredLogEntry, LogStorageError>;
-
-    fn commit(
-        &mut self,
-        message: CommitLogEntries,
-    ) -> Result<CommittedLogEntries, LogStorageError>;
-
-    fn discard(
-        &mut self,
-        message: DiscardLogEntries,
-    ) -> Result<DiscardedLogEntries, LogStorageError>;
-
-    fn read(
+impl<H> PersistentLogStorageProtocolV1::Binding<H> {
+    pub fn store_serialized_blocking<T>(
         &self,
-        message: ReadLogEntries,
-    ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError>;
+        payload: T,
+    ) -> Result<Result<u64, String>, mpi::CallError>;
 
-    fn handle(
-        &mut self,
-        message: PersistentLogStorageMessage,
-    ) -> Result<PersistentLogStorageReply, LogStorageError>;
-}
-
-pub struct SerializedLogEntry<T>;
-
-pub trait SerializedPersistentLogStorageExt {
-    fn store_serialized<T>(
-        &mut self,
-        message: SerializedLogEntry<T>,
-    ) -> Result<StoredLogEntry, LogStorageError>;
-
-    fn read_serialized<T>(
+    pub fn read_serialized_blocking<T>(
         &self,
-        message: ReadLogEntries,
-    ) -> Result<RetrievedLogEntries<T>, LogStorageError>;
-}
-```
-
-Default file-backed implementation:
-
-```rust
-pub struct FileLogStorage;
-
-impl FileLogStorage {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, LogStorageError>;
+        from: Option<u64>,
+    ) -> Result<Result<Vec<(u64, T)>, String>, mpi::CallError>;
 }
 ```
 
 Interface rules:
 
-- PLS-INT-001: The persistent log storage protocol shall be named
-  `persistent_log_storage.v1`.
-- PLS-INT-002: The protocol shall declare exactly these request messages:
-  `Store`, `Commit`, `Discard`, and `Read`.
-- PLS-INT-003: The protocol shall declare exactly these reply messages:
-  `Stored`, `Committed`, `Discarded`, and `Retrieved`.
+- PLS-INT-001: The persistent log storage protocol shall be declared as
+  `PersistentLogStorageProtocolV1`.
+- PLS-INT-002: The protocol shall declare exactly these calls: `store`,
+  `commit`, `discard`, and `read`.
+- PLS-INT-003: Protocol replies shall be represented by each call's declared
+  return payload.
 - PLS-INT-004: Raw log payloads shall be passed and returned as byte sequences
   inside store and read messages.
-- PLS-INT-005: `Store` shall return the assigned log index in a `Stored`
-  reply message.
+- PLS-INT-005: `store` shall return the assigned log index in its reply
+  payload.
 - PLS-INT-006: `Commit` shall accept a log index and return only after
   entries through that index have been synchronized.
 - PLS-INT-007: `Discard` shall accept a log index and persist the
@@ -398,8 +311,8 @@ Verification should include:
 - tests that a torn trailing record is ignored on recovery;
 - tests that message-based store, commit, discard, and read operations preserve
   the existing persistence behavior;
-- tests that the named protocol dispatches request messages to the appropriate
-  storage behavior and returns the corresponding reply messages;
+- tests that the named protocol dispatches calls to the appropriate storage
+  behavior and returns the corresponding reply payloads;
 - tests that the serde helper stores serializable objects with Wincode and
   retrieves deserialized objects;
 - inspection that payload bytes are opaque and public API use requires no

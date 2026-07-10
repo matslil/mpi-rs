@@ -6,7 +6,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+
+use mpi::{protocol, task};
 
 const MAGIC: &[u8; 4] = b"PLS1";
 const VERSION: u8 = 1;
@@ -14,20 +18,88 @@ const KIND_APPEND: u8 = 1;
 const KIND_DISCARD: u8 = 2;
 const HEADER_LEN: usize = 4 + 1 + 1 + 2 + 8 + 8 + 8;
 
-pub type LogIndex = u64;
+type LogIndex = u64;
 
-pub type LogEntry = RetrievedLogEntry<Vec<u8>>;
+protocol! {
+    pub protocol PersistentLogStorageProtocolV1 {
+        call store(Vec<u8>) -> Result<u64, String>;
+        call commit(u64) -> Result<(), String>;
+        call discard(u64) -> Result<(), String>;
+        call read(Option<u64>) -> Result<Vec<(u64, Vec<u8>)>, String>;
+    }
+}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PersistentLogStorageProtocol;
+pub fn start_file_log_storage(
+    path: impl AsRef<Path>,
+) -> Result<
+    (
+        PersistentLogStorageProtocolV1::Binding<
+            impl PersistentLogStorageProtocolV1::store::Target
+            + PersistentLogStorageProtocolV1::commit::Target
+            + PersistentLogStorageProtocolV1::discard::Target
+            + PersistentLogStorageProtocolV1::read::Target,
+        >,
+        mpi::TaskRuntime<()>,
+    ),
+    String,
+> {
+    let storage = FileLogStorage::open(path).map_err(|error| error.to_string())?;
+    let (handle, runtime) =
+        file_task::FileLogStorageTask::spawn(file_task::FileLogStorageTask::new(storage))
+            .map_err(|error| error.to_string())?;
+    Ok((PersistentLogStorageProtocolV1::bind(handle), runtime))
+}
 
-impl PersistentLogStorageProtocol {
-    pub const NAME: &'static str = "persistent_log_storage.v1";
+#[cfg(feature = "serde")]
+impl<H> PersistentLogStorageProtocolV1::Binding<H>
+where
+    H: PersistentLogStorageProtocolV1::store::Target + PersistentLogStorageProtocolV1::read::Target,
+{
+    pub fn store_serialized_blocking<T>(
+        &self,
+        payload: T,
+    ) -> Result<Result<u64, String>, mpi::CallError>
+    where
+        T: serde::Serialize,
+    {
+        let payload =
+            match <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Serialize>::serialize(
+                &payload,
+            ) {
+                Ok(payload) => payload,
+                Err(error) => return Ok(Err(format!("wincode log serialization error: {error}"))),
+            };
+        self.store_blocking(payload)
+    }
+
+    pub fn read_serialized_blocking<T>(
+        &self,
+        from: Option<u64>,
+    ) -> Result<Result<Vec<(u64, T)>, String>, mpi::CallError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let entries = self.read_blocking(from)?;
+        Ok(entries.and_then(|entries| {
+            entries
+                .into_iter()
+                .map(|(index, payload)| {
+                    <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Deserialize>::deserialize(
+                        &payload,
+                    )
+                    .map(|payload| (index, payload))
+                    .map_err(|error| {
+                        format!("wincode log deserialization error at index {index}: {error}")
+                    })
+                })
+                .collect()
+        }))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoreLogEntry<T = Vec<u8>> {
-    pub payload: T,
+struct StoreLogEntry<T = Vec<u8>> {
+    payload: T,
 }
 
 impl<T> StoreLogEntry<T> {
@@ -38,8 +110,8 @@ impl<T> StoreLogEntry<T> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StoredLogEntry {
-    pub index: LogIndex,
+struct StoredLogEntry {
+    index: LogIndex,
 }
 
 impl StoredLogEntry {
@@ -50,8 +122,8 @@ impl StoredLogEntry {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommitLogEntries {
-    pub through: LogIndex,
+struct CommitLogEntries {
+    through: LogIndex,
 }
 
 impl CommitLogEntries {
@@ -62,8 +134,8 @@ impl CommitLogEntries {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommittedLogEntries {
-    pub through: LogIndex,
+struct CommittedLogEntries {
+    through: LogIndex,
 }
 
 impl CommittedLogEntries {
@@ -74,8 +146,8 @@ impl CommittedLogEntries {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DiscardLogEntries {
-    pub through: LogIndex,
+struct DiscardLogEntries {
+    through: LogIndex,
 }
 
 impl DiscardLogEntries {
@@ -86,8 +158,8 @@ impl DiscardLogEntries {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DiscardedLogEntries {
-    pub through: LogIndex,
+struct DiscardedLogEntries {
+    through: LogIndex,
 }
 
 impl DiscardedLogEntries {
@@ -98,26 +170,28 @@ impl DiscardedLogEntries {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ReadLogEntries {
-    pub from: Option<LogIndex>,
+struct ReadLogEntries {
+    from: Option<LogIndex>,
 }
 
 impl ReadLogEntries {
+    #[cfg(test)]
     #[must_use]
-    pub const fn all() -> Self {
+    const fn all() -> Self {
         Self { from: None }
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub const fn from(from: LogIndex) -> Self {
+    const fn from(from: LogIndex) -> Self {
         Self { from: Some(from) }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RetrievedLogEntry<T = Vec<u8>> {
-    pub index: LogIndex,
-    pub payload: T,
+struct RetrievedLogEntry<T = Vec<u8>> {
+    index: LogIndex,
+    payload: T,
 }
 
 impl<T> RetrievedLogEntry<T> {
@@ -128,8 +202,8 @@ impl<T> RetrievedLogEntry<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RetrievedLogEntries<T = Vec<u8>> {
-    pub entries: Vec<RetrievedLogEntry<T>>,
+struct RetrievedLogEntries<T = Vec<u8>> {
+    entries: Vec<RetrievedLogEntry<T>>,
 }
 
 impl<T> RetrievedLogEntries<T> {
@@ -137,29 +211,9 @@ impl<T> RetrievedLogEntries<T> {
     pub const fn new(entries: Vec<RetrievedLogEntry<T>>) -> Self {
         Self { entries }
     }
-
-    pub fn into_entries(self) -> Vec<RetrievedLogEntry<T>> {
-        self.entries
-    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PersistentLogStorageMessage {
-    Store(StoreLogEntry<Vec<u8>>),
-    Commit(CommitLogEntries),
-    Discard(DiscardLogEntries),
-    Read(ReadLogEntries),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PersistentLogStorageReply {
-    Stored(StoredLogEntry),
-    Committed(CommittedLogEntries),
-    Discarded(DiscardedLogEntries),
-    Retrieved(RetrievedLogEntries<Vec<u8>>),
-}
-
-pub trait PersistentLogStorage {
+trait PersistentLogStorage {
     fn store(&mut self, message: StoreLogEntry<Vec<u8>>)
     -> Result<StoredLogEntry, LogStorageError>;
 
@@ -175,42 +229,13 @@ pub trait PersistentLogStorage {
         &self,
         message: ReadLogEntries,
     ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError>;
-
-    fn handle(
-        &mut self,
-        message: PersistentLogStorageMessage,
-    ) -> Result<PersistentLogStorageReply, LogStorageError> {
-        match message {
-            PersistentLogStorageMessage::Store(message) => {
-                self.store(message).map(PersistentLogStorageReply::Stored)
-            }
-            PersistentLogStorageMessage::Commit(message) => self
-                .commit(message)
-                .map(PersistentLogStorageReply::Committed),
-            PersistentLogStorageMessage::Discard(message) => self
-                .discard(message)
-                .map(PersistentLogStorageReply::Discarded),
-            PersistentLogStorageMessage::Read(message) => {
-                self.read(message).map(PersistentLogStorageReply::Retrieved)
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
-pub enum LogStorageError {
+enum LogStorageError {
     Io(io::Error),
     InvalidRecord(String),
     UnknownLogIndex(LogIndex),
-    Serialization {
-        codec: &'static str,
-        message: String,
-    },
-    Deserialization {
-        codec: &'static str,
-        index: LogIndex,
-        message: String,
-    },
 }
 
 impl fmt::Display for LogStorageError {
@@ -219,19 +244,6 @@ impl fmt::Display for LogStorageError {
             Self::Io(error) => write!(f, "persistent log I/O error: {error}"),
             Self::InvalidRecord(message) => write!(f, "invalid persistent log record: {message}"),
             Self::UnknownLogIndex(index) => write!(f, "unknown log index {index}"),
-            Self::Serialization { codec, message } => {
-                write!(f, "{codec} log serialization error: {message}")
-            }
-            Self::Deserialization {
-                codec,
-                index,
-                message,
-            } => {
-                write!(
-                    f,
-                    "{codec} log deserialization error at index {index}: {message}"
-                )
-            }
         }
     }
 }
@@ -240,10 +252,7 @@ impl std::error::Error for LogStorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::InvalidRecord(_)
-            | Self::UnknownLogIndex(_)
-            | Self::Serialization { .. }
-            | Self::Deserialization { .. } => None,
+            Self::InvalidRecord(_) | Self::UnknownLogIndex(_) => None,
         }
     }
 }
@@ -254,72 +263,8 @@ impl From<io::Error> for LogStorageError {
     }
 }
 
-#[cfg(feature = "serde")]
-pub struct SerializedLogEntry<T> {
-    pub payload: T,
-}
-
-#[cfg(feature = "serde")]
-impl<T> SerializedLogEntry<T> {
-    #[must_use]
-    pub const fn new(payload: T) -> Self {
-        Self { payload }
-    }
-}
-
-#[cfg(feature = "serde")]
-pub trait SerializedPersistentLogStorageExt: PersistentLogStorage {
-    fn store_serialized<T>(
-        &mut self,
-        message: SerializedLogEntry<T>,
-    ) -> Result<StoredLogEntry, LogStorageError>
-    where
-        T: serde::Serialize,
-    {
-        let payload =
-            <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Serialize>::serialize(
-                &message.payload,
-            )
-            .map_err(|error| LogStorageError::Serialization {
-                codec: "wincode",
-                message: error.to_string(),
-            })?;
-        self.store(StoreLogEntry::new(payload))
-    }
-
-    fn read_serialized<T>(
-        &self,
-        message: ReadLogEntries,
-    ) -> Result<RetrievedLogEntries<T>, LogStorageError>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let entries = self
-            .read(message)?
-            .entries
-            .into_iter()
-            .map(|entry| {
-                <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Deserialize>::deserialize(
-                    &entry.payload,
-                )
-                .map(|payload| RetrievedLogEntry::new(entry.index, payload))
-                .map_err(|error| LogStorageError::Deserialization {
-                    codec: "wincode",
-                    index: entry.index,
-                    message: error.to_string(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(RetrievedLogEntries::new(entries))
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<S> SerializedPersistentLogStorageExt for S where S: PersistentLogStorage + ?Sized {}
-
 #[derive(Debug)]
-pub struct FileLogStorage {
-    path: PathBuf,
+struct FileLogStorage {
     file: File,
     next_index: LogIndex,
     discarded_through: Option<LogIndex>,
@@ -327,7 +272,7 @@ pub struct FileLogStorage {
 }
 
 impl FileLogStorage {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, LogStorageError> {
+    fn open(path: impl AsRef<Path>) -> Result<Self, LogStorageError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -349,24 +294,11 @@ impl FileLogStorage {
         file.seek(SeekFrom::End(0))?;
 
         Ok(Self {
-            path,
             file,
             next_index,
             discarded_through,
             entries,
         })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn discarded_through(&self) -> Option<LogIndex> {
-        self.discarded_through
-    }
-
-    pub fn next_index(&self) -> LogIndex {
-        self.next_index
     }
 }
 
@@ -427,6 +359,79 @@ impl PersistentLogStorage for FileLogStorage {
                 .map(|(index, payload)| RetrievedLogEntry::new(*index, payload.clone()))
                 .collect(),
         ))
+    }
+}
+
+mod file_task {
+    use super::*;
+
+    pub(super) struct FileLogStorageTask {
+        storage: FileLogStorage,
+    }
+
+    impl FileLogStorageTask {
+        pub(super) const fn new(storage: FileLogStorage) -> Self {
+            Self { storage }
+        }
+    }
+
+    #[task(queue_size = 32)]
+    impl FileLogStorageTask {
+        #[start]
+        fn start(_ctx: &mut FileLogStorageTaskContext) {}
+
+        #[call(protocol = PersistentLogStorageProtocolV1::store)]
+        fn store(ctx: &mut FileLogStorageTaskContext, payload: Vec<u8>) -> Result<u64, String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .store(StoreLogEntry::new(payload))
+                    .map(|stored| stored.index)
+                    .map_err(|error| error.to_string())
+            })
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::commit)]
+        fn commit(ctx: &mut FileLogStorageTaskContext, through: u64) -> Result<(), String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .commit(CommitLogEntries::through(through))
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::discard)]
+        fn discard(ctx: &mut FileLogStorageTaskContext, through: u64) -> Result<(), String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .discard(DiscardLogEntries::through(through))
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::read)]
+        fn read(
+            ctx: &mut FileLogStorageTaskContext,
+            from: Option<u64>,
+        ) -> Result<Vec<(u64, Vec<u8>)>, String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .read(ReadLogEntries { from })
+                    .map(|entries| {
+                        entries
+                            .entries
+                            .into_iter()
+                            .map(|entry| (entry.index, entry.payload))
+                            .collect()
+                    })
+                    .map_err(|error| error.to_string())
+            })
+        }
     }
 }
 
@@ -772,36 +777,23 @@ mod tests {
     #[test]
     fn pls_req_009_protocol_message_dispatches_store_commit_and_read() {
         let path = unique_path("protocol");
-        let mut log = FileLogStorage::open(&path).expect("open log");
-
-        assert_eq!(
-            PersistentLogStorageProtocol::NAME,
-            "persistent_log_storage.v1"
-        );
+        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
 
         let stored = log
-            .handle(PersistentLogStorageMessage::Store(StoreLogEntry::new(
-                b"decision".to_vec(),
-            )))
+            .store_blocking(b"decision".to_vec())
+            .expect("store call")
             .expect("store through protocol");
-        let PersistentLogStorageReply::Stored(stored) = stored else {
-            panic!("expected stored reply");
-        };
+
+        assert_eq!(stored, 0);
+        log.commit_blocking(stored)
+            .expect("commit call")
+            .expect("commit through protocol");
 
         assert_eq!(
-            log.handle(PersistentLogStorageMessage::Commit(
-                CommitLogEntries::through(stored.index)
-            ))
-            .expect("commit through protocol"),
-            PersistentLogStorageReply::Committed(CommittedLogEntries::new(stored.index))
-        );
-
-        assert_eq!(
-            log.handle(PersistentLogStorageMessage::Read(ReadLogEntries::all()))
+            log.read_blocking(None)
+                .expect("read call")
                 .expect("read through protocol"),
-            PersistentLogStorageReply::Retrieved(RetrievedLogEntries::new(vec![
-                RetrievedLogEntry::new(0, b"decision".to_vec())
-            ]))
+            vec![(0, b"decision".to_vec())]
         );
 
         let _ = std::fs::remove_file(path);
@@ -814,20 +806,21 @@ mod tests {
             transaction: 42,
             decision: "commit".to_string(),
         };
-        let mut log = FileLogStorage::open(&path).expect("open log");
+        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
         let index = log
-            .store_serialized(SerializedLogEntry::new(&payload))
-            .expect("store serialized payload")
-            .index;
-        log.commit(CommitLogEntries::through(index))
+            .store_serialized_blocking(&payload)
+            .expect("store serialized call")
+            .expect("store serialized payload");
+        log.commit_blocking(index)
+            .expect("commit call")
             .expect("commit serialized payload");
 
         let recovered = log
-            .read_serialized::<DecisionPayload>(ReadLogEntries::all())
-            .expect("read serialized payload")
-            .entries;
+            .read_serialized_blocking::<DecisionPayload>(None)
+            .expect("read serialized call")
+            .expect("read serialized payload");
 
-        assert_eq!(recovered, vec![RetrievedLogEntry::new(0, payload)]);
+        assert_eq!(recovered, vec![(0, payload)]);
 
         let _ = std::fs::remove_file(path);
     }
