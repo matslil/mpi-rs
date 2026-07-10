@@ -37,6 +37,8 @@ REPO-ARCH-004: If a change affects more than one crate, each affected crate shal
 
 REPO-ARCH-005: Shared workflow documents may describe how agents coordinate cross-crate changes, but not what any crate's behavior shall be.
 
+REPO-ARCH-006: Cross-crate architecture changes shall treat crate boundaries as message boundaries unless the affected crate-local baselines document a human-approved exception.
+
 ## Workflow Components
 
 | ID | Component | Responsibility |
