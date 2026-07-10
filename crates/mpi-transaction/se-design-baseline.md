@@ -8,11 +8,11 @@ This document defines the crate-local systems-engineering baseline for the
 `mpi-transaction` contains transaction coordination support that depends on
 message-based MPI protocols outside the core `mpi` crate. The first implemented
 piece is a transaction decision log that records commit or abort decisions
-through the `persistent-log-storage` protocol.
+through the `persistent-log-storage-service` protocol.
 
-Keeping this crate separate prevents a dependency cycle: `persistent-log-storage`
+Keeping this crate separate prevents a dependency cycle: `persistent-log-storage-service`
 depends on `mpi` to declare and serve its protocol, while `mpi-transaction`
-depends on both `mpi` and `persistent-log-storage`.
+depends on both `mpi` and `persistent-log-storage-service`.
 
 ## Requirements
 

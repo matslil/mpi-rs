@@ -45,3 +45,7 @@ REPO-INT-002: Shared workflow documents shall not define crate public APIs, crat
 REPO-INT-003: Crate-local documentation shall define the API and interface rules for the crate it describes.
 
 REPO-INT-004: Crate-local interface rules for interfaces between crates shall specify message-based interaction unless the human maintainer explicitly approves and documents another interface style.
+
+REPO-INT-005: Repository-owned optional crate and service feature names shall
+use the literal form `enable-<crate-name>`, where `<crate-name>` is the Cargo
+package name defined by the affected crate.

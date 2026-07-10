@@ -113,3 +113,12 @@ Interfaces between crates shall be message based unless the human maintainer exp
 Verification: inspection
 
 Status: proposed
+
+### REPO-REQ-023: Optional crate feature naming
+
+Repository-owned optional crates and services shall use Cargo feature names of
+the form `enable-<crate-name>`.
+
+Verification: inspection
+
+Status: proposed
