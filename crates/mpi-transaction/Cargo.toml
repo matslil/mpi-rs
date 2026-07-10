@@ -8,4 +8,4 @@ description = "Transactional messaging support for mpi-rs"
 
 [dependencies]
 mpi = { path = "../mpi" }
-persistent-log-storage = { path = "../persistent-log-storage" }
+persistent-log-storage-service = { path = "../persistent-log-storage-service" }

@@ -1,4 +1,4 @@
-//! Crash-safe file-backed persistent log storage.
+//! Crash-safe file-backed persistent log storage service.
 //!
 //! The crate-local baseline is documented in `se-design-baseline.md`.
 
@@ -9,6 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use mpi::{protocol, task};
 
@@ -29,32 +30,108 @@ protocol! {
     }
 }
 
-pub fn start_file_log_storage(
+type FileLogStorageBinding =
+    PersistentLogStorageProtocolV1::Binding<file_task::FileLogStorageTaskHandle>;
+pub type PersistentLogStoreResult = Result<u64, String>;
+pub type PersistentLogUnitResult = Result<(), String>;
+pub type PersistentLogReadResult = Result<Vec<(u64, Vec<u8>)>, String>;
+
+struct PersistentLogStorageServiceInner {
+    binding: FileLogStorageBinding,
+    runtime: Mutex<Option<mpi::TaskRuntime<()>>>,
+}
+
+impl Drop for PersistentLogStorageServiceInner {
+    fn drop(&mut self) {
+        self.binding.handle().close();
+        let Some(runtime) = self
+            .runtime
+            .lock()
+            .expect("persistent log storage service runtime lock poisoned")
+            .take()
+        else {
+            return;
+        };
+        runtime
+            .join()
+            .expect("persistent log storage service task panicked");
+    }
+}
+
+/// Owning file-backed persistent log storage service instance.
+///
+/// Clones share ownership of the same running storage task. Dropping the final
+/// clone closes the task queue and waits for clean termination.
+#[derive(Clone)]
+pub struct PersistentLogStorageServiceInstance {
+    inner: Arc<PersistentLogStorageServiceInner>,
+}
+
+impl PersistentLogStorageServiceInstance {
+    /// Store one opaque log payload.
+    pub fn store_blocking(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<PersistentLogStoreResult, mpi::CallError> {
+        self.inner.binding.store_blocking(payload)
+    }
+
+    /// Commit all log entries through `through`.
+    pub fn commit_blocking(&self, through: u64) -> Result<PersistentLogUnitResult, mpi::CallError> {
+        self.inner.binding.commit_blocking(through)
+    }
+
+    /// Discard all log entries through `through`.
+    pub fn discard_blocking(
+        &self,
+        through: u64,
+    ) -> Result<PersistentLogUnitResult, mpi::CallError> {
+        self.inner.binding.discard_blocking(through)
+    }
+
+    /// Read complete non-discarded log entries starting at `from`, if supplied.
+    pub fn read_blocking(
+        &self,
+        from: Option<u64>,
+    ) -> Result<PersistentLogReadResult, mpi::CallError> {
+        self.inner.binding.read_blocking(from)
+    }
+
+    /// Stop the service and wait for clean termination.
+    pub fn stop(&self) {
+        self.inner.binding.handle().close();
+        let Some(runtime) = self
+            .inner
+            .runtime
+            .lock()
+            .expect("persistent log storage service runtime lock poisoned")
+            .take()
+        else {
+            return;
+        };
+        runtime
+            .join()
+            .expect("persistent log storage service task panicked");
+    }
+}
+
+pub fn start_file_log_storage_service(
     path: impl AsRef<Path>,
-) -> Result<
-    (
-        PersistentLogStorageProtocolV1::Binding<
-            impl PersistentLogStorageProtocolV1::store::Target
-            + PersistentLogStorageProtocolV1::commit::Target
-            + PersistentLogStorageProtocolV1::discard::Target
-            + PersistentLogStorageProtocolV1::read::Target,
-        >,
-        mpi::TaskRuntime<()>,
-    ),
-    String,
-> {
+) -> Result<PersistentLogStorageServiceInstance, String> {
     let storage = FileLogStorage::open(path).map_err(|error| error.to_string())?;
     let (handle, runtime) =
         file_task::FileLogStorageTask::spawn(file_task::FileLogStorageTask::new(storage))
             .map_err(|error| error.to_string())?;
-    Ok((PersistentLogStorageProtocolV1::bind(handle), runtime))
+    Ok(PersistentLogStorageServiceInstance {
+        inner: Arc::new(PersistentLogStorageServiceInner {
+            binding: PersistentLogStorageProtocolV1::bind(handle),
+            runtime: Mutex::new(Some(runtime)),
+        }),
+    })
 }
 
 #[cfg(feature = "serde")]
-impl<H> PersistentLogStorageProtocolV1::Binding<H>
-where
-    H: PersistentLogStorageProtocolV1::store::Target + PersistentLogStorageProtocolV1::read::Target,
-{
+impl PersistentLogStorageServiceInstance {
     pub fn store_serialized_blocking<T>(
         &self,
         payload: T,
@@ -615,7 +692,7 @@ mod tests {
             .expect("system clock before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "persistent-log-storage-{name}-{}-{nanos}.log",
+            "persistent-log-storage-service-{name}-{}-{nanos}.log",
             std::process::id()
         ))
     }
@@ -777,7 +854,7 @@ mod tests {
     #[test]
     fn pls_req_009_protocol_message_dispatches_store_commit_and_read() {
         let path = unique_path("protocol");
-        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
+        let log = start_file_log_storage_service(path.clone()).expect("start log service");
 
         let stored = log
             .store_blocking(b"decision".to_vec())
@@ -806,7 +883,7 @@ mod tests {
             transaction: 42,
             decision: "commit".to_string(),
         };
-        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
+        let log = start_file_log_storage_service(path.clone()).expect("start log service");
         let index = log
             .store_serialized_blocking(&payload)
             .expect("store serialized call")

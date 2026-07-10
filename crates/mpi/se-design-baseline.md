@@ -2,7 +2,7 @@
 
 This document defines the lightweight systems-engineering baseline for the `mpi` crate.
 
-The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, core transaction identifiers, service instance runtime support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; storage-backed transaction logging lives in `crates/mpi-transaction/se-design-baseline.md`; default crash-recovery log storage service behavior lives in `crates/persistent-log-storage/se-design-baseline.md`.
+The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, core transaction identifiers, service instance runtime support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; storage-backed transaction logging lives in `crates/mpi-transaction/se-design-baseline.md`; default crash-recovery log storage service behavior lives in `crates/persistent-log-storage-service/se-design-baseline.md`.
 
 ## Purpose
 

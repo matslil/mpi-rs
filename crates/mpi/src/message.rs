@@ -20,7 +20,7 @@ pub enum MessagePlacement {
 /// active waiter.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum LateReplyPolicy {
-    /// Pass the late reply to the receiving task's late-reply handler.
+    /// Pass the late reply to the receiving task's late-reply callback.
     Report,
 
     /// Treat the late reply as an allowed obsolete protocol message.
@@ -37,7 +37,7 @@ pub enum LateReplyKind {
     StreamEvent,
 }
 
-/// Action returned by a task's late-reply handler.
+/// Action returned by a task's late-reply callback.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum LateReplyAction {
     /// Ignore the late reply and continue running the task.
@@ -47,7 +47,7 @@ pub enum LateReplyAction {
     Terminate,
 }
 
-/// Borrowed view of a late reply passed to a task late-reply handler.
+/// Borrowed view of a late reply passed to a task late-reply callback.
 pub struct LateReplyRef<'a> {
     session_id: SessionId,
     kind: LateReplyKind,
