@@ -7,6 +7,7 @@ pub mod scope;
 pub mod session;
 pub mod stream;
 pub mod task;
+pub mod transaction;
 
 pub use call::{
     CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
@@ -32,4 +33,9 @@ pub use stream::*;
 pub use task::{
     StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskEndpoint, TaskHandle,
     TaskJoinError, TaskRuntime, spawn_task,
+};
+pub use transaction::{
+    HasTransactionPath, TransactionDecision, TransactionDecisionLog, TransactionDecisionRecord,
+    TransactionId, TransactionIdAllocator, TransactionLogError, TransactionPath,
+    TransactionalMessage,
 };
