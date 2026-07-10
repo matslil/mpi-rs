@@ -2,7 +2,7 @@
 
 This document defines the lightweight systems-engineering baseline for the `mpi-macros` crate.
 
-`mpi-macros` owns proc-macro parsing and generated Rust code for task declarations, protocol declarations, generated handles, contexts, message enums, dispatch, protocol bindings, and compile-time receive declarations. Runtime semantics live in `crates/mpi/se-design-baseline.md`.
+`mpi-macros` owns proc-macro parsing and generated Rust code for task declarations, protocol declarations, generated handles, contexts, message enums, dispatch, protocol bindings, and compile-time receive declarations. Runtime semantics live in `crates/mpi-core/se-design-baseline.md`; user-facing macro exports are available through the `mpi` facade.
 
 ## Purpose
 
@@ -81,8 +81,9 @@ original IDs used by tests, reports, and traceability.
   service stop call and wait for the stop reply.
 - REQ-182: A service stop call shall take no arguments and shall use its reply
   only as a synchronization point for clean task termination.
-- REQ-183: Protocol bindings exposed by a service instance shall not outlive
-  that service instance.
+- REQ-183: Protocol bindings cloned from a service instance may outlive the
+  service instance object, but sends and calls through those bindings shall fail
+  with task-stopped behavior after the service task has stopped.
 - REQ-184: Direct access to service task state or direct function calls into the
   service task shall be unavailable unless an affected crate-local baseline
   documents an explicit exception.
@@ -275,11 +276,12 @@ Verification: inspection and test
 
 Status: proposed
 
-### MACRO-REQ-031: Service instance binding lifetime
+### MACRO-REQ-031: Service binding stopped behavior
 
-Generated service protocol bindings shall be accessed through the service
-instance so ordinary Rust use cannot retain those bindings beyond the service
-instance lifetime.
+Generated service protocol bindings may be cloned independently from the
+service instance, but those bindings shall not keep the service task alive and
+shall report stopped-task errors after the final service instance clone stops
+the task.
 
 Verification: compile-fail test and inspection
 
@@ -338,8 +340,8 @@ Stable architecture ID anchors:
 - MACRO-ARCH-009: Generated transaction-kind marker types and trait implementations encode whether a transaction kind allows a protocol message or child transaction kind.
 - MACRO-ARCH-010: Generated send-effect checks are limited to generated `mpi` APIs and do not attempt to prove arbitrary Rust side effects inside handler bodies.
 - MACRO-ARCH-011: Generated service instances own service task lifetime and
-  expose service protocol bindings without allowing those bindings to outlive
-  the service instance.
+  expose protocol bindings that may be cloned independently without keeping the
+  service task alive.
 - MACRO-ARCH-012: Generated service final-drop logic uses the service stop call
   as the shutdown synchronization point.
 - MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
@@ -485,7 +487,8 @@ Verification should include:
 - compile-fail tests for child transaction creation whose child kind is not declared under the active parent kind;
 - compile-fail tests for generated non-transactional side-effecting sends from transactional handler contexts;
 - tests or macro expansion inspection for generated service instance lifetime,
-  synthesized empty start and stop handlers, and final-drop stop behavior;
+  cloned binding stopped behavior, synthesized empty start and stop handlers,
+  and final-drop stop behavior;
 - examples demonstrating generated task APIs.
 
 ## Traceability

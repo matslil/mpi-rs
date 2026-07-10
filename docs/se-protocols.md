@@ -6,5 +6,5 @@ Protocol models, protocol compatibility rules, generated protocol identities, an
 
 Current protocol-related baselines are crate-local:
 
-- `crates/mpi/se-design-baseline.md`
+- `crates/mpi-core/se-design-baseline.md`
 - `crates/mpi-macros/se-design-baseline.md`

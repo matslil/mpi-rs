@@ -6,7 +6,7 @@ This document defines the lightweight systems-engineering baseline for the
 The crate provides a default file-backed persistent log store that transaction
 coordination code can use for crash recovery. It is specified as a separate
 crate so the storage interface, file format, and crash-safety rules can evolve
-without being folded into the core `mpi` crate.
+without being folded into the `mpi-core` crate.
 
 ## Purpose
 
@@ -226,7 +226,7 @@ Status: proposed
 
 ### PLS-REQ-013: Feature-gated service inclusion
 
-The workspace feature `enable-persistent-log-storage-service` shall enable the
+The `mpi` facade feature `enable-persistent-log-storage-service` shall enable the
 persistent log storage service and any supporting `mpi` or `mpi-macros`
 integration required by that service.
 
@@ -338,7 +338,7 @@ Interface rules:
 - PLS-INT-012: `PersistentLogStorageServiceInstance` shall expose the
   `PersistentLogStorageProtocolV1` binding without allowing that binding to
   outlive the service instance.
-- PLS-INT-013: The service shall be enabled by the workspace feature
+- PLS-INT-013: The service shall be enabled by the `mpi` facade feature
   `enable-persistent-log-storage-service`.
 
 ## Verification
@@ -362,7 +362,7 @@ Verification should include:
   `unsafe` Rust;
 - inspection that the file-backed start API returns a service instance and
   exposes no detached protocol binding;
-- inspection that the workspace feature name is
+- inspection that the `mpi` facade feature name is
   `enable-persistent-log-storage-service`.
 
 ## Validation

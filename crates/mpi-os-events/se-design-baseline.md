@@ -4,7 +4,7 @@ This document defines the lightweight systems-engineering baseline for the
 `mpi-os-events` crate.
 
 `mpi-os-events` provides operating-system and application-shell event bridges
-for `mpi-rs`. It is intentionally separate from the core `mpi` crate so the
+for `mpi-rs`. It is intentionally separate from the `mpi-core` crate so the
 message runtime can remain usable without platform integration dependencies.
 
 ## Purpose
@@ -217,7 +217,7 @@ Expected outcome:
 
 - asynchronous source events map to event-style messages when no reply is required;
 - synchronous source events map to call-style interactions or another explicit reply path when the platform expects a decision;
-- platform-specific dependencies remain outside the core `mpi` crate.
+- platform-specific dependencies remain outside the `mpi-core` crate.
 
 Evidence type: inspection and adapter-specific tests as adapters are added
 

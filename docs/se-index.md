@@ -25,13 +25,14 @@ Workspace-level documents cover repository builds, process, workflows, change co
 
 - `crates/ctx-future/se-design-baseline.md`
 - `crates/mpi/se-design-baseline.md`
+- `crates/mpi-core/se-design-baseline.md`
 - `crates/mpi-macros/se-design-baseline.md`
 - `crates/mpi-os-events/se-design-baseline.md`
 - `crates/mpi-transaction/se-design-baseline.md`
 - `crates/persistent-log-storage-service/se-design-baseline.md`
 - `crates/timeout-service/se-design-baseline.md`
-- `crates/mpi/se-send-scope.md`
-- `crates/mpi/se-task-topology.md`
+- `crates/mpi-core/se-send-scope.md`
+- `crates/mpi-core/se-task-topology.md`
 
 ## Scope Rules
 
