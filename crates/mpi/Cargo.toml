@@ -8,4 +8,3 @@ repository.workspace = true
 [dependencies]
 ctx-future = { path = "../ctx-future" }
 mpi-macros = { path = "../mpi-macros" }
-persistent-log-storage = { path = "../persistent-log-storage" }
