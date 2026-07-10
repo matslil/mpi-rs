@@ -2,7 +2,7 @@
 
 This document defines the lightweight systems-engineering baseline for the `mpi` crate.
 
-The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`.
+The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; default crash-recovery log storage lives in `crates/persistent-log-storage/se-design-baseline.md`.
 
 ## Purpose
 
@@ -49,6 +49,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-046: Rust developers need ACID-style transaction scopes that can coordinate several typed message interactions while keeping invalid transaction participation visible at compile time.
 - SN-047: Rust developers need hierarchical transactions so nested transactional work is represented explicitly rather than relying on ad hoc handler-local rollback code.
 - SN-048: Maintainers and operators need transaction decisions to be recoverable after crashes once a transaction has crossed the durable commit decision point.
+- SN-049: Transactional messaging needs a persistent log storage interface so crash recovery does not depend on ad hoc application-specific file writes.
 
 ## Scope
 
@@ -62,14 +63,17 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - `SessionId`, `EndpointId`, response matching, late replies, and diagnostics snapshots;
 - task-internal calls and streams;
 - external blocking API support;
-- compile-time receive-check traits consumed by generated code.
+- compile-time receive-check traits consumed by generated code;
 - runtime transaction identifiers, transaction paths, transaction coordination
-  state, transaction deadlines, and transaction recovery interfaces.
+  state, transaction deadlines, and transaction recovery interfaces;
+- integration with a persistent log storage abstraction for transaction
+  recovery records.
 
 `mpi` is not responsible for:
 
 - proc-macro parsing or code generation;
 - native OS or framework event capture;
+- providing the default file-backed persistent log storage implementation;
 - the standalone `ctx-future` implementation.
 
 ## Requirements
@@ -643,6 +647,36 @@ Verification: inspection
 
 Status: proposed
 
+### MPI-REQ-125: Transaction log storage interface
+
+Transactional messaging shall write transaction recovery records through a
+persistent log storage abstraction rather than through ad hoc runtime file
+writes.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-126: Transaction decision commit
+
+When transactional messaging writes a transaction commit or abort decision log
+entry, it shall call the persistent log storage commit operation for that entry
+index before treating the decision as durable.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MPI-REQ-127: Default persistent log storage crate
+
+The default local file-backed persistent log storage implementation used by
+transactional messaging shall be provided by the separate
+`persistent-log-storage` workspace crate.
+
+Verification: inspection
+
+Status: proposed
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -678,7 +712,7 @@ Stable architecture ID anchors:
 | MPI-CMP-011 | Compile-time receive check subsystem | Ensures a caller task can wait only for messages it declares it can receive. |
 | MPI-CMP-012 | Diagnostics subsystem | Supports snapshots and future tracing, timeouts, and deadlock/debug support. |
 | MPI-CMP-013 | Transaction subsystem | Allocates transaction identifiers, tracks transaction paths, coordinates prepare/commit/abort, applies deadlines, and drives recovery. |
-| MPI-CMP-014 | Transaction log | Persists prepared participant state and coordinator commit or abort decisions needed for recovery. |
+| MPI-CMP-014 | Transaction log adapter | Persists prepared participant state and coordinator commit or abort decisions through the persistent log storage abstraction. |
 
 Architecture rules:
 
@@ -707,6 +741,8 @@ Architecture rules:
 - MPI-ARCH-095: Parent abort propagates to active and prepared descendants.
 - MPI-ARCH-096: Transaction deadlines bound waits for queue capacity, operation replies, prepare votes, commit delivery, and abort delivery.
 - MPI-ARCH-097: Business rejection is a valid transaction outcome that drives abort before a durable commit decision; it is distinct from infrastructure failure.
+- MPI-ARCH-098: Transaction recovery records are written through a persistent log storage abstraction with append, commit-through-index, discard-through-index, and read-back operations.
+- MPI-ARCH-099: The default local implementation of that abstraction is provided by the `persistent-log-storage` crate.
 
 ## Transaction architecture
 
@@ -722,12 +758,13 @@ persistent effects are not committed. A business rejection, such as
 insufficient funds, is a normal outcome that drives the transaction toward
 abort before the coordinator records a durable commit decision.
 
-Once every required participant has prepared, the coordinator may durably record
-a commit decision. That record is the rollforward boundary. After it exists,
-rollback is no longer allowed; commit delivery may time out or be interrupted by
-restart, but recovery continues rollforward from the durable commit decision.
-Abort decisions follow the same durability rule: once an abort decision is
-durable, recovery continues abort delivery rather than changing the outcome.
+Once every required participant has prepared, the coordinator may append a
+commit decision to persistent log storage and commit through that log index.
+That durable record is the rollforward boundary. After it exists, rollback is no
+longer allowed; commit delivery may time out or be interrupted by restart, but
+recovery continues rollforward from the durable commit decision. Abort decisions
+follow the same durability rule: once an abort decision is durable, recovery
+continues abort delivery rather than changing the outcome.
 
 Hierarchical transactions represent nested transactional work explicitly. A
 child transaction commits into its parent transaction state, not into globally
@@ -821,6 +858,8 @@ Interface rules:
 - MPI-INT-010: User-facing transactional APIs should pass a typed transaction handle rather than requiring ordinary users to manually construct or route transaction identifiers.
 - MPI-INT-011: Transaction errors shall distinguish business rejection, timeout before decision, commit in progress, abort in progress, and unrecoverable transaction hazard.
 - MPI-INT-012: Transaction recovery APIs shall expose durable transactions that require continued commit or abort delivery after restart.
+- MPI-INT-013: Transaction log integration shall use a persistent log storage interface with append, commit-through-index, discard-through-index, and read-back operations.
+- MPI-INT-014: Ordinary transaction users should not need to directly manipulate persistent log storage records for normal transaction execution.
 
 Conceptual transaction API:
 
@@ -862,6 +901,7 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-014 | Run a hierarchical transaction where a child transaction commits into its parent and becomes globally committed only after the root durable commit decision. | proposed |
 | MPI-VAL-015 | Recover a transaction after restart by continuing rollforward from a durable commit decision or continuing abort delivery from a durable abort decision. | proposed |
 | MPI-VAL-016 | Reject generated non-transactional side-effecting sends from inside a transactional handler. | proposed |
+| MPI-VAL-017 | Recover transaction decisions from the default file-backed persistent log storage crate after restart. | proposed |
 
 ## Verification
 
@@ -881,7 +921,10 @@ Verification should include:
   suspension with deadlines, prepare, durable commit decision, durable abort
   decision, hierarchical commit and abort, and recovery after restart;
 - compile-fail or inspection evidence showing generated APIs reject
-  non-transactional side-effecting sends from transactional scopes.
+  non-transactional side-effecting sends from transactional scopes;
+- transaction recovery tests showing commit and abort decision records are
+  committed through persistent log storage before the runtime treats the
+  decision as durable.
 
 ## Traceability
 
@@ -896,4 +939,4 @@ Verification should include:
 | MPI-REQ-080..MPI-REQ-087 | MPI-ARCH-070 | MPI-INT-007 | MPI-VAL-007, MPI-VAL-008, MPI-VAL-009 |
 | MPI-REQ-090..MPI-REQ-091 | MPI-ARCH-080 | MPI-INT-004, MPI-INT-005 | MPI-VAL-011 |
 | MPI-REQ-100 | MPI-CMP-012 | MPI-INT-006, MPI-INT-008 | MPI-VAL-012 |
-| MPI-REQ-110..MPI-REQ-124 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-097 | MPI-INT-009..MPI-INT-012 | MPI-VAL-013..MPI-VAL-016 |
+| MPI-REQ-110..MPI-REQ-127 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-099 | MPI-INT-009..MPI-INT-014 | MPI-VAL-013..MPI-VAL-017 |

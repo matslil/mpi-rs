@@ -4,6 +4,7 @@ members = [
     "crates/mpi",
     "crates/mpi-macros",
     "crates/mpi-os-events",
+    "crates/persistent-log-storage",
     "crates/timeout-server",
 ]
 resolver = "2"
