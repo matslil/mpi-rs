@@ -455,14 +455,14 @@ where
         &self,
         response: QueuedCallResponse,
     ) -> Result<LateReplyAction, CallError> {
-        self.deliver_call_response_with_late_reply_handler(response, |_| LateReplyAction::Ignore)
+        self.deliver_call_response_with_late_reply_callback(response, |_| LateReplyAction::Ignore)
     }
 
-    /// Route a queued call response using an explicit late-reply handler.
-    pub fn deliver_call_response_with_late_reply_handler<F>(
+    /// Route a queued call response using an explicit late-reply callback.
+    pub fn deliver_call_response_with_late_reply_callback<F>(
         &self,
         response: QueuedCallResponse,
-        handler: F,
+        callback: F,
     ) -> Result<LateReplyAction, CallError>
     where
         F: FnOnce(LateReplyRef<'_>) -> LateReplyAction,
@@ -486,7 +486,7 @@ where
                     LateReplyKind::CallResponse,
                     response.value.as_ref(),
                 );
-                let action = handler(reply);
+                let action = callback(reply);
                 if action == LateReplyAction::Terminate {
                     self.stop();
                 }
@@ -589,14 +589,14 @@ where
         &self,
         event: QueuedStreamEvent,
     ) -> Result<LateReplyAction, SendError> {
-        self.deliver_stream_event_with_late_reply_handler(event, |_| LateReplyAction::Ignore)
+        self.deliver_stream_event_with_late_reply_callback(event, |_| LateReplyAction::Ignore)
     }
 
-    /// Route a queued stream event using an explicit late-reply handler.
-    pub fn deliver_stream_event_with_late_reply_handler<F>(
+    /// Route a queued stream event using an explicit late-reply callback.
+    pub fn deliver_stream_event_with_late_reply_callback<F>(
         &self,
         event: QueuedStreamEvent,
-        handler: F,
+        callback: F,
     ) -> Result<LateReplyAction, SendError>
     where
         F: FnOnce(LateReplyRef<'_>) -> LateReplyAction,
@@ -612,7 +612,7 @@ where
                 drop(state);
                 let reply =
                     LateReplyRef::new(session_id, LateReplyKind::StreamEvent, event.event.as_ref());
-                let action = handler(reply);
+                let action = callback(reply);
                 if action == LateReplyAction::Terminate {
                     self.stop();
                 }

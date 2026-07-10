@@ -1,9 +1,9 @@
-//! Transaction decision logging over the persistent log storage protocol.
+//! Transaction decision logging over the persistent log storage service.
 
 use core::fmt;
 
 use mpi::{CallError, EndpointId, TransactionDecision, TransactionId, TransactionPath};
-use persistent_log_storage::PersistentLogStorageProtocolV1;
+use persistent_log_storage_service::PersistentLogStorageServiceInstance;
 
 const RECORD_MAGIC: &[u8; 5] = b"MPITX";
 const RECORD_VERSION: u8 = 1;
@@ -50,18 +50,13 @@ impl From<CallError> for TransactionLogError {
     }
 }
 
-pub struct TransactionDecisionLog<H> {
-    storage: PersistentLogStorageProtocolV1::Binding<H>,
+pub struct TransactionDecisionLog {
+    storage: PersistentLogStorageServiceInstance,
 }
 
-impl<H> TransactionDecisionLog<H>
-where
-    H: PersistentLogStorageProtocolV1::store::Target
-        + PersistentLogStorageProtocolV1::commit::Target
-        + PersistentLogStorageProtocolV1::read::Target,
-{
+impl TransactionDecisionLog {
     #[must_use]
-    pub const fn new(storage: PersistentLogStorageProtocolV1::Binding<H>) -> Self {
+    pub fn new(storage: PersistentLogStorageServiceInstance) -> Self {
         Self { storage }
     }
 
@@ -206,7 +201,7 @@ fn decode_decision_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use persistent_log_storage::start_file_log_storage;
+    use persistent_log_storage_service::start_file_log_storage_service;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_path(name: &str) -> std::path::PathBuf {
@@ -223,7 +218,7 @@ mod tests {
     #[test]
     fn mpi_req_119_req_126_decision_log_commits_decision_index_before_returning() {
         let path = unique_path("commit");
-        let (storage, _runtime) = start_file_log_storage(path.clone()).expect("start storage task");
+        let storage = start_file_log_storage_service(path.clone()).expect("start storage service");
         let log = TransactionDecisionLog::new(storage);
         let tx_path = TransactionPath::root(TransactionId::new(EndpointId(11), 5));
 
@@ -240,8 +235,8 @@ mod tests {
         let root = TransactionPath::root(TransactionId::new(EndpointId(12), 6));
         let child = root.child(1);
         {
-            let (storage, _runtime) =
-                start_file_log_storage(path.clone()).expect("start storage task");
+            let storage =
+                start_file_log_storage_service(path.clone()).expect("start storage service");
             let log = TransactionDecisionLog::new(storage);
             log.record_decision(&root, TransactionDecision::Abort)
                 .expect("record abort");
@@ -249,8 +244,8 @@ mod tests {
                 .expect("record child commit");
         }
 
-        let (storage, _runtime) =
-            start_file_log_storage(path.clone()).expect("restart storage task");
+        let storage =
+            start_file_log_storage_service(path.clone()).expect("restart storage service");
         let log = TransactionDecisionLog::new(storage);
         let decisions = log.recover_decisions().expect("recover decisions");
 

@@ -747,7 +747,7 @@ fn req_109_block_on_ctx_task_defers_ordinary_messages_instead_of_discarding() {
 }
 
 #[test]
-fn req_094_late_call_response_default_handler_ignores() {
+fn req_094_late_call_response_default_callback_ignores() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(72));
     let ctx = TaskContext::new(handle);
@@ -762,7 +762,7 @@ fn req_094_late_call_response_default_handler_ignores() {
 }
 
 #[test]
-fn req_094_late_call_response_handler_receives_borrowed_reply() {
+fn req_094_late_call_response_callback_receives_borrowed_reply() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(73));
     let ctx = TaskContext::new(handle);
@@ -770,7 +770,7 @@ fn req_094_late_call_response_handler_receives_borrowed_reply() {
     let mut observed = None;
 
     assert_eq!(
-        ctx.deliver_call_response_with_late_reply_handler(
+        ctx.deliver_call_response_with_late_reply_callback(
             QueuedCallResponse::new(session_id, Box::new(23_u32)),
             |reply| {
                 assert_eq!(reply.session_id(), session_id);
@@ -787,7 +787,7 @@ fn req_094_late_call_response_handler_receives_borrowed_reply() {
 }
 
 #[test]
-fn req_094_late_call_response_with_ignore_policy_bypasses_handler() {
+fn req_094_late_call_response_with_ignore_policy_bypasses_callback() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(74));
     let ctx = TaskContext::new(handle);
@@ -795,7 +795,7 @@ fn req_094_late_call_response_with_ignore_policy_bypasses_handler() {
     let mut called = false;
 
     assert_eq!(
-        ctx.deliver_call_response_with_late_reply_handler(
+        ctx.deliver_call_response_with_late_reply_callback(
             QueuedCallResponse::with_late_reply_policy(
                 session_id,
                 Box::new(29_u32),
@@ -814,14 +814,14 @@ fn req_094_late_call_response_with_ignore_policy_bypasses_handler() {
 }
 
 #[test]
-fn req_094_late_call_response_handler_can_terminate_task() {
+fn req_094_late_call_response_callback_can_terminate_task() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(75));
     let ctx = TaskContext::new(handle);
     let session_id = SessionId::new(EndpointId(102), 6);
 
     assert_eq!(
-        ctx.deliver_call_response_with_late_reply_handler(
+        ctx.deliver_call_response_with_late_reply_callback(
             QueuedCallResponse::new(session_id, Box::new(31_u32)),
             |_| LateReplyAction::Terminate,
         )
@@ -832,7 +832,7 @@ fn req_094_late_call_response_handler_can_terminate_task() {
 }
 
 #[test]
-fn req_108_late_stream_event_handler_receives_borrowed_reply() {
+fn req_108_late_stream_event_callback_receives_borrowed_reply() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(76));
     let ctx = TaskContext::new(handle);
@@ -840,7 +840,7 @@ fn req_108_late_stream_event_handler_receives_borrowed_reply() {
     let mut observed_end = false;
 
     assert_eq!(
-        ctx.deliver_stream_event_with_late_reply_handler(
+        ctx.deliver_stream_event_with_late_reply_callback(
             QueuedStreamEvent::new(
                 session_id,
                 Box::new(StreamEvent::<u32, String>::end(session_id)),
@@ -863,7 +863,7 @@ fn req_108_late_stream_event_handler_receives_borrowed_reply() {
 }
 
 #[test]
-fn req_108_late_stream_event_with_ignore_policy_bypasses_handler() {
+fn req_108_late_stream_event_with_ignore_policy_bypasses_callback() {
     let queue = Arc::new(TaskQueue::<CtxRuntimeMessage, 4>::new());
     let handle = TaskHandle::with_endpoint(queue.clone(), EndpointId(77));
     let ctx = TaskContext::new(handle);
@@ -871,7 +871,7 @@ fn req_108_late_stream_event_with_ignore_policy_bypasses_handler() {
     let mut called = false;
 
     assert_eq!(
-        ctx.deliver_stream_event_with_late_reply_handler(
+        ctx.deliver_stream_event_with_late_reply_callback(
             QueuedStreamEvent::with_late_reply_policy(
                 session_id,
                 Box::new(StreamEvent::<u32, String>::end(session_id)),

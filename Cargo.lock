@@ -52,7 +52,7 @@ name = "mpi-transaction"
 version = "0.1.0"
 dependencies = [
  "mpi",
- "persistent-log-storage",
+ "persistent-log-storage-service",
 ]
 
 [[package]]
@@ -62,7 +62,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
-name = "persistent-log-storage"
+name = "persistent-log-storage-service"
 version = "0.1.0"
 dependencies = [
  "mpi",
@@ -181,7 +181,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "timeout-server"
+name = "timeout-service"
 version = "0.1.0"
 dependencies = [
  "mpi",

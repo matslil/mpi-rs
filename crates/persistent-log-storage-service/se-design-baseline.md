@@ -8,10 +8,6 @@ coordination code can use for crash recovery. It is specified as a separate
 crate so the storage interface, file format, and crash-safety rules can evolve
 without being folded into the core `mpi` crate.
 
-Migration note: this baseline uses the target service crate name. Source paths
-may continue to contain the previous `persistent-log-storage` directory name
-until the corresponding implementation rename is performed.
-
 ## Purpose
 
 `persistent-log-storage-service` stores ordered log entries, durably commits log
@@ -301,7 +297,7 @@ pub struct PersistentLogStorageServiceInstance {
     // owns the storage service task and exposes the protocol binding
 }
 
-impl<H> PersistentLogStorageProtocolV1::Binding<H> {
+impl PersistentLogStorageServiceInstance {
     pub fn store_serialized_blocking<T>(
         &self,
         payload: T,
