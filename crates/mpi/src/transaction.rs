@@ -2,7 +2,10 @@
 
 use core::fmt;
 
-use persistent_log_storage::{LogEntry, LogIndex, LogStorageError, PersistentLogStorage};
+use persistent_log_storage::{
+    CommitLogEntries, LogIndex, LogStorageError, PersistentLogStorage, ReadLogEntries,
+    RetrievedLogEntry, StoreLogEntry,
+};
 
 use crate::session::{EndpointId, SessionId};
 
@@ -225,14 +228,15 @@ where
         decision: TransactionDecision,
     ) -> Result<LogIndex, TransactionLogError> {
         let payload = encode_decision_record(path, decision)?;
-        let index = self.storage.append(&payload)?;
-        self.storage.commit_through(index)?;
+        let index = self.storage.store(StoreLogEntry::new(payload))?.index;
+        self.storage.commit(CommitLogEntries::through(index))?;
         Ok(index)
     }
 
     pub fn recover_decisions(&self) -> Result<Vec<TransactionDecisionRecord>, TransactionLogError> {
         self.storage
-            .read_entries()?
+            .read(ReadLogEntries::all())?
+            .entries
             .into_iter()
             .filter_map(decode_decision_entry)
             .collect()
@@ -240,7 +244,7 @@ where
 }
 
 fn decode_decision_entry(
-    entry: LogEntry,
+    entry: RetrievedLogEntry<Vec<u8>>,
 ) -> Option<Result<TransactionDecisionRecord, TransactionLogError>> {
     if !entry.payload.starts_with(RECORD_MAGIC) {
         return None;
@@ -274,7 +278,7 @@ fn encode_decision_record(
 }
 
 fn decode_decision_record(
-    entry: LogEntry,
+    entry: RetrievedLogEntry<Vec<u8>>,
 ) -> Result<TransactionDecisionRecord, TransactionLogError> {
     let bytes = entry.payload;
     let min_len = RECORD_MAGIC.len() + 1 + 1 + 1 + 8 + 8 + 4;
@@ -357,40 +361,62 @@ fn decode_decision_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use persistent_log_storage::{
+        CommittedLogEntries, DiscardLogEntries, DiscardedLogEntries, RetrievedLogEntries,
+        StoredLogEntry,
+    };
     use std::cell::{Cell, RefCell};
 
     #[derive(Default)]
     struct RecordingStorage {
-        entries: RefCell<Vec<LogEntry>>,
+        entries: RefCell<Vec<RetrievedLogEntry<Vec<u8>>>>,
         committed: RefCell<Vec<LogIndex>>,
         next_index: Cell<LogIndex>,
     }
 
     impl PersistentLogStorage for RecordingStorage {
-        fn append(&mut self, payload: &[u8]) -> Result<LogIndex, LogStorageError> {
+        fn store(
+            &mut self,
+            message: StoreLogEntry<Vec<u8>>,
+        ) -> Result<StoredLogEntry, LogStorageError> {
             let index = self.next_index.get();
             self.next_index.set(index + 1);
-            self.entries.borrow_mut().push(LogEntry {
-                index,
-                payload: payload.to_vec(),
-            });
-            Ok(index)
-        }
-
-        fn commit_through(&mut self, index: LogIndex) -> Result<(), LogStorageError> {
-            self.committed.borrow_mut().push(index);
-            Ok(())
-        }
-
-        fn discard_through(&mut self, index: LogIndex) -> Result<(), LogStorageError> {
             self.entries
                 .borrow_mut()
-                .retain(|entry| entry.index > index);
-            Ok(())
+                .push(RetrievedLogEntry::new(index, message.payload));
+            Ok(StoredLogEntry::new(index))
         }
 
-        fn read_entries(&self) -> Result<Vec<LogEntry>, LogStorageError> {
-            Ok(self.entries.borrow().clone())
+        fn commit(
+            &mut self,
+            message: CommitLogEntries,
+        ) -> Result<CommittedLogEntries, LogStorageError> {
+            self.committed.borrow_mut().push(message.through);
+            Ok(CommittedLogEntries::new(message.through))
+        }
+
+        fn discard(
+            &mut self,
+            message: DiscardLogEntries,
+        ) -> Result<DiscardedLogEntries, LogStorageError> {
+            self.entries
+                .borrow_mut()
+                .retain(|entry| entry.index > message.through);
+            Ok(DiscardedLogEntries::new(message.through))
+        }
+
+        fn read(
+            &self,
+            message: ReadLogEntries,
+        ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError> {
+            Ok(RetrievedLogEntries::new(
+                self.entries
+                    .borrow()
+                    .iter()
+                    .filter(|entry| message.from.is_none_or(|from| entry.index >= from))
+                    .cloned()
+                    .collect(),
+            ))
         }
     }
 
