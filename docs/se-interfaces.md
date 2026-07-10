@@ -43,3 +43,5 @@ REPO-INT-001: Shared workflow documents may define report, pull request, change 
 REPO-INT-002: Shared workflow documents shall not define crate public APIs, crate internal APIs, macro syntax, runtime types, platform bridge APIs, or examples whose purpose is to specify crate behavior.
 
 REPO-INT-003: Crate-local documentation shall define the API and interface rules for the crate it describes.
+
+REPO-INT-004: Crate-local interface rules for interfaces between crates shall specify message-based interaction unless the human maintainer explicitly approves and documents another interface style.

@@ -31,6 +31,7 @@ Use the status values from `docs/agents/process.md`:
 | REPO-REQ-011 | REPO-CMP-005 | agent and PR reports | REPO-VAL-001 | command evidence |
 | REPO-REQ-020 | REPO-CMP-003, REPO-CMP-004 | traceability tables | REPO-VAL-001 | this document and crate baselines |
 | REPO-REQ-021 | REPO-CMP-003, REPO-CMP-004 | stable IDs | REPO-VAL-001 | inspection |
+| REPO-REQ-022 | REPO-ARCH-006 | REPO-INT-004 | REPO-VAL-002 | pending human approval |
 
 ## Crate Baseline Index
 
