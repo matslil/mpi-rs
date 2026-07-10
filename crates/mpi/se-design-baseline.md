@@ -741,7 +741,7 @@ Architecture rules:
 - MPI-ARCH-095: Parent abort propagates to active and prepared descendants.
 - MPI-ARCH-096: Transaction deadlines bound waits for queue capacity, operation replies, prepare votes, commit delivery, and abort delivery.
 - MPI-ARCH-097: Business rejection is a valid transaction outcome that drives abort before a durable commit decision; it is distinct from infrastructure failure.
-- MPI-ARCH-098: Transaction recovery records are written through a persistent log storage abstraction with append, commit-through-index, discard-through-index, and read-back operations.
+- MPI-ARCH-098: Transaction recovery records are written through a persistent log storage abstraction with message-based store, commit, discard, and read operations.
 - MPI-ARCH-099: The default local implementation of that abstraction is provided by the `persistent-log-storage` crate.
 
 ## Transaction architecture
@@ -858,7 +858,7 @@ Interface rules:
 - MPI-INT-010: User-facing transactional APIs should pass a typed transaction handle rather than requiring ordinary users to manually construct or route transaction identifiers.
 - MPI-INT-011: Transaction errors shall distinguish business rejection, timeout before decision, commit in progress, abort in progress, and unrecoverable transaction hazard.
 - MPI-INT-012: Transaction recovery APIs shall expose durable transactions that require continued commit or abort delivery after restart.
-- MPI-INT-013: Transaction log integration shall use a persistent log storage interface with append, commit-through-index, discard-through-index, and read-back operations.
+- MPI-INT-013: Transaction log integration shall use a message-based persistent log storage interface with store, commit, discard, and read request and reply types.
 - MPI-INT-014: Ordinary transaction users should not need to directly manipulate persistent log storage records for normal transaction execution.
 
 Conceptual transaction API:

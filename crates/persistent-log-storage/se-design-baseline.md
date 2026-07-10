@@ -12,7 +12,10 @@ without being folded into the core `mpi` crate.
 
 `persistent-log-storage` stores ordered log entries, durably commits log entries
 through a caller-specified index, durably discards log entries through a
-caller-specified index, and reads back durable log entries after restart.
+caller-specified index, and reads back durable log entries after restart. The
+public storage boundary is message based: callers use the
+`persistent_log_storage.v1` protocol to submit store, commit, discard, and read
+messages and receive typed replies.
 
 The intended first consumer is transactional messaging recovery. A transaction
 coordinator can append transaction decision records, commit through those
@@ -30,6 +33,9 @@ records, and recover committed records after a crash.
 - discarding log entries through a specific index by durably recording a discard
   watermark;
 - reading back complete non-discarded log entries after restart;
+- exposing a named protocol with store, commit, discard, and read request
+  messages and their reply messages;
+- providing typed serialization helpers through a general serde interface;
 - tolerating torn trailing records caused by crash or power loss.
 
 `persistent-log-storage` is not responsible for:
@@ -67,6 +73,14 @@ needed for recovery.
 
 Recovery needs to read complete durable log entries after restart without
 failing merely because the final record was torn by a crash.
+
+### PLS-SN-006: Message-based and typed log access
+
+Transaction coordination code needs the log storage interface to fit a
+message-passing architecture, and application-facing recovery code needs
+helpers that store serializable objects and retrieve deserialized objects.
+The crate should enforce Wincode as the serde-backed binary encoding rather
+than exposing several persistent serialization formats.
 
 ## Requirements
 
@@ -158,27 +172,73 @@ Verification: inspection
 
 Status: proposed
 
+### PLS-REQ-009: Message-based log operations
+
+The crate shall expose a named persistent log storage protocol with store,
+commit, discard, and read request messages and corresponding reply messages,
+rather than exposing only primitive parameter lists.
+
+Source: PLS-SN-006.
+
+Verification: test and inspection
+
+Status: proposed
+
+### PLS-REQ-010: Serde-backed typed payload helpers
+
+The crate shall provide helpers that store serializable payload objects and
+retrieve deserialized payload objects through a general serde interface.
+
+Source: PLS-SN-006.
+
+Verification: test
+
+Status: proposed
+
+### PLS-REQ-011: Wincode serialization encoding
+
+The crate shall use Wincode for serde-backed typed payload serialization and
+shall not expose multiple persistent serialization format choices in the log
+storage interface.
+
+Source: human maintainer decision.
+
+Verification: test and inspection
+
+Status: proposed
+
 ## Architecture
 
 | ID | Component | Responsibility |
 |---|---|---|
-| PLS-CMP-001 | Persistent log trait | Defines append, commit, discard, and read-back behavior. |
+| PLS-CMP-001 | Persistent log trait | Implements the protocol behavior for store, commit, discard, and read-back messages. |
 | PLS-CMP-002 | File log storage | Provides the default crash-safe file-backed implementation. |
 | PLS-CMP-003 | Log record codec | Encodes and validates append and discard records. |
 | PLS-CMP-004 | Recovery scanner | Reads complete records, applies the latest discard watermark, and ignores torn trailing records. |
+| PLS-CMP-005 | Persistent log storage protocol | Defines the protocol name, request messages, and reply messages for store, commit, discard, and read operations. |
+| PLS-CMP-006 | Serialization adapter | Encodes serde-serializable objects with Wincode before store and deserializes retrieved payloads after read. |
 
 Architecture rules:
 
 - PLS-ARCH-001: Log entry indexes are monotonically increasing `u64` values.
 - PLS-ARCH-002: A file log uses append records for payloads and discard records
   for discard watermarks.
-- PLS-ARCH-003: `commit_through(index)` synchronizes the backing file before
+- PLS-ARCH-003: `commit(CommitLogEntries { through: index })` synchronizes the backing file before
   returning success.
-- PLS-ARCH-004: `discard_through(index)` appends a discard watermark and
+- PLS-ARCH-004: `discard(DiscardLogEntries { through: index })` appends a discard watermark and
   synchronizes the backing file before returning success.
 - PLS-ARCH-005: Recovery scanning stops before a torn trailing record and does
   not return that record as a valid entry.
 - PLS-ARCH-006: Log payload bytes remain opaque to this crate.
+- PLS-ARCH-007: The file format remains byte-oriented even when callers use
+  typed serialization helpers.
+- PLS-ARCH-008: Serialization helpers shall be feature-gated, shall use
+  Wincode for encoded bytes, and shall not require transaction-specific payload
+  knowledge in this crate.
+- PLS-ARCH-009: The public protocol name shall be
+  `persistent_log_storage.v1`. Compatible protocol evolution may add request or
+  reply message variants, while incompatible changes require a new protocol
+  name.
 
 ## Interface
 
@@ -187,16 +247,107 @@ Conceptual interface:
 ```rust
 pub type LogIndex = u64;
 
+pub struct PersistentLogStorageProtocol;
+
+impl PersistentLogStorageProtocol {
+    pub const NAME: &'static str = "persistent_log_storage.v1";
+}
+
 pub struct LogEntry {
     pub index: LogIndex,
     pub payload: Vec<u8>,
 }
 
+pub struct StoreLogEntry<T = Vec<u8>> {
+    pub payload: T,
+}
+
+pub struct StoredLogEntry {
+    pub index: LogIndex,
+}
+
+pub struct CommitLogEntries {
+    pub through: LogIndex,
+}
+
+pub struct CommittedLogEntries {
+    pub through: LogIndex,
+}
+
+pub struct DiscardLogEntries {
+    pub through: LogIndex,
+}
+
+pub struct DiscardedLogEntries {
+    pub through: LogIndex,
+}
+
+pub struct ReadLogEntries {
+    pub from: Option<LogIndex>,
+}
+
+pub struct RetrievedLogEntry<T = Vec<u8>> {
+    pub index: LogIndex,
+    pub payload: T,
+}
+
+pub struct RetrievedLogEntries<T = Vec<u8>> {
+    pub entries: Vec<RetrievedLogEntry<T>>,
+}
+
+pub enum PersistentLogStorageMessage {
+    Store(StoreLogEntry<Vec<u8>>),
+    Commit(CommitLogEntries),
+    Discard(DiscardLogEntries),
+    Read(ReadLogEntries),
+}
+
+pub enum PersistentLogStorageReply {
+    Stored(StoredLogEntry),
+    Committed(CommittedLogEntries),
+    Discarded(DiscardedLogEntries),
+    Retrieved(RetrievedLogEntries<Vec<u8>>),
+}
+
 pub trait PersistentLogStorage {
-    fn append(&mut self, payload: &[u8]) -> Result<LogIndex, LogStorageError>;
-    fn commit_through(&mut self, index: LogIndex) -> Result<(), LogStorageError>;
-    fn discard_through(&mut self, index: LogIndex) -> Result<(), LogStorageError>;
-    fn read_entries(&self) -> Result<Vec<LogEntry>, LogStorageError>;
+    fn store(
+        &mut self,
+        message: StoreLogEntry<Vec<u8>>,
+    ) -> Result<StoredLogEntry, LogStorageError>;
+
+    fn commit(
+        &mut self,
+        message: CommitLogEntries,
+    ) -> Result<CommittedLogEntries, LogStorageError>;
+
+    fn discard(
+        &mut self,
+        message: DiscardLogEntries,
+    ) -> Result<DiscardedLogEntries, LogStorageError>;
+
+    fn read(
+        &self,
+        message: ReadLogEntries,
+    ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError>;
+
+    fn handle(
+        &mut self,
+        message: PersistentLogStorageMessage,
+    ) -> Result<PersistentLogStorageReply, LogStorageError>;
+}
+
+pub struct SerializedLogEntry<T>;
+
+pub trait SerializedPersistentLogStorageExt {
+    fn store_serialized<T>(
+        &mut self,
+        message: SerializedLogEntry<T>,
+    ) -> Result<StoredLogEntry, LogStorageError>;
+
+    fn read_serialized<T>(
+        &self,
+        message: ReadLogEntries,
+    ) -> Result<RetrievedLogEntries<T>, LogStorageError>;
 }
 ```
 
@@ -212,14 +363,27 @@ impl FileLogStorage {
 
 Interface rules:
 
-- PLS-INT-001: Log payloads shall be passed and returned as byte sequences.
-- PLS-INT-002: `append` shall return the assigned log index.
-- PLS-INT-003: `commit_through` shall accept a log index and return only after
+- PLS-INT-001: The persistent log storage protocol shall be named
+  `persistent_log_storage.v1`.
+- PLS-INT-002: The protocol shall declare exactly these request messages:
+  `Store`, `Commit`, `Discard`, and `Read`.
+- PLS-INT-003: The protocol shall declare exactly these reply messages:
+  `Stored`, `Committed`, `Discarded`, and `Retrieved`.
+- PLS-INT-004: Raw log payloads shall be passed and returned as byte sequences
+  inside store and read messages.
+- PLS-INT-005: `Store` shall return the assigned log index in a `Stored`
+  reply message.
+- PLS-INT-006: `Commit` shall accept a log index and return only after
   entries through that index have been synchronized.
-- PLS-INT-004: `discard_through` shall accept a log index and persist the
+- PLS-INT-007: `Discard` shall accept a log index and persist the
   discard watermark before returning.
-- PLS-INT-005: `read_entries` shall return complete non-discarded entries in
+- PLS-INT-008: `Read` shall return complete non-discarded entries in
   increasing log index order.
+- PLS-INT-009: Typed serialization helpers shall accept any payload type that
+  satisfies the required serde traits and shall return deserialization errors
+  with the log index that failed.
+- PLS-INT-010: The typed serialization interface shall use Wincode internally
+  and shall not expose caller-selected persistent file formats.
 
 ## Verification
 
@@ -228,10 +392,16 @@ Verification should include:
 - inspection that the crate exists in the workspace;
 - tests that append assigns increasing indexes;
 - tests that reopening the file-backed store reads appended entries;
-- tests that `discard_through` hides discarded entries after reopen;
-- tests that `commit_through` calls the file synchronization path before
+- tests that `discard` hides discarded entries after reopen;
+- tests that `commit` calls the file synchronization path before
   returning success, as far as can be verified in an ordinary unit test;
 - tests that a torn trailing record is ignored on recovery;
+- tests that message-based store, commit, discard, and read operations preserve
+  the existing persistence behavior;
+- tests that the named protocol dispatches request messages to the appropriate
+  storage behavior and returns the corresponding reply messages;
+- tests that the serde helper stores serializable objects with Wincode and
+  retrieves deserialized objects;
 - inspection that payload bytes are opaque and public API use requires no
   `unsafe` Rust.
 
@@ -247,7 +417,7 @@ through the decision record index, restarts, and reads the records back.
 Expected outcome:
 
 - the coordinator receives increasing log indexes;
-- `commit_through` returns only after file synchronization succeeds;
+- `commit` returns only after file synchronization succeeds;
 - recovery reads back complete non-discarded records.
 
 Evidence type: test or demonstration
@@ -261,7 +431,7 @@ them.
 
 Expected outcome:
 
-- `discard_through` persists the discard watermark;
+- `discard` persists the discard watermark;
 - reopening the store does not return discarded entries.
 
 Evidence type: test
@@ -284,10 +454,13 @@ Evidence type: test
 | Requirement | Architecture | Interface | Verification | Validation |
 |---|---|---|---|---|
 | PLS-REQ-001 | crate structure | crate manifest | inspection | PLS-VAL-001 |
-| PLS-REQ-002 | PLS-CMP-001, PLS-CMP-002 | PLS-INT-001, PLS-INT-002 | test | PLS-VAL-001 |
-| PLS-REQ-003 | PLS-CMP-001, PLS-CMP-002, PLS-ARCH-003 | PLS-INT-003 | test, inspection | PLS-VAL-001 |
-| PLS-REQ-004 | PLS-CMP-001, PLS-CMP-003, PLS-ARCH-004 | PLS-INT-004 | test | PLS-VAL-002 |
-| PLS-REQ-005 | PLS-CMP-004 | PLS-INT-005 | test | PLS-VAL-001, PLS-VAL-002 |
+| PLS-REQ-002 | PLS-CMP-001, PLS-CMP-002 | PLS-INT-004, PLS-INT-005 | test | PLS-VAL-001 |
+| PLS-REQ-003 | PLS-CMP-001, PLS-CMP-002, PLS-ARCH-003 | PLS-INT-006 | test, inspection | PLS-VAL-001 |
+| PLS-REQ-004 | PLS-CMP-001, PLS-CMP-003, PLS-ARCH-004 | PLS-INT-007 | test | PLS-VAL-002 |
+| PLS-REQ-005 | PLS-CMP-004 | PLS-INT-008 | test | PLS-VAL-001, PLS-VAL-002 |
 | PLS-REQ-006 | PLS-CMP-003, PLS-CMP-004, PLS-ARCH-005 | recovery scanner | test | PLS-VAL-003 |
-| PLS-REQ-007 | PLS-ARCH-006 | PLS-INT-001 | inspection | PLS-VAL-001 |
+| PLS-REQ-007 | PLS-ARCH-006 | PLS-INT-004 | inspection | PLS-VAL-001 |
 | PLS-REQ-008 | safe Rust implementation | public API | inspection | PLS-VAL-001 |
+| PLS-REQ-009 | PLS-CMP-005, PLS-ARCH-009 | PLS-INT-001..PLS-INT-008 | test, inspection | PLS-VAL-001, PLS-VAL-002 |
+| PLS-REQ-010 | PLS-CMP-006, PLS-ARCH-007, PLS-ARCH-008 | PLS-INT-009, PLS-INT-010 | test | PLS-VAL-001 |
+| PLS-REQ-011 | PLS-CMP-006, PLS-ARCH-008 | PLS-INT-010 | test, inspection | PLS-VAL-001 |
