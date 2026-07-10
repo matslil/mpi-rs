@@ -32,6 +32,7 @@ Use the status values from `docs/agents/process.md`:
 | REPO-REQ-020 | REPO-CMP-003, REPO-CMP-004 | traceability tables | REPO-VAL-001 | this document and crate baselines |
 | REPO-REQ-021 | REPO-CMP-003, REPO-CMP-004 | stable IDs | REPO-VAL-001 | inspection |
 | REPO-REQ-022 | REPO-ARCH-006 | REPO-INT-004 | REPO-VAL-002 | pending human approval |
+| REPO-REQ-023 | REPO-ARCH-007 | REPO-INT-005 | REPO-VAL-002 | pending human approval |
 
 ## Crate Baseline Index
 
@@ -42,8 +43,8 @@ Use the status values from `docs/agents/process.md`:
 | `mpi-macros` | `crates/mpi-macros/se-design-baseline.md` |
 | `mpi-os-events` | `crates/mpi-os-events/se-design-baseline.md` |
 | `mpi-transaction` | `crates/mpi-transaction/se-design-baseline.md` |
-| `persistent-log-storage` | `crates/persistent-log-storage/se-design-baseline.md` |
-| `timeout-server` | `crates/timeout-server/se-design-baseline.md` |
+| `persistent-log-storage-service` | `crates/persistent-log-storage/se-design-baseline.md` |
+| `timeout-service` | `crates/timeout-server/se-design-baseline.md` |
 
 ## Maintenance Rules
 

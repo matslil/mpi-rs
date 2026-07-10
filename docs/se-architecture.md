@@ -39,6 +39,10 @@ REPO-ARCH-005: Shared workflow documents may describe how agents coordinate cros
 
 REPO-ARCH-006: Cross-crate architecture changes shall treat crate boundaries as message boundaries unless the affected crate-local baselines document a human-approved exception.
 
+REPO-ARCH-007: Repository-level feature naming conventions may describe how
+optional crate and service features are named, but crate-local baselines shall
+define the behavior enabled by those features.
+
 ## Workflow Components
 
 | ID | Component | Responsibility |

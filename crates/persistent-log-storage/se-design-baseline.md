@@ -1,23 +1,27 @@
-# persistent-log-storage Design Baseline
+# persistent-log-storage-service Design Baseline
 
 This document defines the lightweight systems-engineering baseline for the
-`persistent-log-storage` crate.
+`persistent-log-storage-service` crate.
 
 The crate provides a default file-backed persistent log store that transaction
 coordination code can use for crash recovery. It is specified as a separate
 crate so the storage interface, file format, and crash-safety rules can evolve
 without being folded into the core `mpi` crate.
 
+Migration note: this baseline uses the target service crate name. Source paths
+may continue to contain the previous `persistent-log-storage` directory name
+until the corresponding implementation rename is performed.
+
 ## Purpose
 
-`persistent-log-storage` stores ordered log entries, durably commits log entries
-through a caller-specified index, durably discards log entries through a
+`persistent-log-storage-service` stores ordered log entries, durably commits log
+entries through a caller-specified index, durably discards log entries through a
 caller-specified index, and reads back durable log entries after restart. The
-public storage boundary is message based: callers use the
+public storage service boundary is message based: callers use the
 `PersistentLogStorageProtocolV1` protocol to submit store, commit, discard, and
-read calls and receive typed replies. The only public crate surface is the
-protocol, protocol-binding helper methods, and the file-backed task start
-function.
+read calls and receive typed replies through a service instance. The only
+public crate surface is the protocol, service instance, protocol-binding helper
+methods, and the file-backed service start function.
 
 The intended first consumer is transactional messaging recovery. A transaction
 coordinator can append transaction decision records, commit through those
@@ -25,7 +29,7 @@ records, and recover committed records after a crash.
 
 ## Scope
 
-`persistent-log-storage` is responsible for:
+`persistent-log-storage-service` is responsible for:
 
 - defining persistent log storage requirements, architecture, and interfaces;
 - providing a default file-backed implementation;
@@ -36,12 +40,14 @@ records, and recover committed records after a crash.
   watermark;
 - reading back complete non-discarded log entries after restart;
 - exposing a named MPI protocol with store, commit, discard, and read calls;
-- providing a public task start function for the default file-backed storage
-  task;
+- providing a public service start function for the default file-backed storage
+  service task;
+- returning a service instance whose lifetime owns the storage task and its
+  protocol binding;
 - providing typed serialization helpers through a general serde interface;
 - tolerating torn trailing records caused by crash or power loss.
 
-`persistent-log-storage` is not responsible for:
+`persistent-log-storage-service` is not responsible for:
 
 - interpreting transaction record payloads;
 - deciding transaction commit or abort outcomes;
@@ -89,8 +95,8 @@ than exposing several persistent serialization formats.
 
 ### PLS-REQ-001: Separate crate
 
-The persistent log storage implementation shall be provided by a separate
-workspace crate named `persistent-log-storage`.
+The persistent log storage service implementation shall be provided by a
+separate workspace crate named `persistent-log-storage-service`.
 
 Source: human maintainer decision.
 
@@ -177,9 +183,9 @@ Status: proposed
 
 ### PLS-REQ-009: Message-based log operations
 
-The crate shall expose a named persistent log storage protocol with store,
-commit, discard, and read calls and corresponding return payloads, rather than
-exposing only primitive parameter lists.
+The crate shall expose a named persistent log storage protocol through a
+service instance with store, commit, discard, and read calls and corresponding
+return payloads, rather than exposing only primitive parameter lists.
 
 Source: PLS-SN-006.
 
@@ -210,16 +216,41 @@ Verification: test and inspection
 
 Status: proposed
 
+### PLS-REQ-012: Service instance lifetime
+
+The file-backed persistent log storage service start function shall return a
+service instance that owns the storage task and exposes the
+`PersistentLogStorageProtocolV1` binding.
+
+Source: repository service convention.
+
+Verification: inspection and test
+
+Status: proposed
+
+### PLS-REQ-013: Feature-gated service inclusion
+
+The workspace feature `enable-persistent-log-storage-service` shall enable the
+persistent log storage service and any supporting `mpi` or `mpi-macros`
+integration required by that service.
+
+Source: repository optional crate feature naming convention.
+
+Verification: inspection
+
+Status: proposed
+
 ## Architecture
 
 | ID | Component | Responsibility |
 |---|---|---|
-| PLS-CMP-001 | Persistent log task | Serves the public MPI protocol for store, commit, discard, and read-back calls. |
+| PLS-CMP-001 | Persistent log storage service task | Serves the public MPI protocol for store, commit, discard, and read-back calls. |
 | PLS-CMP-002 | File log storage | Provides the default crash-safe file-backed implementation. |
 | PLS-CMP-003 | Log record codec | Encodes and validates append and discard records. |
 | PLS-CMP-004 | Recovery scanner | Reads complete records, applies the latest discard watermark, and ignores torn trailing records. |
 | PLS-CMP-005 | Persistent log storage protocol | Defines the protocol calls and return payloads for store, commit, discard, and read operations. |
 | PLS-CMP-006 | Serialization adapter | Encodes serde-serializable objects with Wincode before store and deserializes retrieved payloads after read. |
+| PLS-CMP-007 | Persistent log storage service instance | Owns the file-backed storage task lifetime and exposes the protocol binding. |
 
 Architecture rules:
 
@@ -242,6 +273,11 @@ Architecture rules:
   `PersistentLogStorageProtocolV1`. Compatible protocol evolution may add
   request or reply message variants, while incompatible changes require a new
   protocol version.
+- PLS-ARCH-010: The default file-backed implementation shall be exposed as a
+  service whose service instance owns the task lifetime and contains the
+  protocol binding.
+- PLS-ARCH-011: Direct access to file-backed service task state is outside the
+  public interface.
 
 ## Interface
 
@@ -257,9 +293,13 @@ protocol! {
     }
 }
 
-pub fn start_file_log_storage(
+pub fn start_file_log_storage_service(
     path: impl AsRef<Path>,
-) -> Result<(PersistentLogStorageProtocolV1::Binding<impl ...>, mpi::TaskRuntime<()>), String>;
+) -> Result<PersistentLogStorageServiceInstance, String>;
+
+pub struct PersistentLogStorageServiceInstance {
+    // owns the storage service task and exposes the protocol binding
+}
 
 impl<H> PersistentLogStorageProtocolV1::Binding<H> {
     pub fn store_serialized_blocking<T>(
@@ -297,6 +337,13 @@ Interface rules:
   with the log index that failed.
 - PLS-INT-010: The typed serialization interface shall use Wincode internally
   and shall not expose caller-selected persistent file formats.
+- PLS-INT-011: The file-backed service start function shall return a
+  `PersistentLogStorageServiceInstance`.
+- PLS-INT-012: `PersistentLogStorageServiceInstance` shall expose the
+  `PersistentLogStorageProtocolV1` binding without allowing that binding to
+  outlive the service instance.
+- PLS-INT-013: The service shall be enabled by the workspace feature
+  `enable-persistent-log-storage-service`.
 
 ## Verification
 
@@ -316,7 +363,11 @@ Verification should include:
 - tests that the serde helper stores serializable objects with Wincode and
   retrieves deserialized objects;
 - inspection that payload bytes are opaque and public API use requires no
-  `unsafe` Rust.
+  `unsafe` Rust;
+- inspection that the file-backed start API returns a service instance and
+  exposes no detached protocol binding;
+- inspection that the workspace feature name is
+  `enable-persistent-log-storage-service`.
 
 ## Validation
 
@@ -362,6 +413,22 @@ Expected outcome:
 
 Evidence type: test
 
+### PLS-VAL-004: Use file-backed storage as a service
+
+Status: proposed
+
+A transaction coordinator starts the file-backed persistent log storage service,
+uses the protocol binding through the returned service instance, and drops the
+final service instance clone.
+
+Expected outcome:
+
+- the protocol binding is accessed through the service instance;
+- the binding cannot outlive the service instance;
+- dropping the final service instance clone synchronizes service task stop.
+
+Evidence type: test or demonstration
+
 ## Traceability
 
 | Requirement | Architecture | Interface | Verification | Validation |
@@ -377,3 +444,5 @@ Evidence type: test
 | PLS-REQ-009 | PLS-CMP-005, PLS-ARCH-009 | PLS-INT-001..PLS-INT-008 | test, inspection | PLS-VAL-001, PLS-VAL-002 |
 | PLS-REQ-010 | PLS-CMP-006, PLS-ARCH-007, PLS-ARCH-008 | PLS-INT-009, PLS-INT-010 | test | PLS-VAL-001 |
 | PLS-REQ-011 | PLS-CMP-006, PLS-ARCH-008 | PLS-INT-010 | test, inspection | PLS-VAL-001 |
+| PLS-REQ-012 | PLS-CMP-007, PLS-ARCH-010, PLS-ARCH-011 | PLS-INT-011, PLS-INT-012 | test, inspection | PLS-VAL-004 |
+| PLS-REQ-013 | feature configuration | PLS-INT-013 | inspection | PLS-VAL-004 |

@@ -2,7 +2,7 @@
 
 This document defines the lightweight systems-engineering baseline for the `mpi` crate.
 
-The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, core transaction identifiers, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; storage-backed transaction logging lives in `crates/mpi-transaction/se-design-baseline.md`; default crash-recovery log storage lives in `crates/persistent-log-storage/se-design-baseline.md`.
+The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, core transaction identifiers, service instance runtime support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; storage-backed transaction logging lives in `crates/mpi-transaction/se-design-baseline.md`; default crash-recovery log storage service behavior lives in `crates/persistent-log-storage/se-design-baseline.md`.
 
 ## Purpose
 
@@ -16,6 +16,8 @@ Core concepts:
 - an event is an asynchronous message with no reply;
 - a call is a synchronous exchange with exactly one typed response;
 - a stream is a generator-style exchange with zero or more typed stream events followed by end, error, or cancellation;
+- a service is a long-lived message-based capability exposed through a service
+  instance that owns one running task and its protocol bindings;
 - `SessionId` identifies logical interactions for calls and streams;
 - `TransactionId` identifies an ACID transaction root that may contain several
   message interactions;
@@ -50,6 +52,11 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-047: Rust developers need hierarchical transactions so nested transactional work is represented explicitly rather than relying on ad hoc handler-local rollback code.
 - SN-048: Maintainers and operators need transaction decisions to be recoverable after crashes once a transaction has crossed the durable commit decision point.
 - SN-049: Transactional messaging needs a persistent log storage interface so crash recovery does not depend on ad hoc application-specific file writes.
+- SN-050: Rust developers need repository-provided long-lived task capabilities
+  to expose protocol bindings through an owning service instance whose lifetime
+  prevents sends after the service task has stopped.
+- SN-051: Rust developers need service shutdown to be synchronized by a
+  no-argument stop call without inventing a separate join interface.
 
 ## Scope
 
@@ -66,6 +73,8 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - compile-time receive-check traits consumed by generated code;
 - runtime transaction identifiers and transaction paths;
 - compile-time surface for generated transactional message APIs.
+- runtime support for service instance lifetime and service stop
+  synchronization.
 
 `mpi` is not responsible for:
 
@@ -73,6 +82,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - native OS or framework event capture;
 - providing the default file-backed persistent log storage implementation;
 - providing the storage-backed transaction decision log adapter;
+- defining crate-specific service protocols or service task state;
 - the standalone `ctx-future` implementation.
 
 ## Requirements
@@ -129,10 +139,10 @@ original IDs used by tests, reports, and traceability.
 - REQ-091: A synchronous call shall complete with exactly one response, error, or defined failure outcome.
 - REQ-092: Concurrent same-type calls in the same caller task shall resume only for their own `SessionId`, including out-of-order responses.
 - REQ-093: A call handler may return the reply payload, with macro/runtime plumbing converting it into the typed response message.
-- REQ-094: Late one-shot responses shall invoke the receiving task's late-reply handler unless `late_reply = "ignore"` applies.
+- REQ-094: Late one-shot responses shall invoke the receiving task's late-reply callback unless `late_reply = "ignore"` applies.
 - REQ-095: A call or stream declaration may declare `late_reply = "ignore"` to make unknown-session replies intentionally unobservable to `mpi-rs`.
-- REQ-096: A task late-reply handler shall receive a borrowed reference to the unexpected reply and return either ignore or terminate.
-- REQ-097: If no late-reply handler is declared, the default late-reply handler shall take no action and return ignore.
+- REQ-096: A task late-reply callback shall receive a borrowed reference to the unexpected reply and return either ignore or terminate.
+- REQ-097: If no late-reply callback is declared, the default late-reply callback shall take no action and return ignore.
 - REQ-098: Task-internal call responses that cannot enqueue because the caller queue is full shall suspend through the queue-capacity reservation mechanism rather than being dropped.
 - REQ-100: A stream shall represent producer output using typed `Batch`, `End`, and `Error` stream events.
 - REQ-101: The stream consumer API shall expose a Rust-like `next(ctx).await` operation that returns one item at a time.
@@ -142,7 +152,7 @@ original IDs used by tests, reports, and traceability.
 - REQ-105: Receiving an error event for a session shall complete the stream with that error.
 - REQ-106: Dropping an unfinished stream object shall attempt to send an asynchronous cancellation message for the stream session.
 - REQ-107: Stream cancellation messages should usually be priority in the producer task.
-- REQ-108: Late stream replies shall invoke the receiving task's late-reply handler unless `late_reply = "ignore"` applies.
+- REQ-108: Late stream replies shall invoke the receiving task's late-reply callback unless `late_reply = "ignore"` applies.
 - REQ-109: Ordinary application messages shall not be silently ignored under the late reply policy.
 - REQ-110: A streaming handler shall remain within the current task model and shall not create a new task merely to produce stream items.
 - REQ-111: The runtime shall send stream end on streaming-handler success and stream error on streaming-handler error.
@@ -159,6 +169,19 @@ original IDs used by tests, reports, and traceability.
 - REQ-125: Repeated task instances of the same task type shall use a compile-time-known array size or equivalent const generic value.
 - REQ-126: The core task model shall not require runtime-discovered task instances for task-internal call, stream, reply, or suspension routing.
 - REQ-140: The implementation shall include or preserve a roadmap for diagnostics, timeouts, tracing, and deadlock/debug support.
+- REQ-180: A service start function shall return a service instance that owns
+  one running service task and exposes that task's protocol bindings.
+- REQ-181: Dropping the final clone of a service instance shall send the
+  service stop call and wait for the stop reply.
+- REQ-182: A service stop call shall take no arguments and shall use its reply
+  only as a synchronization point for clean task termination.
+- REQ-183: Protocol bindings exposed by a service instance shall not outlive
+  that service instance.
+- REQ-184: Direct access to service task state or direct function calls into the
+  service task shall be unavailable unless an affected crate-local baseline
+  documents an explicit exception.
+- REQ-185: Functions invoked by runtime or event machinery outside ordinary
+  message dispatch shall be called callbacks rather than message handlers.
 
 ### MPI-REQ-010: Task abstraction
 
@@ -394,7 +417,7 @@ Status: approved
 
 ### MPI-REQ-073: Late reply handling
 
-Late one-shot responses and late stream replies shall be passed to the receiving task's late-reply handler by default and ignored only when the interaction declares `late_reply = "ignore"`.
+Late one-shot responses and late stream replies shall be passed to the receiving task's late-reply callback by default and ignored only when the interaction declares `late_reply = "ignore"`.
 
 Verification: test
 
@@ -667,9 +690,66 @@ Status: proposed
 
 ### MPI-REQ-127: Default persistent log storage crate
 
-The default local file-backed persistent log storage implementation used by
+The default local file-backed persistent log storage service used by
 transactional messaging shall be provided by the separate
-`persistent-log-storage` workspace crate.
+`persistent-log-storage-service` workspace crate.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-130: Service instance start
+
+A service start function shall return a service instance that owns one running
+service task and exposes the protocol binding or bindings used to communicate
+with that task.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-131: Service instance drop stop
+
+When the final clone of a service instance is dropped, the service instance
+shall send the service stop call and wait for the stop reply.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MPI-REQ-132: Service stop synchronization
+
+A service stop call shall take no arguments and shall use its reply only as a
+synchronization point for clean task termination. Failure to stop is fatal
+unless the service implementation prevents that failure.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MPI-REQ-133: Service protocol binding lifetime
+
+Protocol bindings exposed by a service instance shall not outlive that service
+instance.
+
+Verification: compile-fail test and inspection
+
+Status: proposed
+
+### MPI-REQ-134: Service encapsulation
+
+Direct access to service task state or direct function calls into the service
+task shall be unavailable unless an affected crate-local baseline documents an
+explicit exception.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-135: Callback terminology
+
+Functions invoked by runtime or event machinery outside ordinary message
+dispatch shall be called callbacks rather than message handlers.
 
 Verification: inspection
 
@@ -711,6 +791,7 @@ Stable architecture ID anchors:
 | MPI-CMP-012 | Diagnostics subsystem | Supports snapshots and future tracing, timeouts, and deadlock/debug support. |
 | MPI-CMP-013 | Transaction core types | Allocates transaction identifiers and tracks transaction paths shared by generated transactional APIs and storage-backed transaction support. |
 | MPI-CMP-014 | Transaction log adapter | Lives in the separate `mpi-transaction` crate and persists prepared participant state and coordinator commit or abort decisions through the persistent log storage protocol. |
+| MPI-CMP-015 | Service instance | Owns one running service task, exposes its protocol bindings, and synchronizes stop when the final clone is dropped. |
 
 Architecture rules:
 
@@ -740,7 +821,14 @@ Architecture rules:
 - MPI-ARCH-096: Transaction deadlines bound waits for queue capacity, operation replies, prepare votes, commit delivery, and abort delivery.
 - MPI-ARCH-097: Business rejection is a valid transaction outcome that drives abort before a durable commit decision; it is distinct from infrastructure failure.
 - MPI-ARCH-098: Transaction recovery records are written through a persistent log storage protocol with message-based store, commit, discard, and read operations.
-- MPI-ARCH-099: The default local implementation of that protocol is provided by the `persistent-log-storage` crate; storage-backed transaction logging is provided by the `mpi-transaction` crate to avoid dependency cycles.
+- MPI-ARCH-099: The default local implementation of that protocol is provided by the `persistent-log-storage-service` crate; storage-backed transaction logging is provided by the `mpi-transaction` crate to avoid dependency cycles.
+- MPI-ARCH-100: A service instance owns service lifetime and keeps service
+  protocol bindings from outliving the running service task.
+- MPI-ARCH-101: Service shutdown uses a no-argument stop call whose reply is a
+  synchronization point for clean task termination.
+- MPI-ARCH-102: Service task state is encapsulated behind message-based
+  protocol bindings unless a crate-local baseline documents an explicit
+  exception.
 
 ## Transaction architecture
 
@@ -858,6 +946,15 @@ Interface rules:
 - MPI-INT-012: Transaction recovery APIs shall expose durable transactions that require continued commit or abort delivery after restart.
 - MPI-INT-013: Transaction log integration shall use the message-based persistent log storage protocol with store, commit, discard, and read calls.
 - MPI-INT-014: Ordinary transaction users should not need to directly manipulate persistent log storage records for normal transaction execution.
+- MPI-INT-015: Service start APIs shall return a service instance, not detached
+  protocol bindings.
+- MPI-INT-016: Service instances may be cloneable, but only the final clone
+  drop shall stop the service task.
+- MPI-INT-017: Protocol bindings exposed by a service instance shall be
+  accessed through the service instance so ordinary Rust use cannot retain them
+  beyond the service instance lifetime.
+- MPI-INT-018: Service stop calls shall carry no request payload and no normal
+  result payload.
 
 Conceptual transaction API:
 
@@ -900,6 +997,7 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-015 | Recover a transaction after restart by continuing rollforward from a durable commit decision or continuing abort delivery from a durable abort decision. | proposed |
 | MPI-VAL-016 | Reject generated non-transactional side-effecting sends from inside a transactional handler. | proposed |
 | MPI-VAL-017 | Recover transaction decisions from the default file-backed persistent log storage crate after restart. | proposed |
+| MPI-VAL-018 | Start a service, use its protocol bindings through the service instance, and observe synchronized stop when the final service instance clone is dropped. | proposed |
 
 ## Verification
 
@@ -923,6 +1021,8 @@ Verification should include:
 - transaction recovery tests showing commit and abort decision records are
   committed through persistent log storage before the runtime treats the
   decision as durable.
+- service lifecycle tests showing service instance-owned protocol bindings and
+  synchronized stop on final service instance drop.
 
 ## Traceability
 
@@ -938,3 +1038,4 @@ Verification should include:
 | MPI-REQ-090..MPI-REQ-091 | MPI-ARCH-080 | MPI-INT-004, MPI-INT-005 | MPI-VAL-011 |
 | MPI-REQ-100 | MPI-CMP-012 | MPI-INT-006, MPI-INT-008 | MPI-VAL-012 |
 | MPI-REQ-110..MPI-REQ-127 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-099 | MPI-INT-009..MPI-INT-014 | MPI-VAL-013..MPI-VAL-017 |
+| MPI-REQ-130..MPI-REQ-135 | MPI-CMP-015, MPI-ARCH-100..MPI-ARCH-102 | MPI-INT-015..MPI-INT-018 | MPI-VAL-018 |
