@@ -6,7 +6,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+
+use mpi::{protocol, task};
 
 const MAGIC: &[u8; 4] = b"PLS1";
 const VERSION: u8 = 1;
@@ -14,23 +18,221 @@ const KIND_APPEND: u8 = 1;
 const KIND_DISCARD: u8 = 2;
 const HEADER_LEN: usize = 4 + 1 + 1 + 2 + 8 + 8 + 8;
 
-pub type LogIndex = u64;
+type LogIndex = u64;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LogEntry {
-    pub index: LogIndex,
-    pub payload: Vec<u8>,
+protocol! {
+    pub protocol PersistentLogStorageProtocolV1 {
+        call store(Vec<u8>) -> Result<u64, String>;
+        call commit(u64) -> Result<(), String>;
+        call discard(u64) -> Result<(), String>;
+        call read(Option<u64>) -> Result<Vec<(u64, Vec<u8>)>, String>;
+    }
 }
 
-pub trait PersistentLogStorage {
-    fn append(&mut self, payload: &[u8]) -> Result<LogIndex, LogStorageError>;
-    fn commit_through(&mut self, index: LogIndex) -> Result<(), LogStorageError>;
-    fn discard_through(&mut self, index: LogIndex) -> Result<(), LogStorageError>;
-    fn read_entries(&self) -> Result<Vec<LogEntry>, LogStorageError>;
+pub fn start_file_log_storage(
+    path: impl AsRef<Path>,
+) -> Result<
+    (
+        PersistentLogStorageProtocolV1::Binding<
+            impl PersistentLogStorageProtocolV1::store::Target
+            + PersistentLogStorageProtocolV1::commit::Target
+            + PersistentLogStorageProtocolV1::discard::Target
+            + PersistentLogStorageProtocolV1::read::Target,
+        >,
+        mpi::TaskRuntime<()>,
+    ),
+    String,
+> {
+    let storage = FileLogStorage::open(path).map_err(|error| error.to_string())?;
+    let (handle, runtime) =
+        file_task::FileLogStorageTask::spawn(file_task::FileLogStorageTask::new(storage))
+            .map_err(|error| error.to_string())?;
+    Ok((PersistentLogStorageProtocolV1::bind(handle), runtime))
+}
+
+#[cfg(feature = "serde")]
+impl<H> PersistentLogStorageProtocolV1::Binding<H>
+where
+    H: PersistentLogStorageProtocolV1::store::Target + PersistentLogStorageProtocolV1::read::Target,
+{
+    pub fn store_serialized_blocking<T>(
+        &self,
+        payload: T,
+    ) -> Result<Result<u64, String>, mpi::CallError>
+    where
+        T: serde::Serialize,
+    {
+        let payload =
+            match <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Serialize>::serialize(
+                &payload,
+            ) {
+                Ok(payload) => payload,
+                Err(error) => return Ok(Err(format!("wincode log serialization error: {error}"))),
+            };
+        self.store_blocking(payload)
+    }
+
+    pub fn read_serialized_blocking<T>(
+        &self,
+        from: Option<u64>,
+    ) -> Result<Result<Vec<(u64, T)>, String>, mpi::CallError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let entries = self.read_blocking(from)?;
+        Ok(entries.and_then(|entries| {
+            entries
+                .into_iter()
+                .map(|(index, payload)| {
+                    <serde_wincode::SerdeCompat<T> as serde_wincode::wincode::Deserialize>::deserialize(
+                        &payload,
+                    )
+                    .map(|payload| (index, payload))
+                    .map_err(|error| {
+                        format!("wincode log deserialization error at index {index}: {error}")
+                    })
+                })
+                .collect()
+        }))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoreLogEntry<T = Vec<u8>> {
+    payload: T,
+}
+
+impl<T> StoreLogEntry<T> {
+    #[must_use]
+    pub const fn new(payload: T) -> Self {
+        Self { payload }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StoredLogEntry {
+    index: LogIndex,
+}
+
+impl StoredLogEntry {
+    #[must_use]
+    pub const fn new(index: LogIndex) -> Self {
+        Self { index }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommitLogEntries {
+    through: LogIndex,
+}
+
+impl CommitLogEntries {
+    #[must_use]
+    pub const fn through(through: LogIndex) -> Self {
+        Self { through }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommittedLogEntries {
+    through: LogIndex,
+}
+
+impl CommittedLogEntries {
+    #[must_use]
+    pub const fn new(through: LogIndex) -> Self {
+        Self { through }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DiscardLogEntries {
+    through: LogIndex,
+}
+
+impl DiscardLogEntries {
+    #[must_use]
+    pub const fn through(through: LogIndex) -> Self {
+        Self { through }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DiscardedLogEntries {
+    through: LogIndex,
+}
+
+impl DiscardedLogEntries {
+    #[must_use]
+    pub const fn new(through: LogIndex) -> Self {
+        Self { through }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ReadLogEntries {
+    from: Option<LogIndex>,
+}
+
+impl ReadLogEntries {
+    #[cfg(test)]
+    #[must_use]
+    const fn all() -> Self {
+        Self { from: None }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    const fn from(from: LogIndex) -> Self {
+        Self { from: Some(from) }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RetrievedLogEntry<T = Vec<u8>> {
+    index: LogIndex,
+    payload: T,
+}
+
+impl<T> RetrievedLogEntry<T> {
+    #[must_use]
+    pub const fn new(index: LogIndex, payload: T) -> Self {
+        Self { index, payload }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RetrievedLogEntries<T = Vec<u8>> {
+    entries: Vec<RetrievedLogEntry<T>>,
+}
+
+impl<T> RetrievedLogEntries<T> {
+    #[must_use]
+    pub const fn new(entries: Vec<RetrievedLogEntry<T>>) -> Self {
+        Self { entries }
+    }
+}
+
+trait PersistentLogStorage {
+    fn store(&mut self, message: StoreLogEntry<Vec<u8>>)
+    -> Result<StoredLogEntry, LogStorageError>;
+
+    fn commit(&mut self, message: CommitLogEntries)
+    -> Result<CommittedLogEntries, LogStorageError>;
+
+    fn discard(
+        &mut self,
+        message: DiscardLogEntries,
+    ) -> Result<DiscardedLogEntries, LogStorageError>;
+
+    fn read(
+        &self,
+        message: ReadLogEntries,
+    ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError>;
 }
 
 #[derive(Debug)]
-pub enum LogStorageError {
+enum LogStorageError {
     Io(io::Error),
     InvalidRecord(String),
     UnknownLogIndex(LogIndex),
@@ -62,8 +264,7 @@ impl From<io::Error> for LogStorageError {
 }
 
 #[derive(Debug)]
-pub struct FileLogStorage {
-    path: PathBuf,
+struct FileLogStorage {
     file: File,
     next_index: LogIndex,
     discarded_through: Option<LogIndex>,
@@ -71,7 +272,7 @@ pub struct FileLogStorage {
 }
 
 impl FileLogStorage {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, LogStorageError> {
+    fn open(path: impl AsRef<Path>) -> Result<Self, LogStorageError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -93,49 +294,47 @@ impl FileLogStorage {
         file.seek(SeekFrom::End(0))?;
 
         Ok(Self {
-            path,
             file,
             next_index,
             discarded_through,
             entries,
         })
     }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn discarded_through(&self) -> Option<LogIndex> {
-        self.discarded_through
-    }
-
-    pub fn next_index(&self) -> LogIndex {
-        self.next_index
-    }
 }
 
 impl PersistentLogStorage for FileLogStorage {
-    fn append(&mut self, payload: &[u8]) -> Result<LogIndex, LogStorageError> {
+    fn store(
+        &mut self,
+        message: StoreLogEntry<Vec<u8>>,
+    ) -> Result<StoredLogEntry, LogStorageError> {
         let index = self.next_index;
-        write_record(&mut self.file, KIND_APPEND, index, payload)?;
-        self.entries.insert(index, payload.to_vec());
+        write_record(&mut self.file, KIND_APPEND, index, &message.payload)?;
+        self.entries.insert(index, message.payload);
         self.next_index = self
             .next_index
             .checked_add(1)
             .ok_or_else(|| LogStorageError::InvalidRecord("log index overflow".to_string()))?;
-        Ok(index)
+        Ok(StoredLogEntry::new(index))
     }
 
-    fn commit_through(&mut self, index: LogIndex) -> Result<(), LogStorageError> {
+    fn commit(
+        &mut self,
+        message: CommitLogEntries,
+    ) -> Result<CommittedLogEntries, LogStorageError> {
+        let index = message.through;
         if index >= self.next_index {
             return Err(LogStorageError::UnknownLogIndex(index));
         }
         self.file.flush()?;
         self.file.sync_all()?;
-        Ok(())
+        Ok(CommittedLogEntries::new(index))
     }
 
-    fn discard_through(&mut self, index: LogIndex) -> Result<(), LogStorageError> {
+    fn discard(
+        &mut self,
+        message: DiscardLogEntries,
+    ) -> Result<DiscardedLogEntries, LogStorageError> {
+        let index = message.through;
         write_record(&mut self.file, KIND_DISCARD, index, &[])?;
         self.file.flush()?;
         self.file.sync_all()?;
@@ -145,19 +344,94 @@ impl PersistentLogStorage for FileLogStorage {
         );
         self.entries
             .retain(|entry_index, _| !is_discarded(*entry_index, self.discarded_through));
-        Ok(())
+        Ok(DiscardedLogEntries::new(index))
     }
 
-    fn read_entries(&self) -> Result<Vec<LogEntry>, LogStorageError> {
-        Ok(self
-            .entries
-            .iter()
-            .filter(|(index, _)| !is_discarded(**index, self.discarded_through))
-            .map(|(index, payload)| LogEntry {
-                index: *index,
-                payload: payload.clone(),
+    fn read(
+        &self,
+        message: ReadLogEntries,
+    ) -> Result<RetrievedLogEntries<Vec<u8>>, LogStorageError> {
+        Ok(RetrievedLogEntries::new(
+            self.entries
+                .iter()
+                .filter(|(index, _)| !is_discarded(**index, self.discarded_through))
+                .filter(|(index, _)| message.from.is_none_or(|from| **index >= from))
+                .map(|(index, payload)| RetrievedLogEntry::new(*index, payload.clone()))
+                .collect(),
+        ))
+    }
+}
+
+mod file_task {
+    use super::*;
+
+    pub(super) struct FileLogStorageTask {
+        storage: FileLogStorage,
+    }
+
+    impl FileLogStorageTask {
+        pub(super) const fn new(storage: FileLogStorage) -> Self {
+            Self { storage }
+        }
+    }
+
+    #[task(queue_size = 32)]
+    impl FileLogStorageTask {
+        #[start]
+        fn start(_ctx: &mut FileLogStorageTaskContext) {}
+
+        #[call(protocol = PersistentLogStorageProtocolV1::store)]
+        fn store(ctx: &mut FileLogStorageTaskContext, payload: Vec<u8>) -> Result<u64, String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .store(StoreLogEntry::new(payload))
+                    .map(|stored| stored.index)
+                    .map_err(|error| error.to_string())
             })
-            .collect())
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::commit)]
+        fn commit(ctx: &mut FileLogStorageTaskContext, through: u64) -> Result<(), String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .commit(CommitLogEntries::through(through))
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::discard)]
+        fn discard(ctx: &mut FileLogStorageTaskContext, through: u64) -> Result<(), String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .discard(DiscardLogEntries::through(through))
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        }
+
+        #[call(protocol = PersistentLogStorageProtocolV1::read)]
+        fn read(
+            ctx: &mut FileLogStorageTaskContext,
+            from: Option<u64>,
+        ) -> Result<Vec<(u64, Vec<u8>)>, String> {
+            ctx.with_state(|state| {
+                state
+                    .storage
+                    .read(ReadLogEntries { from })
+                    .map(|entries| {
+                        entries
+                            .entries
+                            .into_iter()
+                            .map(|entry| (entry.index, entry.payload))
+                            .collect()
+                    })
+                    .map_err(|error| error.to_string())
+            })
+        }
     }
 }
 
@@ -326,7 +600,14 @@ fn sync_directory(path: &Path) -> Result<(), LogStorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+    struct DecisionPayload {
+        transaction: u64,
+        decision: String,
+    }
 
     fn unique_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -344,51 +625,71 @@ mod tests {
         let path = unique_path("append");
         let mut log = FileLogStorage::open(&path).expect("open log");
 
-        assert_eq!(log.append(b"first").expect("append first"), 0);
-        assert_eq!(log.append(b"second").expect("append second"), 1);
-
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn pls_req_003_req_005_commit_through_persists_entries_for_reopen() {
-        let path = unique_path("commit");
-        {
-            let mut log = FileLogStorage::open(&path).expect("open log");
-            let index = log.append(b"decision").expect("append");
-            log.commit_through(index).expect("commit through index");
-        }
-
-        let log = FileLogStorage::open(&path).expect("reopen log");
         assert_eq!(
-            log.read_entries().expect("read entries"),
-            vec![LogEntry {
-                index: 0,
-                payload: b"decision".to_vec(),
-            }]
+            log.store(StoreLogEntry::new(b"first".to_vec()))
+                .expect("store first")
+                .index,
+            0
+        );
+        assert_eq!(
+            log.store(StoreLogEntry::new(b"second".to_vec()))
+                .expect("store second")
+                .index,
+            1
         );
 
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn pls_req_004_discard_through_is_applied_after_reopen() {
-        let path = unique_path("discard");
+    fn pls_req_003_req_005_commit_message_persists_entries_for_reopen() {
+        let path = unique_path("commit");
         {
             let mut log = FileLogStorage::open(&path).expect("open log");
-            let first = log.append(b"first").expect("append first");
-            let second = log.append(b"second").expect("append second");
-            log.commit_through(second).expect("commit through second");
-            log.discard_through(first).expect("discard first");
+            let index = log
+                .store(StoreLogEntry::new(b"decision".to_vec()))
+                .expect("store")
+                .index;
+            log.commit(CommitLogEntries::through(index))
+                .expect("commit through index");
         }
 
         let log = FileLogStorage::open(&path).expect("reopen log");
         assert_eq!(
-            log.read_entries().expect("read entries"),
-            vec![LogEntry {
-                index: 1,
-                payload: b"second".to_vec(),
-            }]
+            log.read(ReadLogEntries::all())
+                .expect("read entries")
+                .entries,
+            vec![RetrievedLogEntry::new(0, b"decision".to_vec())]
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pls_req_004_discard_message_is_applied_after_reopen() {
+        let path = unique_path("discard");
+        {
+            let mut log = FileLogStorage::open(&path).expect("open log");
+            let first = log
+                .store(StoreLogEntry::new(b"first".to_vec()))
+                .expect("store first")
+                .index;
+            let second = log
+                .store(StoreLogEntry::new(b"second".to_vec()))
+                .expect("store second")
+                .index;
+            log.commit(CommitLogEntries::through(second))
+                .expect("commit through second");
+            log.discard(DiscardLogEntries::through(first))
+                .expect("discard first");
+        }
+
+        let log = FileLogStorage::open(&path).expect("reopen log");
+        assert_eq!(
+            log.read(ReadLogEntries::all())
+                .expect("read entries")
+                .entries,
+            vec![RetrievedLogEntry::new(1, b"second".to_vec())]
         );
 
         let _ = std::fs::remove_file(path);
@@ -399,8 +700,12 @@ mod tests {
         let path = unique_path("torn");
         {
             let mut log = FileLogStorage::open(&path).expect("open log");
-            let index = log.append(b"complete").expect("append complete");
-            log.commit_through(index).expect("commit complete");
+            let index = log
+                .store(StoreLogEntry::new(b"complete".to_vec()))
+                .expect("store complete")
+                .index;
+            log.commit(CommitLogEntries::through(index))
+                .expect("commit complete");
         }
 
         {
@@ -415,11 +720,10 @@ mod tests {
 
         let log = FileLogStorage::open(&path).expect("reopen log");
         assert_eq!(
-            log.read_entries().expect("read entries"),
-            vec![LogEntry {
-                index: 0,
-                payload: b"complete".to_vec(),
-            }]
+            log.read(ReadLogEntries::all())
+                .expect("read entries")
+                .entries,
+            vec![RetrievedLogEntry::new(0, b"complete".to_vec())]
         );
 
         let _ = std::fs::remove_file(path);
@@ -431,15 +735,92 @@ mod tests {
         let payload = vec![0, 159, 146, 150, 255];
         {
             let mut log = FileLogStorage::open(&path).expect("open log");
-            let index = log.append(&payload).expect("append opaque payload");
-            log.commit_through(index).expect("commit opaque payload");
+            let index = log
+                .store(StoreLogEntry::new(payload.clone()))
+                .expect("store opaque payload")
+                .index;
+            log.commit(CommitLogEntries::through(index))
+                .expect("commit opaque payload");
         }
 
         let log = FileLogStorage::open(&path).expect("reopen log");
         assert_eq!(
-            log.read_entries().expect("read entries")[0].payload,
+            log.read(ReadLogEntries::all())
+                .expect("read entries")
+                .entries[0]
+                .payload,
             payload
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pls_req_009_message_read_can_start_from_index() {
+        let path = unique_path("read-from");
+        let mut log = FileLogStorage::open(&path).expect("open log");
+        log.store(StoreLogEntry::new(b"first".to_vec()))
+            .expect("store first");
+        log.store(StoreLogEntry::new(b"second".to_vec()))
+            .expect("store second");
+
+        assert_eq!(
+            log.read(ReadLogEntries::from(1))
+                .expect("read from index")
+                .entries,
+            vec![RetrievedLogEntry::new(1, b"second".to_vec())]
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pls_req_009_protocol_message_dispatches_store_commit_and_read() {
+        let path = unique_path("protocol");
+        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
+
+        let stored = log
+            .store_blocking(b"decision".to_vec())
+            .expect("store call")
+            .expect("store through protocol");
+
+        assert_eq!(stored, 0);
+        log.commit_blocking(stored)
+            .expect("commit call")
+            .expect("commit through protocol");
+
+        assert_eq!(
+            log.read_blocking(None)
+                .expect("read call")
+                .expect("read through protocol"),
+            vec![(0, b"decision".to_vec())]
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pls_req_010_req_011_serde_interface_uses_wincode_payloads() {
+        let path = unique_path("wincode");
+        let payload = DecisionPayload {
+            transaction: 42,
+            decision: "commit".to_string(),
+        };
+        let (log, _runtime) = start_file_log_storage(path.clone()).expect("start log task");
+        let index = log
+            .store_serialized_blocking(&payload)
+            .expect("store serialized call")
+            .expect("store serialized payload");
+        log.commit_blocking(index)
+            .expect("commit call")
+            .expect("commit serialized payload");
+
+        let recovered = log
+            .read_serialized_blocking::<DecisionPayload>(None)
+            .expect("read serialized call")
+            .expect("read serialized payload");
+
+        assert_eq!(recovered, vec![(0, payload)]);
 
         let _ = std::fs::remove_file(path);
     }

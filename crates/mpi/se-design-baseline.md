@@ -2,7 +2,7 @@
 
 This document defines the lightweight systems-engineering baseline for the `mpi` crate.
 
-The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; default crash-recovery log storage lives in `crates/persistent-log-storage/se-design-baseline.md`.
+The `mpi` crate owns the message-passing runtime model, runtime types, task handles, queues, sessions, calls, streams, diagnostics support, core transaction identifiers, and public runtime interfaces. Macro syntax and code generation responsibilities live in `crates/mpi-macros/se-design-baseline.md`; OS and framework event bridges live in `crates/mpi-os-events/se-design-baseline.md`; storage-backed transaction logging lives in `crates/mpi-transaction/se-design-baseline.md`; default crash-recovery log storage lives in `crates/persistent-log-storage/se-design-baseline.md`.
 
 ## Purpose
 
@@ -64,16 +64,15 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - task-internal calls and streams;
 - external blocking API support;
 - compile-time receive-check traits consumed by generated code;
-- runtime transaction identifiers, transaction paths, transaction coordination
-  state, transaction deadlines, and transaction recovery interfaces;
-- integration with a persistent log storage abstraction for transaction
-  recovery records.
+- runtime transaction identifiers and transaction paths;
+- compile-time surface for generated transactional message APIs.
 
 `mpi` is not responsible for:
 
 - proc-macro parsing or code generation;
 - native OS or framework event capture;
 - providing the default file-backed persistent log storage implementation;
+- providing the storage-backed transaction decision log adapter;
 - the standalone `ctx-future` implementation.
 
 ## Requirements
@@ -650,8 +649,7 @@ Status: proposed
 ### MPI-REQ-125: Transaction log storage interface
 
 Transactional messaging shall write transaction recovery records through a
-persistent log storage abstraction rather than through ad hoc runtime file
-writes.
+persistent log storage protocol rather than through ad hoc runtime file writes.
 
 Verification: inspection
 
@@ -711,8 +709,8 @@ Stable architecture ID anchors:
 | MPI-CMP-010 | Stream subsystem | Sends stream requests, stream events, cancellation, and flow-control messages. |
 | MPI-CMP-011 | Compile-time receive check subsystem | Ensures a caller task can wait only for messages it declares it can receive. |
 | MPI-CMP-012 | Diagnostics subsystem | Supports snapshots and future tracing, timeouts, and deadlock/debug support. |
-| MPI-CMP-013 | Transaction subsystem | Allocates transaction identifiers, tracks transaction paths, coordinates prepare/commit/abort, applies deadlines, and drives recovery. |
-| MPI-CMP-014 | Transaction log adapter | Persists prepared participant state and coordinator commit or abort decisions through the persistent log storage abstraction. |
+| MPI-CMP-013 | Transaction core types | Allocates transaction identifiers and tracks transaction paths shared by generated transactional APIs and storage-backed transaction support. |
+| MPI-CMP-014 | Transaction log adapter | Lives in the separate `mpi-transaction` crate and persists prepared participant state and coordinator commit or abort decisions through the persistent log storage protocol. |
 
 Architecture rules:
 
@@ -741,8 +739,8 @@ Architecture rules:
 - MPI-ARCH-095: Parent abort propagates to active and prepared descendants.
 - MPI-ARCH-096: Transaction deadlines bound waits for queue capacity, operation replies, prepare votes, commit delivery, and abort delivery.
 - MPI-ARCH-097: Business rejection is a valid transaction outcome that drives abort before a durable commit decision; it is distinct from infrastructure failure.
-- MPI-ARCH-098: Transaction recovery records are written through a persistent log storage abstraction with append, commit-through-index, discard-through-index, and read-back operations.
-- MPI-ARCH-099: The default local implementation of that abstraction is provided by the `persistent-log-storage` crate.
+- MPI-ARCH-098: Transaction recovery records are written through a persistent log storage protocol with message-based store, commit, discard, and read operations.
+- MPI-ARCH-099: The default local implementation of that protocol is provided by the `persistent-log-storage` crate; storage-backed transaction logging is provided by the `mpi-transaction` crate to avoid dependency cycles.
 
 ## Transaction architecture
 
@@ -858,7 +856,7 @@ Interface rules:
 - MPI-INT-010: User-facing transactional APIs should pass a typed transaction handle rather than requiring ordinary users to manually construct or route transaction identifiers.
 - MPI-INT-011: Transaction errors shall distinguish business rejection, timeout before decision, commit in progress, abort in progress, and unrecoverable transaction hazard.
 - MPI-INT-012: Transaction recovery APIs shall expose durable transactions that require continued commit or abort delivery after restart.
-- MPI-INT-013: Transaction log integration shall use a persistent log storage interface with append, commit-through-index, discard-through-index, and read-back operations.
+- MPI-INT-013: Transaction log integration shall use the message-based persistent log storage protocol with store, commit, discard, and read calls.
 - MPI-INT-014: Ordinary transaction users should not need to directly manipulate persistent log storage records for normal transaction execution.
 
 Conceptual transaction API:

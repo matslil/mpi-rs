@@ -4,6 +4,7 @@ members = [
     "crates/mpi",
     "crates/mpi-macros",
     "crates/mpi-os-events",
+    "crates/mpi-transaction",
     "crates/persistent-log-storage",
     "crates/timeout-server",
 ]

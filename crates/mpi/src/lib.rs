@@ -35,7 +35,6 @@ pub use task::{
     TaskJoinError, TaskRuntime, spawn_task,
 };
 pub use transaction::{
-    HasTransactionPath, TransactionDecision, TransactionDecisionLog, TransactionDecisionRecord,
-    TransactionId, TransactionIdAllocator, TransactionLogError, TransactionPath,
-    TransactionalMessage,
+    HasTransactionPath, TransactionDecision, TransactionId, TransactionIdAllocator,
+    TransactionPath, TransactionalMessage,
 };
