@@ -6,19 +6,22 @@ This document defines the crate-local systems-engineering baseline for the
 ## Purpose
 
 `mpi-transaction` contains transaction coordination support that depends on
-message-based MPI protocols outside the core `mpi` crate. The first implemented
+message-based MPI protocols outside the `mpi-core` crate. The first implemented
 piece is a transaction decision log that records commit or abort decisions
 through the `persistent-log-storage-service` protocol.
 
-Keeping this crate separate prevents a dependency cycle: `persistent-log-storage-service`
-depends on `mpi` to declare and serve its protocol, while `mpi-transaction`
-depends on both `mpi` and `persistent-log-storage-service`.
+Keeping this crate separate prevents a dependency cycle:
+`persistent-log-storage-service` depends on `mpi-core` to declare and serve its
+protocol, while `mpi-transaction` depends on both `mpi-core` and
+`persistent-log-storage-service`. In manifests these internal crates may alias
+the `mpi-core` package as the local crate name `mpi` so generated code can keep
+using stable `::mpi` paths.
 
 ## Requirements
 
 ### MPITX-REQ-001: Separate transaction crate
 
-Storage-coupled transaction support shall live outside the core `mpi` crate.
+Storage-coupled transaction support shall live outside the `mpi-core` crate.
 
 Verification: inspection
 
@@ -44,7 +47,7 @@ Status: proposed
 
 ## Architecture
 
-- MPITX-ARCH-001: The core `mpi` crate owns transaction identifiers, paths, and
+- MPITX-ARCH-001: The `mpi-core` crate owns transaction identifiers, paths, and
   transactional message envelopes that do not require persistent storage.
 - MPITX-ARCH-002: `mpi-transaction` owns storage-coupled transaction logging.
 - MPITX-ARCH-003: The transaction decision log depends on the

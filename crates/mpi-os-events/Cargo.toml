@@ -10,7 +10,7 @@ default = ["unix-signals"]
 unix-signals = ["dep:signal-hook"]
 
 [dependencies]
-mpi = { path = "../mpi" }
+mpi = { package = "mpi-core", path = "../mpi-core" }
 
 [target.'cfg(unix)'.dependencies]
 # Unix signal forwarding needs async-signal-safe registration and a safe bridge

@@ -42,10 +42,11 @@ Current crate-level baselines include:
 
 - `crates/ctx-future/se-design-baseline.md`
 - `crates/mpi/se-design-baseline.md`
+- `crates/mpi-core/se-design-baseline.md`
 - `crates/mpi-macros/se-design-baseline.md`
 - `crates/mpi-os-events/se-design-baseline.md`
-- `crates/mpi/se-send-scope.md`
-- `crates/mpi/se-task-topology.md`
+- `crates/mpi-core/se-send-scope.md`
+- `crates/mpi-core/se-task-topology.md`
 
 Agents changing a crate or module shall also read any crate-level or module-level `se-*.md` files under the affected crate or module.
 
