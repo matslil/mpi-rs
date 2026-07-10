@@ -43,8 +43,8 @@ Use the status values from `docs/agents/process.md`:
 | `mpi-macros` | `crates/mpi-macros/se-design-baseline.md` |
 | `mpi-os-events` | `crates/mpi-os-events/se-design-baseline.md` |
 | `mpi-transaction` | `crates/mpi-transaction/se-design-baseline.md` |
-| `persistent-log-storage-service` | `crates/persistent-log-storage/se-design-baseline.md` |
-| `timeout-service` | `crates/timeout-server/se-design-baseline.md` |
+| `persistent-log-storage-service` | `crates/persistent-log-storage-service/se-design-baseline.md` |
+| `timeout-service` | `crates/timeout-service/se-design-baseline.md` |
 
 ## Maintenance Rules
 

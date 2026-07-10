@@ -891,7 +891,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     if matches!(kind, HandlerKind::LateReply) && args.len() != 1 {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
-                            "late reply handler must take exactly one late reply argument after the context",
+                            "late reply callback must take exactly one late reply argument after the context",
                         ));
                     }
                     normalize_handler_method(&mut method, &kind);
@@ -912,10 +912,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter(|handler| matches!(handler.kind, HandlerKind::Start))
         .count();
-    if start_count != 1 {
+    if start_count > 1 {
         return compile_error(syn::Error::new_spanned(
             &task_ident,
-            "#[task] requires exactly one #[start] handler",
+            "#[task] supports at most one #[start] handler",
         ));
     }
     let late_reply_count = handlers
@@ -925,7 +925,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     if late_reply_count > 1 {
         return compile_error(syn::Error::new_spanned(
             &task_ident,
-            "#[task] supports at most one #[late_reply] handler",
+            "#[task] supports at most one #[late_reply] callback",
         ));
     }
 
@@ -944,14 +944,14 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut protocol_impls = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
-    let late_reply_handler = handlers
+    let late_reply_callback = handlers
         .iter()
         .find(|handler| matches!(handler.kind, HandlerKind::LateReply))
         .map(|handler| handler.method.sig.ident.clone());
-    let deliver_call_response = if let Some(method_ident) = &late_reply_handler {
+    let deliver_call_response = if let Some(method_ident) = &late_reply_callback {
         quote! {
             let __ctx_inner = ctx.inner.clone();
-            let _ = __ctx_inner.deliver_call_response_with_late_reply_handler(
+            let _ = __ctx_inner.deliver_call_response_with_late_reply_callback(
                 ::mpi::QueuedCallResponse::with_late_reply_policy(
                     session_id,
                     value,
@@ -971,10 +971,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
     };
-    let deliver_stream_event = if let Some(method_ident) = &late_reply_handler {
+    let deliver_stream_event = if let Some(method_ident) = &late_reply_callback {
         quote! {
             let __ctx_inner = ctx.inner.clone();
-            let _ = __ctx_inner.deliver_stream_event_with_late_reply_handler(
+            let _ = __ctx_inner.deliver_stream_event_with_late_reply_callback(
                 ::mpi::QueuedStreamEvent::with_late_reply_policy(
                     session_id,
                     event,
@@ -1436,7 +1436,19 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let start_variant = start_variant.expect("start handler counted above");
+    if start_count == 0 {
+        let variant_ident = format_ident!("Start");
+        start_variant = Some(quote! { #message_ident::#variant_ident });
+        variants.push(quote! { #variant_ident });
+        placements.push(quote! {
+            Self::#variant_ident => ::mpi::MessagePlacement::Priority
+        });
+        dispatch_arms.push(quote! {
+            #message_ident::#variant_ident => {}
+        });
+    }
+
+    let start_variant = start_variant.expect("start variant synthesized above");
     let start_arg_idents: Vec<_> = start_args.iter().map(|arg| &arg.ident).collect();
     let start_arg_tys: Vec<_> = start_args.iter().map(|arg| &arg.ty).collect();
     let receive_impls = receives.iter().map(|receive_ty| {
@@ -1798,7 +1810,7 @@ pub fn stream(attr: TokenStream, item: TokenStream) -> TokenStream {
     passthrough(attr, item)
 }
 
-/// Marks the optional handler for reported late replies.
+/// Marks the optional callback for reported late replies.
 #[proc_macro_attribute]
 pub fn late_reply(attr: TokenStream, item: TokenStream) -> TokenStream {
     passthrough(attr, item)

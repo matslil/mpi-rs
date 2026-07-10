@@ -1,16 +1,16 @@
-//! Local `mpi` timeout server.
+//! Local `mpi` timeout service.
 //!
 //! The crate baseline is documented in `se-design-baseline.md`.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mpi::{
-    MessagePlacement, QueueSpaceWakeupMessage, QueueSpaceWakeupTarget, SendError, SessionId,
-    TaskHandle, TaskMessage, TaskQueue,
+    MessagePlacement, QueueSpaceWakeupMessage, SendError, SessionId, TaskHandle, TaskMessage,
+    TaskQueue,
 };
 
 /// Crate-owned monotonic time source.
@@ -18,7 +18,7 @@ use mpi::{
 pub struct Time;
 
 impl Time {
-    /// Return the current timeout-server monotonic instant.
+    /// Return the current timeout-service monotonic instant.
     #[must_use]
     pub fn now() -> TimeoutInstant {
         TimeoutInstant(Instant::now())
@@ -67,9 +67,9 @@ impl std::ops::Sub<Duration> for TimeoutInstant {
 
 /// Opaque operation that delivers an expired timeout message.
 ///
-/// The timeout server owns this object while the timeout is pending. It calls
+/// The timeout service owns this object while the timeout is pending. It calls
 /// `try_deliver` until delivery succeeds, a non-retryable error occurs, or the
-/// server's local delivery wait bound expires.
+/// service's local delivery wait bound expires.
 pub trait TimeoutDelivery: Send + 'static {
     /// Attempt one delivery of the already-typed timeout message.
     fn try_deliver(&mut self) -> Result<(), SendError>;
@@ -84,7 +84,7 @@ where
     }
 }
 
-/// Timeout request accepted by the server.
+/// Timeout request accepted by the service.
 pub struct TimeoutRequest {
     session_id: SessionId,
     deadline: TimeoutInstant,
@@ -138,8 +138,8 @@ impl TimeoutCancel {
     }
 }
 
-/// Messages received by the timeout server task.
-pub enum TimeoutServerMessage {
+/// Messages received by the timeout service task.
+enum TimeoutServiceMessage {
     /// Schedule a timeout.
     Request(TimeoutRequest),
 
@@ -149,11 +149,11 @@ pub enum TimeoutServerMessage {
     /// Framework-only queue-space wakeup.
     QueueSpaceWakeup,
 
-    /// Stop the timeout server.
+    /// Stop the timeout service.
     Stop,
 }
 
-impl TaskMessage for TimeoutServerMessage {
+impl TaskMessage for TimeoutServiceMessage {
     fn placement(&self) -> MessagePlacement {
         match self {
             Self::Cancel(_) | Self::QueueSpaceWakeup | Self::Stop => MessagePlacement::Priority,
@@ -162,7 +162,7 @@ impl TaskMessage for TimeoutServerMessage {
     }
 }
 
-impl QueueSpaceWakeupMessage for TimeoutServerMessage {
+impl QueueSpaceWakeupMessage for TimeoutServiceMessage {
     fn queue_space_wakeup() -> Self {
         Self::QueueSpaceWakeup
     }
@@ -175,13 +175,13 @@ impl QueueSpaceWakeupMessage for TimeoutServerMessage {
     }
 }
 
-/// Error returned by timeout-server operations.
+/// Error returned by timeout-service operations.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum TimeoutServerError {
+pub enum TimeoutServiceError {
     /// A request used a `SessionId` that already has an active timeout.
     DuplicateSession(SessionId),
 
-    /// The timeout-server queue rejected a message.
+    /// The timeout-service queue rejected a message.
     Send(SendError),
 
     /// Expiry delivery did not complete before the local delivery wait bound.
@@ -189,47 +189,51 @@ pub enum TimeoutServerError {
 
     /// The delivery target stopped before the timeout could be delivered.
     DeliveryTargetStopped(SessionId),
+
+    /// The timeout service task thread panicked before shutdown completed.
+    ThreadPanicked,
 }
 
-impl fmt::Display for TimeoutServerError {
+impl fmt::Display for TimeoutServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateSession(session_id) => {
                 write!(f, "timeout session {session_id} is already active")
             }
-            Self::Send(error) => write!(f, "timeout server message could not be sent: {error}"),
+            Self::Send(error) => write!(f, "timeout service message could not be sent: {error}"),
             Self::DeliveryTimedOut(session_id) => {
                 write!(f, "timeout delivery for {session_id} timed out")
             }
             Self::DeliveryTargetStopped(session_id) => {
                 write!(f, "timeout delivery target for {session_id} stopped")
             }
+            Self::ThreadPanicked => f.write_str("timeout service thread panicked"),
         }
     }
 }
 
-impl std::error::Error for TimeoutServerError {}
+impl std::error::Error for TimeoutServiceError {}
 
-impl From<SendError> for TimeoutServerError {
+impl From<SendError> for TimeoutServiceError {
     fn from(error: SendError) -> Self {
         Self::Send(error)
     }
 }
 
-/// Timeout-server runtime configuration.
+/// Timeout-service runtime configuration.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct TimeoutServerConfig {
-    /// Maximum time the timeout server waits while retrying queue-full expiry delivery.
+pub struct TimeoutServiceConfig {
+    /// Maximum time the timeout service waits while retrying queue-full expiry delivery.
     pub delivery_timeout: Duration,
 
     /// Local sleep duration used between queue polling and delivery retries.
     pub poll_interval: Duration,
 
-    /// Number of priority slots reserved in the timeout-server queue.
+    /// Number of priority slots reserved in the timeout-service queue.
     pub priority_reserved: usize,
 }
 
-impl Default for TimeoutServerConfig {
+impl Default for TimeoutServiceConfig {
     fn default() -> Self {
         Self {
             delivery_timeout: Duration::from_secs(1),
@@ -239,12 +243,11 @@ impl Default for TimeoutServerConfig {
     }
 }
 
-/// Public handle for scheduling and cancelling timeouts.
-pub struct TimeoutServerHandle<const N: usize> {
-    handle: TaskHandle<TimeoutServerMessage, N>,
+struct TimeoutServiceHandle<const N: usize> {
+    handle: TaskHandle<TimeoutServiceMessage, N>,
 }
 
-impl<const N: usize> Clone for TimeoutServerHandle<N> {
+impl<const N: usize> Clone for TimeoutServiceHandle<N> {
     fn clone(&self) -> Self {
         Self {
             handle: self.handle.clone(),
@@ -252,55 +255,113 @@ impl<const N: usize> Clone for TimeoutServerHandle<N> {
     }
 }
 
-impl<const N: usize> TimeoutServerHandle<N> {
-    /// Schedule a timeout request.
-    pub fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServerError> {
+impl<const N: usize> TimeoutServiceHandle<N> {
+    fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServiceError> {
         self.handle
-            .send_message(TimeoutServerMessage::Request(request))
-            .map_err(TimeoutServerError::Send)
+            .send_message(TimeoutServiceMessage::Request(request))
+            .map_err(TimeoutServiceError::Send)
     }
 
-    /// Send a best-effort priority cancel for a timeout session.
-    pub fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServerError> {
+    fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServiceError> {
         self.handle
-            .send_message(TimeoutServerMessage::Cancel(TimeoutCancel::new(session_id)))
-            .map_err(TimeoutServerError::Send)
+            .send_message(TimeoutServiceMessage::Cancel(TimeoutCancel::new(
+                session_id,
+            )))
+            .map_err(TimeoutServiceError::Send)
     }
 
-    /// Ask the timeout server to stop.
-    pub fn stop(&self) -> Result<(), TimeoutServerError> {
+    fn stop(&self) -> Result<(), TimeoutServiceError> {
         self.handle
-            .send_message(TimeoutServerMessage::Stop)
-            .map_err(TimeoutServerError::Send)
+            .send_message(TimeoutServiceMessage::Stop)
+            .map_err(TimeoutServiceError::Send)
     }
 
-    /// Return the underlying `mpi` task handle.
-    #[must_use]
-    pub const fn task_handle(&self) -> &TaskHandle<TimeoutServerMessage, N> {
+    const fn task_handle(&self) -> &TaskHandle<TimeoutServiceMessage, N> {
         &self.handle
     }
 }
 
-impl<const N: usize> QueueSpaceWakeupTarget for TimeoutServerHandle<N> {
-    fn endpoint(&self) -> mpi::EndpointId {
-        self.handle.endpoint()
-    }
+struct TimeoutServiceInner<const N: usize> {
+    handle: TimeoutServiceHandle<N>,
+    join: Mutex<Option<std::thread::JoinHandle<Result<(), TimeoutServiceError>>>>,
+}
 
-    fn try_wake(&self) -> Result<(), SendError> {
-        self.handle
-            .send_message(TimeoutServerMessage::QueueSpaceWakeup)
+impl<const N: usize> TimeoutServiceInner<N> {
+    fn stop_and_join(&self) -> Result<(), TimeoutServiceError> {
+        let Some(join) = self
+            .join
+            .lock()
+            .expect("timeout service join lock poisoned")
+            .take()
+        else {
+            return Ok(());
+        };
+        match self.handle.stop() {
+            Ok(()) | Err(TimeoutServiceError::Send(SendError::TaskStopped)) => {}
+            Err(error) => return Err(error),
+        }
+        join.join()
+            .map_err(|_| TimeoutServiceError::ThreadPanicked)?
     }
 }
 
-/// Join handle for the timeout server thread.
-pub struct TimeoutServerRuntime {
-    join: std::thread::JoinHandle<Result<(), TimeoutServerError>>,
+impl<const N: usize> Drop for TimeoutServiceInner<N> {
+    fn drop(&mut self) {
+        if let Err(error) = self.stop_and_join() {
+            panic!("timeout service failed to stop cleanly: {error}");
+        }
+    }
 }
 
-impl TimeoutServerRuntime {
-    /// Wait for the timeout server to stop.
-    pub fn join(self) -> std::thread::Result<Result<(), TimeoutServerError>> {
-        self.join.join()
+/// Owning timeout service instance.
+///
+/// Clones share ownership of the same running timeout task. Dropping the final
+/// clone stops the task and waits for clean termination.
+pub struct TimeoutServiceInstance<const N: usize> {
+    inner: Arc<TimeoutServiceInner<N>>,
+}
+
+impl<const N: usize> Clone for TimeoutServiceInstance<N> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<const N: usize> TimeoutServiceInstance<N> {
+    /// Schedule a timeout request.
+    pub fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServiceError> {
+        self.inner.handle.request(request)
+    }
+
+    /// Send a best-effort priority cancel for a timeout session.
+    pub fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServiceError> {
+        self.inner.handle.cancel(session_id)
+    }
+
+    /// Stop the timeout service and wait for clean termination.
+    ///
+    /// Shutdown failures are fatal and panic.
+    pub fn stop(&self) {
+        self.inner
+            .stop_and_join()
+            .unwrap_or_else(|error| panic!("timeout service failed to stop cleanly: {error}"));
+    }
+
+    #[cfg(test)]
+    fn join_for_test(&self) -> Result<(), TimeoutServiceError> {
+        let Some(join) = self
+            .inner
+            .join
+            .lock()
+            .expect("timeout service join lock poisoned")
+            .take()
+        else {
+            return Ok(());
+        };
+        join.join()
+            .map_err(|_| TimeoutServiceError::ThreadPanicked)?
     }
 }
 
@@ -309,30 +370,35 @@ struct ActiveTimeout {
     delivery: Box<dyn TimeoutDelivery>,
 }
 
-/// Spawn a timeout server with default configuration.
-pub fn spawn_timeout_server<const N: usize>() -> (TimeoutServerHandle<N>, TimeoutServerRuntime) {
-    spawn_timeout_server_with_config(TimeoutServerConfig::default())
+/// Start a timeout service with default configuration.
+pub fn start_timeout_service<const N: usize>() -> TimeoutServiceInstance<N> {
+    start_timeout_service_with_config(TimeoutServiceConfig::default())
 }
 
-/// Spawn a timeout server with explicit configuration.
-pub fn spawn_timeout_server_with_config<const N: usize>(
-    config: TimeoutServerConfig,
-) -> (TimeoutServerHandle<N>, TimeoutServerRuntime) {
+/// Start a timeout service with explicit configuration.
+pub fn start_timeout_service_with_config<const N: usize>(
+    config: TimeoutServiceConfig,
+) -> TimeoutServiceInstance<N> {
     let queue = Arc::new(
-        TaskQueue::<TimeoutServerMessage, N>::with_priority_reserved(config.priority_reserved),
+        TaskQueue::<TimeoutServiceMessage, N>::with_priority_reserved(config.priority_reserved),
     );
-    let handle = TimeoutServerHandle {
+    let handle = TimeoutServiceHandle {
         handle: TaskHandle::new(queue),
     };
     let worker_handle = handle.clone();
-    let join = std::thread::spawn(move || run_server(worker_handle, config));
-    (handle, TimeoutServerRuntime { join })
+    let join = std::thread::spawn(move || run_service(worker_handle, config));
+    TimeoutServiceInstance {
+        inner: Arc::new(TimeoutServiceInner {
+            handle,
+            join: Mutex::new(Some(join)),
+        }),
+    }
 }
 
-fn run_server<const N: usize>(
-    handle: TimeoutServerHandle<N>,
-    config: TimeoutServerConfig,
-) -> Result<(), TimeoutServerError> {
+fn run_service<const N: usize>(
+    handle: TimeoutServiceHandle<N>,
+    config: TimeoutServiceConfig,
+) -> Result<(), TimeoutServiceError> {
     let mut active = HashMap::<SessionId, ActiveTimeout>::new();
     let mut canceled = HashSet::<SessionId>::new();
     let mut deadlines = BinaryHeap::<Reverse<(TimeoutInstant, SessionId)>>::new();
@@ -340,12 +406,12 @@ fn run_server<const N: usize>(
     loop {
         while let Some(message) = handle.task_handle().try_recv_message() {
             match message {
-                TimeoutServerMessage::Request(request) => {
+                TimeoutServiceMessage::Request(request) => {
                     if canceled.remove(&request.session_id) {
                         continue;
                     }
                     if active.contains_key(&request.session_id) {
-                        return Err(TimeoutServerError::DuplicateSession(request.session_id));
+                        return Err(TimeoutServiceError::DuplicateSession(request.session_id));
                     }
                     deadlines.push(Reverse((request.deadline, request.session_id)));
                     active.insert(
@@ -356,13 +422,13 @@ fn run_server<const N: usize>(
                         },
                     );
                 }
-                TimeoutServerMessage::Cancel(cancel) => {
+                TimeoutServiceMessage::Cancel(cancel) => {
                     if active.remove(&cancel.session_id).is_none() {
                         canceled.insert(cancel.session_id);
                     }
                 }
-                TimeoutServerMessage::QueueSpaceWakeup => {}
-                TimeoutServerMessage::Stop => {
+                TimeoutServiceMessage::QueueSpaceWakeup => {}
+                TimeoutServiceMessage::Stop => {
                     handle.task_handle().close();
                     return Ok(());
                 }
@@ -407,22 +473,22 @@ fn run_server<const N: usize>(
 fn deliver_with_local_timeout(
     session_id: SessionId,
     mut delivery: Box<dyn TimeoutDelivery>,
-    config: TimeoutServerConfig,
-) -> Result<(), TimeoutServerError> {
+    config: TimeoutServiceConfig,
+) -> Result<(), TimeoutServiceError> {
     let delivery_deadline = Time::now() + config.delivery_timeout;
     loop {
         match delivery.try_deliver() {
             Ok(()) => return Ok(()),
             Err(SendError::QueueFull) => {
                 if Time::now().has_reached(delivery_deadline) {
-                    return Err(TimeoutServerError::DeliveryTimedOut(session_id));
+                    return Err(TimeoutServiceError::DeliveryTimedOut(session_id));
                 }
                 std::thread::sleep(config.poll_interval);
             }
             Err(SendError::TaskStopped) => {
-                return Err(TimeoutServerError::DeliveryTargetStopped(session_id));
+                return Err(TimeoutServiceError::DeliveryTargetStopped(session_id));
             }
-            Err(error) => return Err(TimeoutServerError::Send(error)),
+            Err(error) => return Err(TimeoutServiceError::Send(error)),
         }
     }
 }
@@ -462,11 +528,11 @@ mod tests {
 
     #[test]
     fn tos_req_007_expiry_delivers_opaque_message() {
-        let (server, runtime) = spawn_timeout_server::<8>();
+        let service = start_timeout_service::<8>();
         let (tx, rx) = mpsc::channel();
         let session_id = session(1);
 
-        server
+        service
             .request(request_with_sender(
                 session_id,
                 Duration::from_millis(5),
@@ -475,79 +541,77 @@ mod tests {
             .unwrap();
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
-        server.stop().unwrap();
-        assert_eq!(runtime.join().unwrap(), Ok(()));
+        service.stop();
     }
 
     #[test]
     fn tos_req_009_cancel_discards_pending_timeout() {
-        let (server, runtime) = spawn_timeout_server::<8>();
+        let service = start_timeout_service::<8>();
         let (tx, rx) = mpsc::channel();
         let session_id = session(2);
 
-        server
+        service
             .request(request_with_sender(
                 session_id,
                 Duration::from_millis(100),
                 tx,
             ))
             .unwrap();
-        server.cancel(session_id).unwrap();
+        service.cancel(session_id).unwrap();
 
         assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
-        server.stop().unwrap();
-        assert_eq!(runtime.join().unwrap(), Ok(()));
+        service.stop();
     }
 
     #[test]
     fn tos_req_008_duplicate_active_request_is_rejected() {
-        let config = TimeoutServerConfig {
+        let config = TimeoutServiceConfig {
             delivery_timeout: Duration::from_millis(20),
-            ..TimeoutServerConfig::default()
+            ..TimeoutServiceConfig::default()
         };
-        let (server, runtime) = spawn_timeout_server_with_config::<8>(config);
+        let service = start_timeout_service_with_config::<8>(config);
         let (tx, _rx) = mpsc::channel();
         let session_id = session(3);
 
-        server
+        service
             .request(request_with_sender(
                 session_id,
                 Duration::from_secs(10),
                 tx.clone(),
             ))
             .unwrap();
-        server
+        service
             .request(request_with_sender(session_id, Duration::from_secs(10), tx))
             .unwrap();
 
         assert_eq!(
-            runtime.join().unwrap(),
-            Err(TimeoutServerError::DuplicateSession(session_id))
+            service.join_for_test(),
+            Err(TimeoutServiceError::DuplicateSession(session_id))
         );
     }
 
     #[test]
     fn tos_req_011_cancel_message_is_priority() {
         assert_eq!(
-            TimeoutServerMessage::Cancel(TimeoutCancel::new(session(4))).placement(),
+            TimeoutServiceMessage::Cancel(TimeoutCancel::new(session(4))).placement(),
             MessagePlacement::Priority
         );
     }
 
     #[test]
     fn tos_req_013_queue_full_delivery_retries_until_success() {
-        let config = TimeoutServerConfig {
+        let config = TimeoutServiceConfig {
             delivery_timeout: Duration::from_secs(1),
             poll_interval: Duration::from_millis(1),
             priority_reserved: 1,
         };
-        let (server, runtime) = spawn_timeout_server_with_config::<8>(config);
+        let service = start_timeout_service_with_config::<8>(config);
         let attempts = Arc::new(AtomicUsize::new(0));
         let attempts_for_delivery = Arc::clone(&attempts);
         let (tx, rx) = mpsc::channel();
         let session_id = session(5);
 
-        server
+        service
             .request(TimeoutRequest::new(
                 session_id,
                 Time::now() + Duration::from_millis(5),
@@ -563,45 +627,44 @@ mod tests {
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
         assert!(attempts.load(Ordering::SeqCst) >= 2);
-        server.stop().unwrap();
-        assert_eq!(runtime.join().unwrap(), Ok(()));
+        service.stop();
     }
 
     #[test]
     fn tos_req_014_delivery_wait_is_locally_bounded() {
-        let config = TimeoutServerConfig {
+        let config = TimeoutServiceConfig {
             delivery_timeout: Duration::from_millis(20),
             poll_interval: Duration::from_millis(1),
             priority_reserved: 1,
         };
-        let (server, runtime) = spawn_timeout_server_with_config::<8>(config);
+        let service = start_timeout_service_with_config::<8>(config);
         let session_id = session(6);
 
-        server
+        service
             .request(TimeoutRequest::new(session_id, Time::now(), || {
                 Err(SendError::QueueFull)
             }))
             .unwrap();
 
         assert_eq!(
-            runtime.join().unwrap(),
-            Err(TimeoutServerError::DeliveryTimedOut(session_id))
+            service.join_for_test(),
+            Err(TimeoutServiceError::DeliveryTimedOut(session_id))
         );
     }
 
     #[test]
-    fn tos_req_006_delivery_payload_remains_opaque_to_server() {
+    fn tos_req_006_delivery_payload_remains_opaque_to_service() {
         #[derive(Debug, Eq, PartialEq)]
         struct SenderSpecificPayload {
             value: u32,
         }
 
-        let (server, runtime) = spawn_timeout_server::<8>();
+        let service = start_timeout_service::<8>();
         let observed = Arc::new(Mutex::new(None));
         let observed_for_delivery = Arc::clone(&observed);
         let payload = SenderSpecificPayload { value: 42 };
 
-        server
+        service
             .request(TimeoutRequest::new(session(7), Time::now(), move || {
                 *observed_for_delivery.lock().unwrap() = Some(payload.value);
                 Ok(())
@@ -610,7 +673,26 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(*observed.lock().unwrap(), Some(42));
-        server.stop().unwrap();
-        assert_eq!(runtime.join().unwrap(), Ok(()));
+        service.stop();
+    }
+
+    #[test]
+    fn tos_req_016_service_instance_final_drop_stops_task() {
+        let service = start_timeout_service::<8>();
+        let clone = service.clone();
+        drop(service);
+
+        let (tx, rx) = mpsc::channel();
+        let session_id = session(8);
+        clone
+            .request(request_with_sender(
+                session_id,
+                Duration::from_millis(5),
+                tx,
+            ))
+            .unwrap();
+
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
+        drop(clone);
     }
 }

@@ -28,8 +28,8 @@ Workspace-level documents cover repository builds, process, workflows, change co
 - `crates/mpi-macros/se-design-baseline.md`
 - `crates/mpi-os-events/se-design-baseline.md`
 - `crates/mpi-transaction/se-design-baseline.md`
-- `crates/persistent-log-storage/se-design-baseline.md`
-- `crates/timeout-server/se-design-baseline.md`
+- `crates/persistent-log-storage-service/se-design-baseline.md`
+- `crates/timeout-service/se-design-baseline.md`
 - `crates/mpi/se-send-scope.md`
 - `crates/mpi/se-task-topology.md`
 

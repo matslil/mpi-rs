@@ -48,7 +48,8 @@ Status: proposed
   transactional message envelopes that do not require persistent storage.
 - MPITX-ARCH-002: `mpi-transaction` owns storage-coupled transaction logging.
 - MPITX-ARCH-003: The transaction decision log depends on the
-  `persistent_log_storage.v1` protocol rather than the storage implementation.
+  `persistent_log_storage_service.v1` protocol served by a persistent log
+  storage service instance rather than the storage implementation.
 - MPITX-ARCH-004: Compiler-enforced side-effect and transaction-message
   separation remains a macro/type-system concern in `mpi` and `mpi-macros`; this
   crate consumes the generated protocol types without weakening those checks.
@@ -58,14 +59,14 @@ Status: proposed
 The crate exposes:
 
 ```rust
-pub struct TransactionDecisionLog<H>;
+pub struct TransactionDecisionLog;
 pub struct TransactionDecisionRecord;
 pub enum TransactionLogError;
 ```
 
-`TransactionDecisionLog<H>` is constructed from a
-`persistent_log_storage::PersistentLogStorageProtocolV1::Binding<H>` and uses
-blocking protocol calls for decision recording and recovery.
+`TransactionDecisionLog` is constructed from a
+`persistent_log_storage_service::PersistentLogStorageServiceInstance` and uses
+blocking service calls for decision recording and recovery.
 
 ## Traceability
 

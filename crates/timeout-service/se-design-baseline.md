@@ -8,10 +8,6 @@ specified as a separate crate so timeout behavior, platform timer assumptions,
 and timeout request/cancel protocol rules can evolve without being folded into
 the core `mpi` crate.
 
-Migration note: this baseline uses the target service crate name. Source paths
-may continue to contain the previous `timeout-server` directory name until the
-corresponding implementation rename is performed.
-
 ## Purpose
 
 `timeout-service` lets tasks schedule session-associated timeout messages for
