@@ -28,6 +28,7 @@ version = "0.1.0"
 dependencies = [
  "ctx-future",
  "mpi-macros",
+ "persistent-log-storage",
 ]
 
 [[package]]
