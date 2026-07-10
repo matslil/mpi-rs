@@ -39,6 +39,31 @@ struct Counter {
     value: u32,
 }
 
+#[derive(Default)]
+struct NoStartTask {
+    value: u32,
+}
+
+#[task(queue_size = 4)]
+impl NoStartTask {
+    #[event]
+    fn set(ctx: &mut NoStartTaskContext, value: u32) {
+        ctx.with_state(|state| {
+            state.value = value;
+        });
+    }
+
+    #[call]
+    fn get(ctx: &mut NoStartTaskContext) -> u32 {
+        ctx.with_state(|state| state.value)
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut NoStartTaskContext) {
+        ctx.stop();
+    }
+}
+
 #[task(queue_size = 8)]
 impl Counter {
     #[start]
@@ -70,6 +95,16 @@ impl Counter {
     fn stop(ctx: &mut CounterContext) {
         ctx.stop();
     }
+}
+
+#[test]
+fn macro_req_033_task_without_start_uses_empty_start_handler() {
+    let (task, runtime) = NoStartTask::spawn(NoStartTask::default()).unwrap();
+
+    task.set_blocking(7).unwrap();
+    assert_eq!(task.get_blocking().unwrap(), 7);
+    task.stop_blocking().unwrap();
+    runtime.join().unwrap();
 }
 
 #[derive(Default)]
@@ -250,7 +285,7 @@ impl Client {
     }
 
     #[event]
-    fn simulate_late_reply_handler(ctx: &mut ClientContext) {
+    fn simulate_late_reply_callback(ctx: &mut ClientContext) {
         let value = 5_u32;
         let reply = mpi::LateReplyRef::new(
             mpi::SessionId::new(mpi::EndpointId(1), 1),
@@ -837,10 +872,10 @@ fn req_106_req_107_generated_stream_cancel_clears_producer_credit() {
 }
 
 #[test]
-fn req_094_generated_late_reply_handler_can_inspect_reply() {
+fn req_094_generated_late_reply_callback_can_inspect_reply() {
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
-    client.simulate_late_reply_handler_blocking().unwrap();
+    client.simulate_late_reply_callback_blocking().unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 100);
 
     client.stop_blocking().unwrap();
