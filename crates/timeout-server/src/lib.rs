@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mpi::{
-    MessagePlacement, QueueSpaceWakeupMessage, QueueSpaceWakeupTarget, SendError, SessionId,
-    TaskHandle, TaskMessage, TaskQueue,
+    MessagePlacement, QueueSpaceWakeupMessage, SendError, SessionId, TaskHandle, TaskMessage,
+    TaskQueue,
 };
 
 /// Crate-owned monotonic time source.
@@ -138,39 +138,66 @@ impl TimeoutCancel {
     }
 }
 
-/// Messages received by the timeout server task.
-pub enum TimeoutServerMessage {
-    /// Schedule a timeout.
+enum TimeoutServerMessageKind {
     Request(TimeoutRequest),
-
-    /// Cancel a timeout. This is priority by receiver declaration.
     Cancel(TimeoutCancel),
-
-    /// Framework-only queue-space wakeup.
     QueueSpaceWakeup,
+}
 
-    /// Stop the timeout server.
-    Stop,
+/// Messages received by the timeout server task.
+///
+/// This is the timeout server's public task declaration. Clients construct
+/// values with `TimeoutServerMessage::request` and
+/// `TimeoutServerMessage::cancel`, then send them through the `mpi` task handle
+/// returned by `spawn_timeout_server`.
+pub struct TimeoutServerMessage {
+    kind: TimeoutServerMessageKind,
+}
+
+impl TimeoutServerMessage {
+    /// Construct a timeout request message.
+    #[must_use]
+    pub const fn request(request: TimeoutRequest) -> Self {
+        Self {
+            kind: TimeoutServerMessageKind::Request(request),
+        }
+    }
+
+    /// Construct a priority timeout cancel message.
+    #[must_use]
+    pub const fn cancel(cancel: TimeoutCancel) -> Self {
+        Self {
+            kind: TimeoutServerMessageKind::Cancel(cancel),
+        }
+    }
+
+    fn queue_space_wakeup_message() -> Self {
+        Self {
+            kind: TimeoutServerMessageKind::QueueSpaceWakeup,
+        }
+    }
 }
 
 impl TaskMessage for TimeoutServerMessage {
     fn placement(&self) -> MessagePlacement {
-        match self {
-            Self::Cancel(_) | Self::QueueSpaceWakeup | Self::Stop => MessagePlacement::Priority,
-            Self::Request(_) => MessagePlacement::Normal,
+        match &self.kind {
+            TimeoutServerMessageKind::Cancel(_) | TimeoutServerMessageKind::QueueSpaceWakeup => {
+                MessagePlacement::Priority
+            }
+            TimeoutServerMessageKind::Request(_) => MessagePlacement::Normal,
         }
     }
 }
 
 impl QueueSpaceWakeupMessage for TimeoutServerMessage {
     fn queue_space_wakeup() -> Self {
-        Self::QueueSpaceWakeup
+        Self::queue_space_wakeup_message()
     }
 
     fn into_queue_space_wakeup(self) -> Result<mpi::QueueSpaceWakeup, Self> {
-        match self {
-            Self::QueueSpaceWakeup => Ok(mpi::QueueSpaceWakeup),
-            other => Err(other),
+        match self.kind {
+            TimeoutServerMessageKind::QueueSpaceWakeup => Ok(mpi::QueueSpaceWakeup),
+            other => Err(Self { kind: other }),
         }
     }
 }
@@ -239,59 +266,6 @@ impl Default for TimeoutServerConfig {
     }
 }
 
-/// Public handle for scheduling and cancelling timeouts.
-pub struct TimeoutServerHandle<const N: usize> {
-    handle: TaskHandle<TimeoutServerMessage, N>,
-}
-
-impl<const N: usize> Clone for TimeoutServerHandle<N> {
-    fn clone(&self) -> Self {
-        Self {
-            handle: self.handle.clone(),
-        }
-    }
-}
-
-impl<const N: usize> TimeoutServerHandle<N> {
-    /// Schedule a timeout request.
-    pub fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServerError> {
-        self.handle
-            .send_message(TimeoutServerMessage::Request(request))
-            .map_err(TimeoutServerError::Send)
-    }
-
-    /// Send a best-effort priority cancel for a timeout session.
-    pub fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServerError> {
-        self.handle
-            .send_message(TimeoutServerMessage::Cancel(TimeoutCancel::new(session_id)))
-            .map_err(TimeoutServerError::Send)
-    }
-
-    /// Ask the timeout server to stop.
-    pub fn stop(&self) -> Result<(), TimeoutServerError> {
-        self.handle
-            .send_message(TimeoutServerMessage::Stop)
-            .map_err(TimeoutServerError::Send)
-    }
-
-    /// Return the underlying `mpi` task handle.
-    #[must_use]
-    pub const fn task_handle(&self) -> &TaskHandle<TimeoutServerMessage, N> {
-        &self.handle
-    }
-}
-
-impl<const N: usize> QueueSpaceWakeupTarget for TimeoutServerHandle<N> {
-    fn endpoint(&self) -> mpi::EndpointId {
-        self.handle.endpoint()
-    }
-
-    fn try_wake(&self) -> Result<(), SendError> {
-        self.handle
-            .send_message(TimeoutServerMessage::QueueSpaceWakeup)
-    }
-}
-
 /// Join handle for the timeout server thread.
 pub struct TimeoutServerRuntime {
     join: std::thread::JoinHandle<Result<(), TimeoutServerError>>,
@@ -310,27 +284,26 @@ struct ActiveTimeout {
 }
 
 /// Spawn a timeout server with default configuration.
-pub fn spawn_timeout_server<const N: usize>() -> (TimeoutServerHandle<N>, TimeoutServerRuntime) {
+pub fn spawn_timeout_server<const N: usize>()
+-> (TaskHandle<TimeoutServerMessage, N>, TimeoutServerRuntime) {
     spawn_timeout_server_with_config(TimeoutServerConfig::default())
 }
 
 /// Spawn a timeout server with explicit configuration.
 pub fn spawn_timeout_server_with_config<const N: usize>(
     config: TimeoutServerConfig,
-) -> (TimeoutServerHandle<N>, TimeoutServerRuntime) {
+) -> (TaskHandle<TimeoutServerMessage, N>, TimeoutServerRuntime) {
     let queue = Arc::new(
         TaskQueue::<TimeoutServerMessage, N>::with_priority_reserved(config.priority_reserved),
     );
-    let handle = TimeoutServerHandle {
-        handle: TaskHandle::new(queue),
-    };
+    let handle = TaskHandle::new(queue);
     let worker_handle = handle.clone();
     let join = std::thread::spawn(move || run_server(worker_handle, config));
     (handle, TimeoutServerRuntime { join })
 }
 
 fn run_server<const N: usize>(
-    handle: TimeoutServerHandle<N>,
+    handle: TaskHandle<TimeoutServerMessage, N>,
     config: TimeoutServerConfig,
 ) -> Result<(), TimeoutServerError> {
     let mut active = HashMap::<SessionId, ActiveTimeout>::new();
@@ -338,9 +311,9 @@ fn run_server<const N: usize>(
     let mut deadlines = BinaryHeap::<Reverse<(TimeoutInstant, SessionId)>>::new();
 
     loop {
-        while let Some(message) = handle.task_handle().try_recv_message() {
-            match message {
-                TimeoutServerMessage::Request(request) => {
+        while let Some(message) = handle.try_recv_message() {
+            match message.kind {
+                TimeoutServerMessageKind::Request(request) => {
                     if canceled.remove(&request.session_id) {
                         continue;
                     }
@@ -356,17 +329,17 @@ fn run_server<const N: usize>(
                         },
                     );
                 }
-                TimeoutServerMessage::Cancel(cancel) => {
+                TimeoutServerMessageKind::Cancel(cancel) => {
                     if active.remove(&cancel.session_id).is_none() {
                         canceled.insert(cancel.session_id);
                     }
                 }
-                TimeoutServerMessage::QueueSpaceWakeup => {}
-                TimeoutServerMessage::Stop => {
-                    handle.task_handle().close();
-                    return Ok(());
-                }
+                TimeoutServerMessageKind::QueueSpaceWakeup => {}
             }
+        }
+
+        if !handle.is_accepting() {
+            return Ok(());
         }
 
         let now = Time::now();
@@ -467,15 +440,15 @@ mod tests {
         let session_id = session(1);
 
         server
-            .request(request_with_sender(
+            .send_message(TimeoutServerMessage::request(request_with_sender(
                 session_id,
                 Duration::from_millis(5),
                 tx,
-            ))
+            )))
             .unwrap();
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
-        server.stop().unwrap();
+        server.close();
         assert_eq!(runtime.join().unwrap(), Ok(()));
     }
 
@@ -486,16 +459,18 @@ mod tests {
         let session_id = session(2);
 
         server
-            .request(request_with_sender(
+            .send_message(TimeoutServerMessage::request(request_with_sender(
                 session_id,
                 Duration::from_millis(100),
                 tx,
-            ))
+            )))
             .unwrap();
-        server.cancel(session_id).unwrap();
+        server
+            .send_message(TimeoutServerMessage::cancel(TimeoutCancel::new(session_id)))
+            .unwrap();
 
         assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
-        server.stop().unwrap();
+        server.close();
         assert_eq!(runtime.join().unwrap(), Ok(()));
     }
 
@@ -510,14 +485,18 @@ mod tests {
         let session_id = session(3);
 
         server
-            .request(request_with_sender(
+            .send_message(TimeoutServerMessage::request(request_with_sender(
                 session_id,
                 Duration::from_secs(10),
                 tx.clone(),
-            ))
+            )))
             .unwrap();
         server
-            .request(request_with_sender(session_id, Duration::from_secs(10), tx))
+            .send_message(TimeoutServerMessage::request(request_with_sender(
+                session_id,
+                Duration::from_secs(10),
+                tx,
+            )))
             .unwrap();
 
         assert_eq!(
@@ -529,9 +508,28 @@ mod tests {
     #[test]
     fn tos_req_011_cancel_message_is_priority() {
         assert_eq!(
-            TimeoutServerMessage::Cancel(TimeoutCancel::new(session(4))).placement(),
+            TimeoutServerMessage::cancel(TimeoutCancel::new(session(4))).placement(),
             MessagePlacement::Priority
         );
+    }
+
+    #[test]
+    fn tos_req_016_clients_send_protocol_messages_to_server() {
+        let (server, runtime) = spawn_timeout_server::<8>();
+        let (tx, rx) = mpsc::channel();
+        let session_id = session(8);
+
+        server
+            .send_message(TimeoutServerMessage::request(request_with_sender(
+                session_id,
+                Duration::from_millis(5),
+                tx,
+            )))
+            .unwrap();
+
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
+        server.close();
+        assert_eq!(runtime.join().unwrap(), Ok(()));
     }
 
     #[test]
@@ -548,7 +546,7 @@ mod tests {
         let session_id = session(5);
 
         server
-            .request(TimeoutRequest::new(
+            .send_message(TimeoutServerMessage::request(TimeoutRequest::new(
                 session_id,
                 Time::now() + Duration::from_millis(5),
                 move || {
@@ -558,12 +556,12 @@ mod tests {
                     }
                     tx.send(session_id).map_err(|_| SendError::TaskStopped)
                 },
-            ))
+            )))
             .unwrap();
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
         assert!(attempts.load(Ordering::SeqCst) >= 2);
-        server.stop().unwrap();
+        server.close();
         assert_eq!(runtime.join().unwrap(), Ok(()));
     }
 
@@ -578,9 +576,11 @@ mod tests {
         let session_id = session(6);
 
         server
-            .request(TimeoutRequest::new(session_id, Time::now(), || {
-                Err(SendError::QueueFull)
-            }))
+            .send_message(TimeoutServerMessage::request(TimeoutRequest::new(
+                session_id,
+                Time::now(),
+                || Err(SendError::QueueFull),
+            )))
             .unwrap();
 
         assert_eq!(
@@ -602,15 +602,19 @@ mod tests {
         let payload = SenderSpecificPayload { value: 42 };
 
         server
-            .request(TimeoutRequest::new(session(7), Time::now(), move || {
-                *observed_for_delivery.lock().unwrap() = Some(payload.value);
-                Ok(())
-            }))
+            .send_message(TimeoutServerMessage::request(TimeoutRequest::new(
+                session(7),
+                Time::now(),
+                move || {
+                    *observed_for_delivery.lock().unwrap() = Some(payload.value);
+                    Ok(())
+                },
+            )))
             .unwrap();
 
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(*observed.lock().unwrap(), Some(42));
-        server.stop().unwrap();
+        server.close();
         assert_eq!(runtime.join().unwrap(), Ok(()));
     }
 }

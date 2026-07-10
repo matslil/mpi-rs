@@ -28,6 +28,8 @@ declared delivery target.
 - providing a crate-owned monotonic time type and `Time::now()` function;
 - accepting timeout requests keyed by `SessionId`;
 - accepting best-effort timeout cancel messages keyed by `SessionId`;
+- exposing timeout request and timeout cancel as a user-facing protocol message
+  interface;
 - detecting illegal duplicate active timeout requests for the same `SessionId`;
 - delivering expired timeout messages through `mpi` send behavior;
 - bounding expired-timeout delivery waits with a local timeout handled by the
@@ -245,6 +247,30 @@ Verification: inspection
 
 Status: proposed
 
+### TOS-REQ-016: Timeout server protocol messages
+
+The timeout server shall expose a user-facing protocol message interface whose
+application-visible messages are timeout request and timeout cancel.
+
+Source: human maintainer decision.
+
+Verification: test and inspection
+
+Status: proposed
+
+### TOS-REQ-017: Minimal public timeout-server surface
+
+The timeout-server public API shall expose only the time source, the timeout
+task message interface and supporting request/cancel/delivery types, and spawn
+operations that return an `mpi` task handle for sending timeout-server
+messages.
+
+Source: human maintainer decision.
+
+Verification: inspection
+
+Status: proposed
+
 ## Architecture
 
 | ID | Component | Responsibility |
@@ -254,6 +280,7 @@ Status: proposed
 | TOS-CMP-003 | Active timeout registry | Tracks active requests by `SessionId` and rejects duplicate active requests. |
 | TOS-CMP-004 | Timer backend | Waits until the next active deadline using local monotonic timer primitives. |
 | TOS-CMP-005 | Opaque delivery operation | Holds the already-typed message or send operation without exposing the application payload type to the timeout server. |
+| TOS-CMP-006 | Timeout server task message | Defines the timeout request and timeout cancel messages accepted by the timeout server task. |
 
 Architecture rules:
 
@@ -273,6 +300,10 @@ Architecture rules:
   timer primitives and does not depend on a nested timeout request.
 - TOS-ARCH-010: Platform-specific timer backend details are hidden behind the
   crate time and timer backend interfaces.
+- TOS-ARCH-011: User-facing timeout-server access is represented by protocol
+  messages rather than by exposing framework-only server control messages.
+- TOS-ARCH-012: Spawning the timeout server returns an `mpi` task handle whose
+  message type is the timeout server task declaration.
 
 ## Interface
 
@@ -309,6 +340,15 @@ TimeoutCancel {
 }
 ```
 
+Conceptual timeout server task declaration:
+
+```text
+TimeoutServerMessage {
+    request(TimeoutRequest),
+    cancel(TimeoutCancel),
+}
+```
+
 Interface rules:
 
 - TOS-INT-001: Timeout requesters shall use `Time::now()` or values derived
@@ -323,6 +363,15 @@ Interface rules:
 - TOS-INT-006: Receivers that cancel timeout sessions should declare timeout
   reply handling so unknown-session timeout messages are discarded when the
   expected cancellation race occurs.
+- TOS-INT-007: Timeout server clients shall send timeout requests and timeout
+  cancels as `TimeoutServerMessage` values through the spawned timeout server
+  task handle.
+- TOS-INT-008: Framework-only timeout-server wakeups and server lifecycle
+  controls shall not be constructible through the public timeout-server task
+  message interface.
+- TOS-INT-009: Timeout server spawn operations shall return an
+  `mpi::TaskHandle` for the timeout server message type rather than a separate
+  timeout-specific convenience handle.
 
 ## Verification
 
@@ -336,6 +385,10 @@ Verification should include:
 - tests or analysis showing timeout/cancel races are best-effort and safe;
 - tests showing duplicate active requests for a `SessionId` are rejected;
 - inspection showing timeout cancel receive placement is priority;
+- tests or inspection showing clients can send timeout request and timeout
+  cancel as timeout-server task messages;
+- inspection showing the public API exposes the task handle returned by spawn
+  rather than a timeout-specific convenience handle;
 - tests showing expired timeout delivery follows normal `mpi` suspension under
   queue backpressure;
 - inspection showing the timeout server's own expiry-send bound is handled by
@@ -423,4 +476,6 @@ Evidence type: test
 | TOS-REQ-012 | TOS-ARCH-005 | TOS-INT-006 | inspection | TOS-VAL-003 |
 | TOS-REQ-013, TOS-REQ-014 | TOS-ARCH-008, TOS-ARCH-009 | opaque delivery operation | test, inspection | TOS-VAL-004 |
 | TOS-REQ-015 | TOS-CMP-004, TOS-ARCH-010 | platform backend interface | inspection | TOS-VAL-001 |
+| TOS-REQ-016 | TOS-CMP-006, TOS-ARCH-011 | TOS-INT-007, TOS-INT-008 | test, inspection | TOS-VAL-001, TOS-VAL-002 |
+| TOS-REQ-017 | TOS-ARCH-012 | TOS-INT-009 | inspection | TOS-VAL-001, TOS-VAL-002 |
 
