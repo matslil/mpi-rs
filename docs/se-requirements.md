@@ -105,3 +105,11 @@ Requirement, architecture, interface, verification, and validation IDs shall not
 Verification: inspection
 
 Status: approved
+
+### REPO-REQ-022: Cross-crate message boundaries
+
+Interfaces between crates shall be message based unless the human maintainer explicitly approves and documents a non-message-based interface in the affected crate-local baselines.
+
+Verification: inspection
+
+Status: proposed
