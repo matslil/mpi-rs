@@ -91,6 +91,9 @@ original IDs used by tests, reports, and traceability.
   macro shall generate an empty no-argument start handler.
 - REQ-187: A service task may omit an explicit stop handler; when omitted, the
   macro shall generate an empty no-argument stop handler.
+- REQ-188: If a user-declared message handler or task symbol collides with a
+  generated task API symbol, the macro shall produce a compile error rather
+  than silently suppressing the generated symbol.
 
 ### MACRO-REQ-001: Task macro name
 
@@ -314,6 +317,16 @@ Verification: test and inspection
 
 Status: proposed
 
+### MACRO-REQ-035: Generated name collision diagnostics
+
+If a user-declared message handler or task symbol collides with a generated
+task API symbol, the macro shall produce a compile error that identifies the
+collision.
+
+Verification: compile-fail test
+
+Status: proposed
+
 ## Architecture
 
 Architecture rules:
@@ -346,6 +359,9 @@ Stable architecture ID anchors:
   as the shutdown synchronization point.
 - MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
   as empty no-argument handlers when the service task declaration omits them.
+- MACRO-ARCH-014: Generated task API names are reserved within the generated
+  handle surface. User-declared handlers or task symbols that would collide
+  with those names fail during macro expansion.
 
 ## Interface
 
@@ -457,6 +473,11 @@ Interface rules:
   service task declares custom stop behavior.
 - MACRO-INT-020: Omitted service start and stop handlers shall mean empty
   no-argument handlers, not missing message variants.
+- MACRO-INT-021: A non-message task method named `stop` shall be rejected when
+  the macro would otherwise synthesize the generated stop API.
+- MACRO-INT-022: A message handler name shall be rejected when it collides with
+  a built-in generated handle method or with another handler's generated
+  `_blocking` method.
 
 ## Validation Scenarios
 
@@ -475,6 +496,7 @@ IDs below are grouping aliases.
 | MACRO-VAL-007 | A transaction declaration generates child transaction APIs only for declared parent-child relationships. | proposed |
 | MACRO-VAL-008 | Transactional handler contexts cannot send generated non-transactional side-effecting messages. | proposed |
 | MACRO-VAL-009 | A service declaration generates a service instance whose protocol bindings cannot outlive the instance and whose final drop stops the task. | proposed |
+| MACRO-VAL-010 | A task declaration with user symbols that collide with generated handle methods fails with an explicit compile error. | proposed |
 
 ## Verification
 
@@ -483,6 +505,7 @@ Verification should include:
 - macro expansion inspection for generated message enums, contexts, handles, placement arms, spawn helpers, dispatch arms, calls, streams, and protocol conversion plumbing;
 - runtime integration tests through `mpi` task-macro tests;
 - compile-fail tests for missing receive declarations, wrong protocol receive identities, unsupported handler receiver forms, and invalid scoped-state usage;
+- compile-fail tests for generated handle method name collisions;
 - compile-fail tests for transactional sends whose message is not declared in the active transaction kind;
 - compile-fail tests for child transaction creation whose child kind is not declared under the active parent kind;
 - compile-fail tests for generated non-transactional side-effecting sends from transactional handler contexts;
@@ -499,3 +522,4 @@ Verification should include:
 | MACRO-REQ-010..MACRO-REQ-017 | MACRO-ARCH-006, MACRO-ARCH-007 | MACRO-INT-008..MACRO-INT-010 | MACRO-VAL-004 |
 | MACRO-REQ-020..MACRO-REQ-025 | MACRO-ARCH-008..MACRO-ARCH-010 | MACRO-INT-011..MACRO-INT-016 | MACRO-VAL-006..MACRO-VAL-008 |
 | MACRO-REQ-030..MACRO-REQ-034 | MACRO-ARCH-011..MACRO-ARCH-013 | MACRO-INT-017..MACRO-INT-020 | MACRO-VAL-009 |
+| MACRO-REQ-035 | MACRO-ARCH-014 | MACRO-INT-021..MACRO-INT-022 | MACRO-VAL-010 |

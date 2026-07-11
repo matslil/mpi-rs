@@ -195,6 +195,93 @@ fn main() {}
 }
 
 #[test]
+fn macro_req_035_user_stop_method_rejects_synthesized_stop_collision() {
+    assert_fails_contains(
+        "user_stop_collision",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(_ctx: &mut CounterContext) {}
+
+    fn stop(&self) {}
+}
+
+fn main() {}
+"#,
+        &["method `stop` conflicts with the generated stop API"],
+    );
+}
+
+#[test]
+fn macro_req_035_handler_name_rejects_builtin_handle_method_collision() {
+    assert_fails_contains(
+        "builtin_handle_method_collision",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(_ctx: &mut CounterContext) {}
+
+    #[event]
+    fn endpoint(_ctx: &mut CounterContext) {}
+
+    #[event(priority)]
+    fn stop(ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["message handler `endpoint` conflicts with a generated handle method"],
+    );
+}
+
+#[test]
+fn macro_req_035_handler_name_rejects_blocking_method_collision() {
+    assert_fails_contains(
+        "blocking_method_collision",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Counter;
+
+#[task(queue_size = 4)]
+impl Counter {
+    #[start]
+    fn start(_ctx: &mut CounterContext) {}
+
+    #[event]
+    fn add(_ctx: &mut CounterContext) {}
+
+    #[event]
+    fn add_blocking(_ctx: &mut CounterContext) {}
+
+    #[event(priority)]
+    fn stop(ctx: &mut CounterContext) {
+        ctx.stop();
+    }
+}
+
+fn main() {}
+"#,
+        &["conflicts with generated handle method `add_blocking`"],
+    );
+}
+
+#[test]
 fn req_070_nonprotocol_call_rejects_missing_receive_declaration() {
     assert_fails_contains(
         "nonprotocol_call_receive",
