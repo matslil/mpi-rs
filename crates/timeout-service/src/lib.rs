@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use mpi::{
     MessagePlacement, QueueSpaceWakeupMessage, SendError, SessionId, TaskHandle, TaskMessage,
-    TaskQueue,
+    TaskQueue, protocol,
 };
 
 /// Crate-owned monotonic time source.
@@ -138,6 +138,14 @@ impl TimeoutCancel {
     }
 }
 
+// Message protocol accepted by the timeout service task.
+protocol! {
+    pub protocol TimeoutServiceProtocolV1 {
+        event request(TimeoutRequest);
+        event cancel(TimeoutCancel);
+    }
+}
+
 /// Messages received by the timeout service task.
 enum TimeoutServiceMessage {
     /// Schedule a timeout.
@@ -256,18 +264,14 @@ impl<const N: usize> Clone for TimeoutServiceHandle<N> {
 }
 
 impl<const N: usize> TimeoutServiceHandle<N> {
-    fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServiceError> {
+    fn request(&self, request: TimeoutRequest) -> Result<(), SendError> {
         self.handle
             .send_message(TimeoutServiceMessage::Request(request))
-            .map_err(TimeoutServiceError::Send)
     }
 
-    fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServiceError> {
+    fn cancel(&self, cancel: TimeoutCancel) -> Result<(), SendError> {
         self.handle
-            .send_message(TimeoutServiceMessage::Cancel(TimeoutCancel::new(
-                session_id,
-            )))
-            .map_err(TimeoutServiceError::Send)
+            .send_message(TimeoutServiceMessage::Cancel(cancel))
     }
 
     fn stop(&self) -> Result<(), TimeoutServiceError> {
@@ -281,8 +285,47 @@ impl<const N: usize> TimeoutServiceHandle<N> {
     }
 }
 
-struct TimeoutServiceInner<const N: usize> {
+/// Timeout service message endpoint.
+pub struct TimeoutServiceEndpoint<const N: usize> {
     handle: TimeoutServiceHandle<N>,
+}
+
+impl<const N: usize> TimeoutServiceEndpoint<N> {
+    fn new(handle: TimeoutServiceHandle<N>) -> Self {
+        Self { handle }
+    }
+}
+
+impl<const N: usize> TimeoutServiceProtocolV1::request::Target for &TimeoutServiceEndpoint<N> {
+    fn request(
+        &self,
+        _ctx: &mut impl mpi::TaskScope,
+        request: TimeoutRequest,
+    ) -> Result<(), SendError> {
+        self.handle.request(request)
+    }
+
+    fn request_blocking(&self, request: TimeoutRequest) -> Result<(), SendError> {
+        self.handle.request(request)
+    }
+}
+
+impl<const N: usize> TimeoutServiceProtocolV1::cancel::Target for &TimeoutServiceEndpoint<N> {
+    fn cancel(
+        &self,
+        _ctx: &mut impl mpi::TaskScope,
+        cancel: TimeoutCancel,
+    ) -> Result<(), SendError> {
+        self.handle.cancel(cancel)
+    }
+
+    fn cancel_blocking(&self, cancel: TimeoutCancel) -> Result<(), SendError> {
+        self.handle.cancel(cancel)
+    }
+}
+
+struct TimeoutServiceInner<const N: usize> {
+    endpoint: TimeoutServiceEndpoint<N>,
     join: Mutex<Option<std::thread::JoinHandle<Result<(), TimeoutServiceError>>>>,
 }
 
@@ -296,7 +339,7 @@ impl<const N: usize> TimeoutServiceInner<N> {
         else {
             return Ok(());
         };
-        match self.handle.stop() {
+        match self.endpoint.handle.stop() {
             Ok(()) | Err(TimeoutServiceError::Send(SendError::TaskStopped)) => {}
             Err(error) => return Err(error),
         }
@@ -330,23 +373,10 @@ impl<const N: usize> Clone for TimeoutServiceInstance<N> {
 }
 
 impl<const N: usize> TimeoutServiceInstance<N> {
-    /// Schedule a timeout request.
-    pub fn request(&self, request: TimeoutRequest) -> Result<(), TimeoutServiceError> {
-        self.inner.handle.request(request)
-    }
-
-    /// Send a best-effort priority cancel for a timeout session.
-    pub fn cancel(&self, session_id: SessionId) -> Result<(), TimeoutServiceError> {
-        self.inner.handle.cancel(session_id)
-    }
-
-    /// Stop the timeout service and wait for clean termination.
-    ///
-    /// Shutdown failures are fatal and panic.
-    pub fn stop(&self) {
-        self.inner
-            .stop_and_join()
-            .unwrap_or_else(|error| panic!("timeout service failed to stop cleanly: {error}"));
+    /// Return the timeout protocol binding for this service instance.
+    #[must_use]
+    pub fn protocol(&self) -> TimeoutServiceProtocolV1::Binding<&TimeoutServiceEndpoint<N>> {
+        TimeoutServiceProtocolV1::bind(&self.inner.endpoint)
     }
 
     #[cfg(test)]
@@ -389,7 +419,7 @@ pub fn start_timeout_service_with_config<const N: usize>(
     let join = std::thread::spawn(move || run_service(worker_handle, config));
     TimeoutServiceInstance {
         inner: Arc::new(TimeoutServiceInner {
-            handle,
+            endpoint: TimeoutServiceEndpoint::new(handle),
             join: Mutex::new(Some(join)),
         }),
     }
@@ -533,7 +563,8 @@ mod tests {
         let session_id = session(1);
 
         service
-            .request(request_with_sender(
+            .protocol()
+            .request_blocking(request_with_sender(
                 session_id,
                 Duration::from_millis(5),
                 tx,
@@ -541,7 +572,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
-        service.stop();
     }
 
     #[test]
@@ -551,16 +581,19 @@ mod tests {
         let session_id = session(2);
 
         service
-            .request(request_with_sender(
+            .protocol()
+            .request_blocking(request_with_sender(
                 session_id,
                 Duration::from_millis(100),
                 tx,
             ))
             .unwrap();
-        service.cancel(session_id).unwrap();
+        service
+            .protocol()
+            .cancel_blocking(TimeoutCancel::new(session_id))
+            .unwrap();
 
         assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
-        service.stop();
     }
 
     #[test]
@@ -574,14 +607,16 @@ mod tests {
         let session_id = session(3);
 
         service
-            .request(request_with_sender(
+            .protocol()
+            .request_blocking(request_with_sender(
                 session_id,
                 Duration::from_secs(10),
                 tx.clone(),
             ))
             .unwrap();
         service
-            .request(request_with_sender(session_id, Duration::from_secs(10), tx))
+            .protocol()
+            .request_blocking(request_with_sender(session_id, Duration::from_secs(10), tx))
             .unwrap();
 
         assert_eq!(
@@ -612,7 +647,8 @@ mod tests {
         let session_id = session(5);
 
         service
-            .request(TimeoutRequest::new(
+            .protocol()
+            .request_blocking(TimeoutRequest::new(
                 session_id,
                 Time::now() + Duration::from_millis(5),
                 move || {
@@ -627,7 +663,6 @@ mod tests {
 
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
         assert!(attempts.load(Ordering::SeqCst) >= 2);
-        service.stop();
     }
 
     #[test]
@@ -641,7 +676,8 @@ mod tests {
         let session_id = session(6);
 
         service
-            .request(TimeoutRequest::new(session_id, Time::now(), || {
+            .protocol()
+            .request_blocking(TimeoutRequest::new(session_id, Time::now(), || {
                 Err(SendError::QueueFull)
             }))
             .unwrap();
@@ -665,7 +701,8 @@ mod tests {
         let payload = SenderSpecificPayload { value: 42 };
 
         service
-            .request(TimeoutRequest::new(session(7), Time::now(), move || {
+            .protocol()
+            .request_blocking(TimeoutRequest::new(session(7), Time::now(), move || {
                 *observed_for_delivery.lock().unwrap() = Some(payload.value);
                 Ok(())
             }))
@@ -673,7 +710,6 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(*observed.lock().unwrap(), Some(42));
-        service.stop();
     }
 
     #[test]
@@ -685,7 +721,8 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let session_id = session(8);
         clone
-            .request(request_with_sender(
+            .protocol()
+            .request_blocking(request_with_sender(
                 session_id,
                 Duration::from_millis(5),
                 tx,
