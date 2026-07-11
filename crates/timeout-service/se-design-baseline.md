@@ -341,6 +341,23 @@ TimeoutCancel {
 }
 ```
 
+Conceptual service interface:
+
+```rust
+mpi::protocol! {
+    pub protocol TimeoutServiceProtocolV1 {
+        event request(TimeoutRequest);
+        event cancel(TimeoutCancel);
+    }
+}
+
+pub fn start_timeout_service<const N: usize>() -> TimeoutServiceInstance<N>;
+
+impl<const N: usize> TimeoutServiceInstance<N> {
+    pub fn protocol(&self) -> TimeoutServiceProtocolV1::Binding<&TimeoutServiceEndpoint<N>>;
+}
+```
+
 Interface rules:
 
 - TOS-INT-001: Timeout requesters shall use `Time::now()` or values derived
