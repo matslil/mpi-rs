@@ -320,6 +320,7 @@ enum HandlerKind {
         late_reply_policy: TokenStream2,
         protocol: Option<Path>,
     },
+    Stop,
     LateReply,
 }
 
@@ -342,6 +343,8 @@ fn special_attr_name(attr: &Attribute) -> Option<&'static str> {
         Some("call")
     } else if attr.path().is_ident("stream") {
         Some("stream")
+    } else if attr.path().is_ident("stop") {
+        Some("stop")
     } else if attr.path().is_ident("late_reply") {
         Some("late_reply")
     } else {
@@ -405,6 +408,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                     protocol: args.protocol,
                 }
             }
+            "stop" => HandlerKind::Stop,
             "late_reply" => HandlerKind::LateReply,
             _ => unreachable!(),
         });
@@ -458,6 +462,10 @@ fn resolve_handler_kind(method: &ImplItemFn, kind: HandlerKind) -> syn::Result<H
                 protocol,
             })
         }
+        HandlerKind::Stop if method.sig.ident != "stop" => Err(syn::Error::new_spanned(
+            &method.sig.ident,
+            "#[stop] handler must be named `stop`",
+        )),
         other => Ok(other),
     }
 }
@@ -869,10 +877,14 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut handlers = Vec::new();
     let mut stripped_items = Vec::new();
+    let mut has_stop_method = false;
 
     for item in item_impl.items.into_iter() {
         match item {
             ImplItem::Fn(mut method) => {
+                if method.sig.ident == "stop" {
+                    has_stop_method = true;
+                }
                 let kind = match handler_kind(&method.attrs) {
                     Ok(kind) => kind,
                     Err(error) => return compile_error(error),
@@ -892,6 +904,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
                             "late reply callback must take exactly one late reply argument after the context",
+                        ));
+                    }
+                    if matches!(kind, HandlerKind::Stop) && !args.is_empty() {
+                        return compile_error(syn::Error::new_spanned(
+                            &method.sig,
+                            "stop handler must not take message payload arguments",
                         ));
                     }
                     normalize_handler_method(&mut method, &kind);
@@ -926,6 +944,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         return compile_error(syn::Error::new_spanned(
             &task_ident,
             "#[task] supports at most one #[late_reply] callback",
+        ));
+    }
+    let stop_count = handlers
+        .iter()
+        .filter(|handler| matches!(handler.kind, HandlerKind::Stop))
+        .count();
+    if stop_count > 1 {
+        return compile_error(syn::Error::new_spanned(
+            &task_ident,
+            "#[task] supports at most one #[stop] handler",
         ));
     }
 
@@ -1432,8 +1460,125 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     });
                 }
             }
+            HandlerKind::Stop => {
+                let blocking_method = format_ident!("{}_blocking", method_ident);
+                variants.push(quote! {
+                    #variant_ident {
+                        session_id: ::mpi::SessionId,
+                        reply: ::mpi::SyncReplySender<()>
+                    }
+                });
+                placements.push(quote! {
+                    Self::#variant_ident { .. } => ::mpi::MessagePlacement::Priority
+                });
+                dispatch_arms.push(quote! {
+                    #message_ident::#variant_ident { session_id, reply } => {
+                        if !ctx.inner.take_call_released(session_id) {
+                            let __ctx_inner = ctx.inner.clone();
+                            ::mpi::block_on_handler(
+                                #handler_call,
+                                inner_handle.task_endpoint(),
+                                &__ctx_inner,
+                                &mut *deferred,
+                            );
+                            ctx.stop();
+                            let _ = reply.send_from(
+                                inner_handle.queue_space_wakeup_target(),
+                                ::mpi::Response::new(session_id, ()),
+                            );
+                        }
+                    }
+                });
+                handle_methods.push(quote! {
+                    pub fn #method_ident<C>(&self, ctx: &mut C) -> ::mpi::SuspendedCall<()>
+                    where
+                        C: ::mpi::TaskScope,
+                        C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
+                    {
+                        let (session_id, reply, future) = ctx.begin_call::<()>();
+                        match self.inner.send_message(#message_ident::#variant_ident {
+                            session_id,
+                            reply,
+                        }) {
+                            Ok(()) => {
+                                let __call_lifecycle = self.inner.clone();
+                                future.with_additional_on_drop(move |session_id| {
+                                    let _ = __call_lifecycle.send_message(
+                                        #message_ident::__CallRelease { session_id }
+                                    );
+                                })
+                            }
+                            Err(error) => ::mpi::SuspendedCall::failed(error.into()),
+                        }
+                    }
+
+                    pub fn #blocking_method(&self) -> Result<(), ::mpi::CallError> {
+                        self.inner
+                            .call_blocking(|session_id, reply| #message_ident::#variant_ident {
+                                session_id,
+                                reply,
+                            })
+                            .map(|response| response.value)
+                    }
+                });
+            }
             HandlerKind::LateReply => {}
         }
+    }
+
+    if stop_count == 0 && !has_stop_method {
+        variants.push(quote! {
+            Stop {
+                session_id: ::mpi::SessionId,
+                reply: ::mpi::SyncReplySender<()>
+            }
+        });
+        placements.push(quote! {
+            Self::Stop { .. } => ::mpi::MessagePlacement::Priority
+        });
+        dispatch_arms.push(quote! {
+            #message_ident::Stop { session_id, reply } => {
+                if !ctx.inner.take_call_released(session_id) {
+                    ctx.stop();
+                    let _ = reply.send_from(
+                        inner_handle.queue_space_wakeup_target(),
+                        ::mpi::Response::new(session_id, ()),
+                    );
+                }
+            }
+        });
+        handle_methods.push(quote! {
+            pub fn stop<C>(&self, ctx: &mut C) -> ::mpi::SuspendedCall<()>
+            where
+                C: ::mpi::TaskScope,
+                C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
+            {
+                let (session_id, reply, future) = ctx.begin_call::<()>();
+                match self.inner.send_message(#message_ident::Stop {
+                    session_id,
+                    reply,
+                }) {
+                    Ok(()) => {
+                        let __call_lifecycle = self.inner.clone();
+                        future.with_additional_on_drop(move |session_id| {
+                            let _ = __call_lifecycle.send_message(
+                                #message_ident::__CallRelease { session_id }
+                            );
+                        })
+                    }
+                    Err(error) => ::mpi::SuspendedCall::failed(error.into()),
+                }
+            }
+
+            pub fn stop_blocking(&self) -> Result<(), ::mpi::CallError> {
+                self.inner
+                    .call_blocking(|session_id, reply| #message_ident::Stop {
+                        session_id,
+                        reply,
+                    })
+                    .map(|response| response.value)
+            }
+        });
     }
 
     if start_count == 0 {
@@ -1807,6 +1952,12 @@ pub fn call(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marks a streaming call handler.
 #[proc_macro_attribute]
 pub fn stream(attr: TokenStream, item: TokenStream) -> TokenStream {
+    passthrough(attr, item)
+}
+
+/// Marks the no-argument service stop call handler.
+#[proc_macro_attribute]
+pub fn stop(attr: TokenStream, item: TokenStream) -> TokenStream {
     passthrough(attr, item)
 }
 

@@ -5,6 +5,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+enable-mpi-transaction = [
+    "dep:mpi-transaction",
+    "mpi-core/enable-mpi-transaction",
+]
+enable-persistent-log-storage-service = ["dep:persistent-log-storage-service"]
+enable-timeout-service = ["dep:timeout-service"]
+
 [dependencies]
-ctx-future = { path = "../ctx-future" }
-mpi-macros = { path = "../mpi-macros" }
+mpi-core = { path = "../mpi-core" }
+mpi-transaction = { path = "../mpi-transaction", optional = true }
+persistent-log-storage-service = { path = "../persistent-log-storage-service", optional = true }
+timeout-service = { path = "../timeout-service", optional = true }

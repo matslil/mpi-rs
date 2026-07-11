@@ -2,7 +2,7 @@
 
 This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
-Scope: `crates/mpi`.
+Scope: `crates/mpi-core`.
 
 It records the human-approved design decision that generated send APIs are split by caller scope:
 

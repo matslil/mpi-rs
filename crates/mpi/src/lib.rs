@@ -1,40 +1,15 @@
-pub mod call;
-pub mod error;
-pub mod message;
-pub mod queue;
-pub mod runtime;
-pub mod scope;
-pub mod session;
-pub mod stream;
-pub mod task;
-pub mod transaction;
+//! Facade crate for the `mpi-rs` workspace.
+//!
+//! Core runtime APIs are re-exported from `mpi-core`. Optional repository
+//! crates are exposed behind `enable-<crate-name>` Cargo features.
 
-pub use call::{
-    CallReleaseMessage, CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
-    SuspendedCall, suspended_call_channel, suspended_call_waiter,
-};
-pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, StdFutureCtx, from_std_future, resume_fn};
-pub use error::{CallError, RecvError, SendError};
-pub use message::{
-    CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
-    MessagePlacement, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage, TaskMessage,
-};
-pub use mpi_macros::{call, event, late_reply, protocol, start, stream, task};
-pub use queue::{QueueSpaceWakeupTarget, TaskQueue, TaskQueueSnapshot};
-pub use runtime::{
-    block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_handler, block_on_task,
-};
-pub use scope::TaskScope;
-pub use session::{
-    EndpointId, Response, SessionId, SessionIdAllocator, SyncReplyReceiver, SyncReplySender,
-    sync_reply_channel,
-};
-pub use stream::*;
-pub use task::{
-    StreamCreditSnapshot, TaskContext, TaskDiagnosticsSnapshot, TaskEndpoint, TaskHandle,
-    TaskJoinError, TaskRuntime, spawn_task,
-};
-pub use transaction::{
-    HasTransactionPath, TransactionDecision, TransactionId, TransactionIdAllocator,
-    TransactionPath, TransactionalMessage,
-};
+pub use mpi_core::*;
+
+#[cfg(feature = "enable-mpi-transaction")]
+pub use mpi_transaction;
+
+#[cfg(feature = "enable-persistent-log-storage-service")]
+pub use persistent_log_storage_service;
+
+#[cfg(feature = "enable-timeout-service")]
+pub use timeout_service;
