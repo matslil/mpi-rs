@@ -6,7 +6,7 @@ This document defines the lightweight systems-engineering baseline for the
 The `timeout-service` crate provides an `mpi`-based local timeout service. It is
 specified as a separate crate so timeout behavior, platform timer assumptions,
 and timeout request/cancel protocol rules can evolve without being folded into
-the core `mpi` crate.
+the `mpi-core` crate.
 
 ## Purpose
 
@@ -265,7 +265,7 @@ Status: proposed
 
 ### TOS-REQ-017: Feature-gated service inclusion
 
-The workspace feature `enable-timeout-service` shall enable the timeout service
+The `mpi` facade feature `enable-timeout-service` shall enable the timeout service
 and any supporting `mpi` or `mpi-macros` integration required by that service.
 
 Source: repository optional crate feature naming convention.
@@ -359,7 +359,7 @@ Interface rules:
   service instance.
 - TOS-INT-008: The timeout service instance shall expose the timeout protocol
   binding without allowing that binding to outlive the service instance.
-- TOS-INT-009: The service shall be enabled by the workspace feature
+- TOS-INT-009: The service shall be enabled by the `mpi` facade feature
   `enable-timeout-service`.
 
 ## Verification
@@ -380,7 +380,7 @@ Verification should include:
   local timer primitives, not a nested request to itself;
 - inspection that the timeout service start API returns a service instance and
   exposes no detached protocol binding;
-- inspection that the workspace feature name is `enable-timeout-service`;
+- inspection that the `mpi` facade feature name is `enable-timeout-service`;
 - platform inspection for Linux, Windows, macOS, iOS, and Android timer support.
 
 ## Validation

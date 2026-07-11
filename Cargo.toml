@@ -2,6 +2,7 @@
 members = [
     "crates/ctx-future",
     "crates/mpi",
+    "crates/mpi-core",
     "crates/mpi-macros",
     "crates/mpi-os-events",
     "crates/mpi-transaction",

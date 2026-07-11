@@ -44,6 +44,11 @@ struct NoStartTask {
     value: u32,
 }
 
+#[derive(Default)]
+struct NoStopTask {
+    value: u32,
+}
+
 #[task(queue_size = 4)]
 impl NoStartTask {
     #[event]
@@ -61,6 +66,21 @@ impl NoStartTask {
     #[event(priority)]
     fn stop(ctx: &mut NoStartTaskContext) {
         ctx.stop();
+    }
+}
+
+#[task(queue_size = 4)]
+impl NoStopTask {
+    #[start]
+    fn start(ctx: &mut NoStopTaskContext, value: u32) {
+        ctx.with_state(|state| {
+            state.value = value;
+        });
+    }
+
+    #[call]
+    fn get(ctx: &mut NoStopTaskContext) -> u32 {
+        ctx.with_state(|state| state.value)
     }
 }
 
@@ -103,6 +123,15 @@ fn macro_req_033_task_without_start_uses_empty_start_handler() {
 
     task.set_blocking(7).unwrap();
     assert_eq!(task.get_blocking().unwrap(), 7);
+    task.stop_blocking().unwrap();
+    runtime.join().unwrap();
+}
+
+#[test]
+fn macro_req_034_task_without_stop_uses_empty_stop_handler() {
+    let (task, runtime) = NoStopTask::spawn(NoStopTask::default(), 11).unwrap();
+
+    assert_eq!(task.get_blocking().unwrap(), 11);
     task.stop_blocking().unwrap();
     runtime.join().unwrap();
 }

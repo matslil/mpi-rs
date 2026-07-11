@@ -2,7 +2,7 @@
 
 This document is part of the authoritative systems-engineering baseline named `se-*.md`.
 
-Scope: `crates/mpi`.
+Scope: `crates/mpi-core`.
 
 It records a human-approved design restriction for task instance topology: tasks that participate in the `mpi-rs` task system must be known at compile time. This restriction is intended to make generated task routing, task-local suspension, waiter matching, and compile-time receive checks simpler and more Rust-like.
 

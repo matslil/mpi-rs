@@ -6,4 +6,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mpi = { path = "../mpi" }
+mpi = { package = "mpi-core", path = "../mpi-core" }
