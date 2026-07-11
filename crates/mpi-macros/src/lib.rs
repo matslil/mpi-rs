@@ -1,5 +1,7 @@
 //! Procedural macros for `mpi` task and protocol declarations.
 
+use std::collections::{HashMap, HashSet};
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
@@ -470,6 +472,57 @@ fn resolve_handler_kind(method: &ImplItemFn, kind: HandlerKind) -> syn::Result<H
     }
 }
 
+fn generated_handle_method_names(handlers: &[Handler], synthesize_stop: bool) -> syn::Result<()> {
+    let reserved = HashSet::from(["endpoint".to_owned(), "close".to_owned()]);
+    let mut generated = HashMap::<String, Ident>::new();
+
+    for handler in handlers {
+        if matches!(handler.kind, HandlerKind::Start | HandlerKind::LateReply) {
+            continue;
+        }
+
+        let method_ident = &handler.method.sig.ident;
+        let method_name = method_ident.to_string();
+        if reserved.contains(&method_name) {
+            return Err(syn::Error::new_spanned(
+                method_ident,
+                format!("message handler `{method_name}` conflicts with a generated handle method"),
+            ));
+        }
+
+        let mut names = vec![method_name];
+        if !matches!(handler.kind, HandlerKind::LateReply) {
+            names.push(format!("{}_blocking", method_ident));
+        }
+
+        for name in names {
+            if let Some(previous) = generated.insert(name.clone(), method_ident.clone()) {
+                return Err(syn::Error::new_spanned(
+                    method_ident,
+                    format!(
+                        "message handler `{method_ident}` conflicts with generated handle method `{name}` from `{previous}`",
+                    ),
+                ));
+            }
+        }
+    }
+
+    if synthesize_stop {
+        for name in ["stop", "stop_blocking"] {
+            if let Some(previous) = generated.get(name) {
+                return Err(syn::Error::new_spanned(
+                    previous,
+                    format!(
+                        "message handler `{previous}` conflicts with synthesized generated stop method `{name}`",
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn payload_args(method: &ImplItemFn, skip_stream_sink: bool) -> syn::Result<Vec<HandlerArg>> {
     let mut inputs = method.sig.inputs.iter();
 
@@ -877,14 +930,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut handlers = Vec::new();
     let mut stripped_items = Vec::new();
-    let mut has_stop_method = false;
+    let mut has_handler_stop_method = false;
+    let mut has_non_handler_stop_method = false;
 
     for item in item_impl.items.into_iter() {
         match item {
             ImplItem::Fn(mut method) => {
-                if method.sig.ident == "stop" {
-                    has_stop_method = true;
-                }
                 let kind = match handler_kind(&method.attrs) {
                     Ok(kind) => kind,
                     Err(error) => return compile_error(error),
@@ -913,12 +964,18 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         ));
                     }
                     normalize_handler_method(&mut method, &kind);
+                    if method.sig.ident == "stop" {
+                        has_handler_stop_method = true;
+                    }
                     handlers.push(Handler {
                         kind,
                         method,
                         args,
                     });
                 } else {
+                    if method.sig.ident == "stop" {
+                        has_non_handler_stop_method = true;
+                    }
                     stripped_items.push(ImplItem::Fn(method));
                 }
             }
@@ -955,6 +1012,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             &task_ident,
             "#[task] supports at most one #[stop] handler",
         ));
+    }
+    let synthesize_stop = stop_count == 0 && !has_handler_stop_method && !has_non_handler_stop_method;
+    if stop_count == 0 && has_non_handler_stop_method {
+        return compile_error(syn::Error::new_spanned(
+            &task_ident,
+            "method `stop` conflicts with the generated stop API; mark it with `#[stop]`, declare it as a message handler, or rename it",
+        ));
+    }
+    if let Err(error) = generated_handle_method_names(&handlers, synthesize_stop) {
+        return compile_error(error);
     }
 
     let mut original_items = stripped_items;
@@ -1526,7 +1593,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    if stop_count == 0 && !has_stop_method {
+    if synthesize_stop {
         variants.push(quote! {
             Stop {
                 session_id: ::mpi::SessionId,
