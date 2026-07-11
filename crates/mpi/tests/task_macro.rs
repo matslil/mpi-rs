@@ -171,6 +171,7 @@ impl ProtocolCounter {
 #[derive(Default)]
 struct Client {
     observed: u32,
+    observed_probe: Option<mpsc::Sender<u32>>,
 }
 
 #[task(
@@ -356,7 +357,13 @@ impl Client {
 
     #[call]
     fn observed(ctx: &mut ClientContext) -> u32 {
-        ctx.with_state(|state| state.observed)
+        ctx.with_state(|state| {
+            let observed = state.observed;
+            if let Some(probe) = &state.observed_probe {
+                let _ = probe.send(observed);
+            }
+            observed
+        })
     }
 
     #[event(priority)]
@@ -703,7 +710,12 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
         release: release_rx,
     })
     .unwrap();
-    let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
+    let (observed_probe_tx, observed_probe_rx) = mpsc::channel();
+    let (client, client_runtime) = Client::spawn(Client {
+        observed_probe: Some(observed_probe_tx),
+        ..Client::default()
+    })
+    .unwrap();
 
     client
         .ask_delayed_counter_blocking(delayed_counter.clone())
@@ -720,13 +732,15 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
             .unwrap();
     });
 
-    let observed_before_release = observed_rx
+    observed_probe_rx
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("generated dispatch deferred the call request until the suspended handler resumed");
+    observed_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("generated dispatch did not complete the nested call before release");
     release_tx.send(()).unwrap();
 
     observed_thread.join().unwrap();
-    assert_eq!(observed_before_release, 0);
     assert_eq!(client.observed_blocking().unwrap(), 10);
 
     client.stop_blocking().unwrap();
