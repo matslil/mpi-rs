@@ -31,8 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let index = service.store_serialized_blocking(&payload)??;
     service.commit_blocking(index)??;
 
-    let recovered = service.read_serialized_blocking::<DecisionPayload>(None)??;
-    assert_eq!(recovered, vec![(0, payload)]);
+    let entries = service.read_serialized_blocking::<DecisionPayload>(None)??;
+    assert_eq!(entries.len(), 1);
+    let (index, recovered) = entries.into_iter().next().expect("one recovered entry");
+    assert_eq!(index, 0);
+    assert_eq!(recovered, payload);
 
     let _ = std::fs::remove_file(path);
     println!("typed recovery succeeded");
