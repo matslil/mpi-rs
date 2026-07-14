@@ -10,14 +10,14 @@ the `mpi-core` crate.
 
 ## Purpose
 
-`timeout-service` lets tasks suspend a typed call until a session-associated
-deadline expires.
+`timeout-service` lets tasks schedule session-associated timeout messages for
+future delivery.
 
-The timeout service receives call requests with an absolute monotonic deadline.
-The `mpi` call machinery supplies a mandatory `SessionId` that correlates each
-request with its reply. If the deadline expires before a matching cancel is
-processed, the timeout service replies with `()`, so neither the request nor the
-reply carries an application-specific timeout payload.
+The timeout service receives timeout requests that contain a `SessionId`, a
+sender or delivery target, an absolute monotonic deadline, and an opaque timeout
+message. If the deadline expires before a matching cancel is processed, the
+timeout service sends the stored timeout message to the original sender or
+declared delivery target.
 
 ## Scope
 
@@ -29,7 +29,9 @@ reply carries an application-specific timeout payload.
 - accepting timeout requests keyed by `SessionId`;
 - accepting best-effort timeout cancel messages keyed by `SessionId`;
 - detecting illegal duplicate active timeout requests for the same `SessionId`;
-- replying to expired timeout calls with `()` through `mpi` call behavior;
+- delivering expired timeout messages through `mpi` send behavior;
+- bounding expired-timeout delivery waits with a local timeout handled by the
+  timeout service itself;
 - returning a service instance whose lifetime owns the timeout task and its
   protocol binding;
 - documenting platform timer expectations for Linux, Windows, macOS, iOS, and
@@ -38,6 +40,8 @@ reply carries an application-specific timeout payload.
 `timeout-service` is not responsible for:
 
 - defining application-specific timeout payload types;
+- inspecting, deserializing, or pattern matching timeout payload data;
+- deciding how the original receiver handles an unknown-session timeout message;
 - replacing `mpi` task queues, `SessionId`, message placement, or cancellation
   semantics;
 - implementing distributed clock synchronization.
@@ -59,11 +63,11 @@ monotonic time source and deadline type.
 Runtime users need timeout cancellation races to be safe when a timeout expires
 while a matching cancel message is in transit.
 
-### TOS-SN-004: Payload-free timeout replies
+### TOS-SN-004: Opaque typed payloads
 
-Rust developers need timeout expiry to be represented by completion of the
-original typed call, without echoing an application payload through the timeout
-service.
+Rust developers need application timeout payloads to remain typed at the
+sender/receiver boundary without requiring the timeout service to know the
+payload type.
 
 ### TOS-SN-005: Portable local timers
 
@@ -133,10 +137,11 @@ Verification: test
 
 Status: proposed
 
-### TOS-REQ-006: Payload-free timeout reply
+### TOS-REQ-006: Opaque timeout message
 
-The timeout service call shall reply with `()` on expiry and shall not accept,
-store, or return an application-specific timeout payload.
+The timeout service shall store the message to deliver on expiry as an opaque
+sendable `mpi` message and shall not require knowledge of the sender-specific
+payload type.
 
 Source: TOS-SN-004.
 
@@ -147,8 +152,8 @@ Status: proposed
 ### TOS-REQ-007: Expiry delivery
 
 When an active timeout request reaches its deadline before a matching cancel is
-processed, the timeout service shall complete the original call with a `()`
-reply carrying the same `SessionId` as the request.
+processed, the timeout service shall send the stored timeout message to the
+request's sender or declared delivery target.
 
 Source: TOS-SN-001.
 
@@ -201,7 +206,7 @@ Verification: inspection
 
 Status: proposed
 
-### TOS-REQ-012: Unknown timeout receiver guidance (obsolete)
+### TOS-REQ-012: Unknown timeout receiver guidance
 
 The timeout service design shall document that receivers should discard
 unknown-session timeout messages when cancellation races are expected.
@@ -210,12 +215,12 @@ Source: TOS-SN-003.
 
 Verification: inspection
 
-Status: obsolete
+Status: proposed
 
 ### TOS-REQ-013: Expiry send backpressure
 
-The timeout service shall use normal `mpi` call-reply behavior when an expired
-timeout reply cannot immediately be enqueued to its requester.
+The timeout service shall use normal `mpi` suspension behavior when an expired
+timeout message cannot immediately be enqueued to its delivery target.
 
 Source: human maintainer decision.
 
@@ -223,7 +228,7 @@ Verification: test
 
 Status: proposed
 
-### TOS-REQ-014: Locally bounded expiry send wait (obsolete)
+### TOS-REQ-014: Locally bounded expiry send wait
 
 The timeout service shall bound its own wait while delivering an expired timeout
 message with a timeout handled by local timer primitives rather than by
@@ -233,7 +238,7 @@ Source: human maintainer decision.
 
 Verification: test and inspection
 
-Status: obsolete
+Status: proposed
 
 ### TOS-REQ-015: Supported platform timer basis
 
@@ -273,11 +278,11 @@ Status: proposed
 
 | ID | Component | Responsibility |
 |---|---|---|
-| TOS-CMP-001 | Timeout service task | Receives timeout calls and cancels, stores active requests, and completes expired calls. |
+| TOS-CMP-001 | Timeout service task | Receives timeout requests and cancels, stores active requests, and delivers expired timeout messages. |
 | TOS-CMP-002 | Time API | Provides `Time::now()` and the crate-owned monotonic deadline type. |
 | TOS-CMP-003 | Active timeout registry | Tracks active requests by `SessionId` and rejects duplicate active requests. |
 | TOS-CMP-004 | Timer backend | Waits until the next active deadline using local monotonic timer primitives. |
-| TOS-CMP-005 | Call reply | Holds the payload-free reply sender associated with the request `SessionId`. |
+| TOS-CMP-005 | Opaque delivery operation | Holds the already-typed message or send operation without exposing the application payload type to the timeout service. |
 | TOS-CMP-006 | Timeout service instance | Owns the timeout task lifetime and exposes the timeout protocol binding. |
 
 Architecture rules:
@@ -291,12 +296,11 @@ Architecture rules:
 - TOS-ARCH-005: Timeout cancellation is race-tolerant and best-effort.
 - TOS-ARCH-006: Timeout cancel messages are priority messages in the timeout
   service receive declaration.
-- TOS-ARCH-007: Timeout requests contain only the absolute deadline payload;
-  timeout replies contain `()`.
-- TOS-ARCH-008: Expired timeout delivery uses `mpi` call-reply semantics and
-  the request `SessionId` for correlation.
-- TOS-ARCH-009: Obsolete; payload-free call replies replace the former opaque
-  delivery-operation retry loop.
+- TOS-ARCH-007: Application payload data remains opaque to the timeout service.
+- TOS-ARCH-008: Expired timeout delivery uses `mpi` send semantics and may
+  suspend under normal queue backpressure.
+- TOS-ARCH-009: The timeout service's own bound on expiry send wait uses local
+  timer primitives and does not depend on a nested timeout request.
 - TOS-ARCH-010: Platform-specific timer backend details are hidden behind the
   crate time and timer backend interfaces.
 - TOS-ARCH-011: The timeout service is exposed through a service instance whose
@@ -322,7 +326,10 @@ Conceptual timeout request fields:
 
 ```text
 TimeoutRequest {
+    session_id: SessionId,
     deadline: TimeoutInstant,
+    delivery_target,
+    opaque_timeout_message,
 }
 ```
 
@@ -339,7 +346,7 @@ Conceptual service interface:
 ```rust
 mpi::protocol! {
     pub protocol TimeoutServiceProtocolV1 {
-        call request(TimeoutRequest) -> ();
+        event request(TimeoutRequest);
         event cancel(TimeoutCancel);
     }
 }
@@ -356,15 +363,15 @@ Interface rules:
 - TOS-INT-001: Timeout requesters shall use `Time::now()` or values derived
   from the same crate-owned monotonic time type when constructing deadlines.
 - TOS-INT-002: Timeout request deadlines shall use `TimeoutInstant`.
-- TOS-INT-003: The `mpi` call machinery shall add a mandatory `SessionId` to
-  timeout requests, and timeout cancels shall carry that `SessionId`.
-- TOS-INT-004: The timeout request payload shall contain only the absolute
-  deadline, and the timeout reply payload shall be `()`.
+- TOS-INT-003: Timeout requests and timeout cancels shall carry `SessionId`.
+- TOS-INT-004: Timeout requests shall provide an opaque delivery operation or
+  already-typed message that the timeout service can send without knowing the
+  application payload type.
 - TOS-INT-005: Timeout cancel messages shall be declared as priority messages by
   the timeout service.
-- TOS-INT-006: Dropping an active suspended timeout call shall submit a
-  best-effort cancel keyed by its `SessionId`; late replies use the caller's
-  declared `mpi` late-reply policy.
+- TOS-INT-006: Receivers that cancel timeout sessions should declare timeout
+  reply handling so unknown-session timeout messages are discarded when the
+  expected cancellation race occurs.
 - TOS-INT-007: The timeout service start function shall return a timeout
   service instance.
 - TOS-INT-008: The timeout service instance shall expose the timeout protocol
@@ -379,12 +386,15 @@ Verification should include:
 - inspection that the crate is separate and depends on `mpi`;
 - tests or inspection showing `Time::now()` and timeout request deadlines use
   the same monotonic time type;
-- tests showing timeout expiry completes the original call with `()`;
+- tests showing timeout expiry sends the stored opaque message;
 - tests showing timeout cancel removes a pending request;
 - tests or analysis showing timeout/cancel races are best-effort and safe;
 - tests showing duplicate active requests for a `SessionId` are rejected;
 - inspection showing timeout cancel receive placement is priority;
-- inspection showing request/reply correlation uses the call `SessionId`;
+- tests showing expired timeout delivery follows normal `mpi` suspension under
+  queue backpressure;
+- inspection showing the timeout service's own expiry-send bound is handled by
+  local timer primitives, not a nested request to itself;
 - inspection that the timeout service start API returns a service instance and
   exposes no detached protocol binding;
 - inspection that the `mpi` facade feature name is `enable-timeout-service`;
@@ -396,16 +406,16 @@ Verification should include:
 
 Status: proposed
 
-A task makes a timeout call with an absolute monotonic deadline. The `mpi` call
-machinery supplies the request `SessionId`; the timeout service stores the
-request and later replies with `()` when the deadline expires.
+A task schedules a timeout request with a `SessionId`, absolute monotonic
+deadline, delivery target, and typed timeout message. The timeout service stores
+the request and later sends the timeout message when the deadline expires.
 
 Expected outcome:
 
 - the sender and timeout service use the same time type;
-- the timeout service receives no application payload;
-- the original suspended call completes with a payload-free reply correlated by
-  its `SessionId`.
+- the timeout service does not inspect the application payload;
+- the original receiver handles the timeout message through its normal declared
+  message interface.
 
 Evidence type: test or demonstration
 
@@ -420,7 +430,7 @@ Expected outcome:
 
 - the timeout cancel is priority in the timeout service;
 - the active request is discarded;
-- no timeout reply completes the canceled request.
+- no timeout message is delivered for the canceled request.
 
 Evidence type: test
 
@@ -434,23 +444,25 @@ prevent delivery.
 Expected outcome:
 
 - the timeout service treats cancellation as best-effort;
-- the timeout reply may be delivered;
-- if the suspended call has been dropped, the caller's declared late-reply
-  policy handles the reply.
+- the timeout message may be delivered;
+- if the receiver no longer has a handler for the `SessionId`, receiver design
+  discards the unknown-session timeout message.
 
 Evidence type: analysis and test
 
-### TOS-VAL-004: Timeout reply backpressure
+### TOS-VAL-004: Delivery target backpressure
 
 Status: proposed
 
-An expired timeout reply cannot immediately enqueue because the requester queue
-is full.
+An expired timeout message cannot immediately enqueue because the delivery
+target queue is full.
 
 Expected outcome:
 
 - the timeout service follows normal `mpi` suspension behavior;
-- the timeout service uses the normal call-reply queue-space wakeup path.
+- the timeout service's wait is bounded by a local timer primitive;
+- the timeout service does not create a second timeout request to bound its own
+  expiry delivery wait.
 
 Evidence type: test
 
@@ -482,9 +494,9 @@ Evidence type: test or demonstration
 | TOS-REQ-008 | TOS-CMP-003, TOS-ARCH-003 | duplicate rejection result | test | TOS-VAL-001 |
 | TOS-REQ-009, TOS-REQ-010 | TOS-ARCH-004, TOS-ARCH-005 | TOS-INT-003 | test, analysis | TOS-VAL-002, TOS-VAL-003 |
 | TOS-REQ-011 | TOS-ARCH-006 | TOS-INT-005 | inspection | TOS-VAL-002 |
-| TOS-REQ-012 (obsolete) | TOS-ARCH-005 | TOS-INT-006 | inspection | TOS-VAL-003 |
-| TOS-REQ-013 | TOS-ARCH-008 | `mpi` call reply | test, inspection | TOS-VAL-004 |
-| TOS-REQ-014 (obsolete) | TOS-ARCH-009 | none | inspection | none |
+| TOS-REQ-012 | TOS-ARCH-005 | TOS-INT-006 | inspection | TOS-VAL-003 |
+| TOS-REQ-013, TOS-REQ-014 | TOS-ARCH-008, TOS-ARCH-009 | opaque delivery operation | test, inspection | TOS-VAL-004 |
 | TOS-REQ-015 | TOS-CMP-004, TOS-ARCH-010 | platform backend interface | inspection | TOS-VAL-001 |
 | TOS-REQ-016 | TOS-CMP-006, TOS-ARCH-011 | TOS-INT-007, TOS-INT-008 | test, inspection | TOS-VAL-005 |
 | TOS-REQ-017 | feature configuration | TOS-INT-009 | inspection | TOS-VAL-005 |
+
