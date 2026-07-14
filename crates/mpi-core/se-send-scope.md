@@ -1,111 +1,96 @@
 # Send API Scope
 
-This document is part of the authoritative systems-engineering baseline named `se-*.md`.
+This document is part of the authoritative systems-engineering baseline named
+`se-*.md`.
 
 Scope: `crates/mpi-core`.
 
-It records the human-approved design decision that generated send APIs are split by caller scope:
-
-- external code may use explicit blocking send APIs;
-- task message handlers may use context-aware non-blocking send APIs;
-- the two surfaces shall remain visually and type-system distinct.
+It records the human-approved decision that application messaging is available
+only from generated task scope. External code may construct tasks, supply their
+initial dependencies, and join their runtimes, but it may not send or receive
+application or protocol messages.
 
 ## Requirements
 
-### REQ-122: External blocking send scope
+### REQ-122: External construction scope
 
-Generated blocking send APIs shall only be used by code that is outside task message handler scope.
+External code shall be able to construct tasks, provide creation-time state and
+service dependencies, and join task runtimes, but shall not send or receive
+application or protocol messages.
 
-Rationale: External callers do not have a task queue or task-local receive state. Blocking APIs make the thread-blocking behavior explicit and avoid pretending that an external caller can participate in task-local suspension.
+Source: Human maintainer decision.
 
-Source: Human maintainer decision, SN-010, SN-015
-
-Verification: inspection
+Verification: compile-fail test and inspection
 
 Status: approved
 
-### REQ-123: Task-internal non-blocking send scope
+### REQ-123: Task-scoped messaging
 
-Generated non-blocking send APIs shall only be used from within task message handler scope and shall require access to the generated task context.
+Generated event, call, stream, cancellation, reply, and forwarding APIs shall
+require access to generated task scope.
 
-Rationale: Task-internal code has task-local receive state and must not accidentally block the task OS thread. Requiring the generated task context makes the call site visibly task-internal and gives the runtime a place to allocate sessions, register waiters, and suspend/resume handlers.
+Source: Human maintainer decision, SN-012, SN-015, SN-023.
 
-Source: Human maintainer decision, SN-012, SN-015, SN-023
+Verification: compile-fail test and inspection
 
-Verification: inspection
+Status: approved
+
+### REQ-127: Message routing header
+
+Every ordinary protocol message shall carry infrastructure-owned sender and
+`SessionId` metadata in addition to its declared payload. The receiver shall be
+implicit from the queue in which the message is delivered, and the protocol
+shall define which messages reply to which requests.
+
+Source: Human maintainer decision.
+
+Verification: test and inspection
+
+Status: approved
+
+### REQ-128: Proxy envelope
+
+The infrastructure shall support an explicitly type-erased envelope whose
+payload is another complete message. Sending the envelope creates a new outer
+sender and session while preserving the inner message sender, session, and
+payload. Replies to the outer message shall return through the proxy.
+
+Source: Human maintainer decision.
+
+Verification: test
 
 Status: approved
 
 ## Architecture rules
 
-ARCH-083: Generated blocking send methods belong to the external caller surface and shall not accept a task context.
-
-ARCH-084: Generated non-blocking send methods belong to the task-internal surface and shall require a generated task context or a trait implemented only by generated task contexts.
-
-ARCH-085: Generated task handles may expose both surfaces, but their method names and signatures shall make the caller scope unambiguous.
+- ARCH-083: Generated messaging methods require task scope; no external
+  `_blocking` application messaging surface is generated.
+- ARCH-084: Runtime-internal queue operations remain available to task startup,
+  dispatch, reply, forwarding, and shutdown machinery but are not an external
+  application messaging API.
+- ARCH-085: Main or other external construction scope may spawn tasks, inject
+  initial dependencies, and join runtimes only.
+- ARCH-086: Sender and session are infrastructure-owned message-header fields;
+  receiver and request/reply relationships are not duplicated in the message.
+- ARCH-087: Proxy forwarding is represented by an outer message whose payload
+  is a type-erased inner message; both request and reply therefore traverse the
+  proxy unless an application deliberately defines another protocol.
 
 ## Interface rules
 
-INT-093: External blocking send methods shall be explicitly named as blocking, for example with a `_blocking` suffix.
-
-INT-094: Task-internal non-blocking send methods shall require a context argument such as `ctx` and shall not be callable from ordinary external code that lacks a generated task context.
-
-INT-095: Examples and validation scenarios shall not show task handlers calling external blocking send APIs.
-
-## Examples
-
-External caller:
-
-```rust
-let reply = server.get_blocking(key)?;
-```
-
-Task-internal caller:
-
-```rust
-let reply = server.get(ctx, key).await?;
-```
-
-The first form is explicit about blocking an ordinary thread. The second form is explicit about using task-local context and must suspend the handler rather than blocking the task OS thread.
+- INT-093: Generated event, call, stream, cancellation, reply, and forwarding
+  methods shall require a generated task context or sealed `TaskScope` trait.
+- INT-094: Generated handles and protocol bindings shall not expose external
+  `_blocking` send or receive methods.
+- INT-095: Examples shall show main constructing tasks and joining runtimes,
+  while task handlers perform all messaging.
+- INT-096: Direct typed sends use generated protocol bindings; proxy code opts
+  into infrastructure-provided type erasure and runtime receiver validation.
 
 ## Traceability
 
 | Requirements | Architecture | Interfaces | Validation |
 |---|---|---|---|
 | REQ-122, REQ-123 | ARCH-083, ARCH-084, ARCH-085 | INT-093, INT-094, INT-095 | VAL-004, VAL-011 |
-
-## System Engineering Agent Report
-
-### Summary
-
-The send API scope decision clarifies an existing ambiguity in REQ-120 and REQ-121. It narrows external blocking APIs to non-task code and narrows non-blocking context-aware APIs to task message handler code.
-
-### Documents inspected
-
-- `AGENTS.md`
-- `docs/agents/process.md`
-- `docs/agents/system-engineering-agent.md`
-- `docs/se-requirements.md`
-- `docs/se-architecture.md`
-- `docs/se-interfaces.md`
-- `docs/se-verification-plan.md`
-- `docs/se-validation-scenarios.md`
-- `docs/se-traceability.md`
-
-### Requirements affected
-
-- REQ-120
-- REQ-121
-- REQ-122
-- REQ-123
-
-### Consistency findings
-
-| Severity | Area | Finding | Affected IDs | Recommended action |
-|---|---|---|---|---|
-| note | external caller API | Existing requirements already require explicit blocking APIs and distinct task-internal APIs, but they did not state an exclusive caller scope. | REQ-120, REQ-121 | Add REQ-122 and REQ-123 as scope rules. |
-| note | task-local runtime | Requiring context for non-blocking APIs aligns with suspended handler and waiter-registry requirements. | REQ-061, REQ-062, REQ-063 | Use context-aware signatures for task-internal calls and streams. |
-
-### Traceability impact
-
-This crate-level addendum extends the external caller requirement group with REQ-122 and REQ-123. Workspace-level traceability should continue to index these requirements when they affect cross-document review.
+| REQ-127 | ARCH-086 | INT-093 | VAL-004, VAL-005 |
+| REQ-128 | ARCH-087 | INT-096 | proxy forwarding test |

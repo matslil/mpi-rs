@@ -344,7 +344,9 @@ Stable architecture ID anchors:
 
 - MACRO-ARCH-001: `#[task]` applies to an `impl` block for a task state type.
 - MACRO-ARCH-002: The task impl attribute carries static queue-size configuration and may carry priority-reserved capacity configuration.
-- MACRO-ARCH-003: Generated handles expose task-internal context-aware methods and explicit external blocking methods where applicable.
+- MACRO-ARCH-003: Generated handles expose messaging methods only through
+  task-internal context-aware APIs; external blocking messaging methods are not
+  generated.
 - MACRO-ARCH-004: Generated contexts provide scoped user-state access and runtime operations.
 - MACRO-ARCH-005: Generated message enums implement the `mpi` runtime placement interface.
 - MACRO-ARCH-006: Protocol declaration output is the source of truth for protocol-qualified message identities and associated Rust types.
@@ -355,8 +357,8 @@ Stable architecture ID anchors:
 - MACRO-ARCH-011: Generated service instances own service task lifetime and
   expose protocol bindings that may be cloned independently without keeping the
   service task alive.
-- MACRO-ARCH-012: Generated service final-drop logic uses the service stop call
-  as the shutdown synchronization point.
+- MACRO-ARCH-012: Generated service final-drop logic closes the service
+  capability and joins its runtime without external application messaging.
 - MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
   as empty no-argument handlers when the service task declaration omits them.
 - MACRO-ARCH-014: Generated task API names are reserved within the generated
@@ -469,15 +471,14 @@ Interface rules:
   instance type and the protocol binding or bindings exposed by that instance.
 - MACRO-INT-018: Generated service instances may be cloneable, but only final
   clone drop shall stop the service task.
-- MACRO-INT-019: `#[stop]` identifies the service stop call handler when a
-  service task declares custom stop behavior.
+- MACRO-INT-019: `#[stop]` identifies a task-internal stop handler; it is not an
+  externally callable message API.
 - MACRO-INT-020: Omitted service start and stop handlers shall mean empty
   no-argument handlers, not missing message variants.
 - MACRO-INT-021: A non-message task method named `stop` shall be rejected when
   the macro would otherwise synthesize the generated stop API.
 - MACRO-INT-022: A message handler name shall be rejected when it collides with
-  a built-in generated handle method or with another handler's generated
-  `_blocking` method.
+  a built-in generated handle method or another generated messaging method.
 
 ## Validation Scenarios
 

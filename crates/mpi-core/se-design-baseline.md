@@ -69,7 +69,8 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - message placement traits and runtime message wrappers;
 - `SessionId`, `EndpointId`, response matching, late replies, and diagnostics snapshots;
 - task-internal calls and streams;
-- external blocking API support;
+- task-scope-only application messaging;
+- sender/session message headers and type-erased proxy envelopes;
 - compile-time receive-check traits consumed by generated code;
 - runtime transaction identifiers and transaction paths;
 - compile-time surface for generated transactional message APIs.
@@ -162,20 +163,23 @@ original IDs used by tests, reports, and traceability.
 - REQ-114: A future `futures_core::Stream` implementation may be added only if it preserves safe access to task-local receive state.
 - REQ-115: Producer-side `yield_item()` and `yield_batch()` shall suspend under insufficient credit until credit, cancellation, or another terminal stream-control condition.
 - REQ-116: Stream item, end, and error replies that cannot enqueue because the consumer queue is full shall suspend through the queue-capacity reservation mechanism.
-- REQ-120: External callers without a task queue may use explicit blocking APIs such as `get_blocking`.
-- REQ-121: Task-internal APIs shall be distinct from external blocking APIs so handlers do not accidentally block the task thread.
-- REQ-122: Generated blocking send APIs shall only be used by code outside task message handler scope.
-- REQ-123: Generated non-blocking send APIs shall only be used from task message handler scope and shall require generated task context access.
+- REQ-120: Obsolete; external application messaging is not supported.
+- REQ-121: Application messaging APIs shall require task scope so handlers do not block the task thread and external code cannot send or receive messages.
+- REQ-122: External code may construct tasks, inject creation-time dependencies, and join runtimes, but shall not send or receive application or protocol messages.
+- REQ-123: Generated messaging APIs shall require generated task context access.
+- REQ-127: Ordinary protocol messages shall carry infrastructure-owned sender and `SessionId` metadata plus their declared payload.
+- REQ-128: Proxy forwarding shall use an outer message whose payload is a complete type-erased inner message, causing replies to traverse the proxy.
 - REQ-124: Task instances participating in `mpi-rs` task-to-task message passing shall be declared in a topology known to generated code at compile time.
 - REQ-125: Repeated task instances of the same task type shall use a compile-time-known array size or equivalent const generic value.
 - REQ-126: The core task model shall not require runtime-discovered task instances for task-internal call, stream, reply, or suspension routing.
 - REQ-140: The implementation shall include or preserve a roadmap for diagnostics, timeouts, tracing, and deadlock/debug support.
 - REQ-180: A service start function shall return a service instance that owns
   one running service task and exposes that task's protocol bindings.
-- REQ-181: Dropping the final clone of a service instance shall send the
-  service stop call and wait for the stop reply.
-- REQ-182: A service stop call shall take no arguments and shall use its reply
-  only as a synchronization point for clean task termination.
+- REQ-181: Dropping the final clone of a service instance shall close its
+  service capability and join the service runtime without sending an
+  application or protocol message from external scope.
+- REQ-182: Service shutdown synchronization shall use capability closure and
+  runtime join rather than an externally initiated stop call.
 - REQ-183: Protocol bindings cloned from a service instance may outlive the
   service instance object, but sends and calls through those bindings shall fail
   with task-stopped behavior after the service task has stopped.
@@ -497,13 +501,14 @@ Verification: test
 
 Status: proposed
 
-### MPI-REQ-090: External blocking API
+### MPI-REQ-090: External blocking API (obsolete)
 
-External callers that do not have a task queue may use explicit blocking APIs such as `get_blocking`.
+External callers shall not send or receive application or protocol messages.
+They may construct tasks, inject creation-time dependencies, and join runtimes.
 
 Verification: demonstration
 
-Status: approved
+Status: obsolete
 
 ### MPI-REQ-091: No accidental internal blocking
 
@@ -713,7 +718,8 @@ Status: proposed
 ### MPI-REQ-131: Service instance drop stop
 
 When the final clone of a service instance is dropped, the service instance
-shall send the service stop call and wait for the stop reply.
+shall close its service capability and join the service runtime without sending
+an application or protocol message from external scope.
 
 Verification: test and inspection
 
@@ -721,9 +727,9 @@ Status: proposed
 
 ### MPI-REQ-132: Service stop synchronization
 
-A service stop call shall take no arguments and shall use its reply only as a
-synchronization point for clean task termination. Failure to stop is fatal
-unless the service implementation prevents that failure.
+Service shutdown synchronization shall use capability closure and runtime join
+rather than an externally initiated stop call. Failure to join is fatal unless
+the service implementation prevents that failure.
 
 Verification: test and inspection
 
@@ -813,9 +819,14 @@ Architecture rules:
 - MPI-ARCH-041: The receive loop checks suspended waiters before normal handler dispatch.
 - MPI-ARCH-042: Suspended handler continuations shall not retain mutable borrows of task state or task context while suspended.
 - MPI-ARCH-050: `SessionId` is shared by calls, streams, cancellation, matching, late-event handling, tracing, and debugging.
-- MPI-ARCH-060: Call requests carry a `SessionId` and reply address; responses use `Response<T>`.
+- MPI-ARCH-060: Protocol messages carry infrastructure-owned sender and
+  `SessionId` headers. Protocol declarations define request/reply relationships;
+  replies return to the request sender using the request session.
 - MPI-ARCH-070: Streams use the same `SessionId` model as calls and expose batch, end, and error stream events.
-- MPI-ARCH-080: External blocking APIs may use one-shot channels internally and must be explicit.
+- MPI-ARCH-080: External application messaging APIs are unavailable; task
+  construction and runtime joining remain external operations.
+- MPI-ARCH-081: Proxy forwarding wraps a complete type-erased message as the
+  payload of a new outer message, so downstream replies return to the proxy.
 - MPI-ARCH-090: `TransactionId` identifies the root transaction instance; `TransactionPath` identifies the root or a child transaction instance within a hierarchy.
 - MPI-ARCH-091: `SessionId` remains the matching key for each individual transactional call or stream, while `TransactionPath` identifies the enclosing transaction instance.
 - MPI-ARCH-092: A transaction participant stages or prepares transaction work before the coordinator records a durable commit decision; final persistent effects occur only during rollforward after that decision.
@@ -829,8 +840,8 @@ Architecture rules:
 - MPI-ARCH-100: A service instance owns service lifetime. Protocol bindings may
   be cloned independently, but they do not keep the service task alive after the
   final service instance clone is dropped.
-- MPI-ARCH-101: Service shutdown uses a no-argument stop call whose reply is a
-  synchronization point for clean task termination.
+- MPI-ARCH-101: Service shutdown closes the owned capability and joins the
+  runtime without external application messaging.
 - MPI-ARCH-102: Service task state is encapsulated behind message-based
   protocol bindings unless a crate-local baseline documents an explicit
   exception.
@@ -940,8 +951,9 @@ Interface rules:
 - MPI-INT-001: Every generated task message enum shall implement the task message placement interface.
 - MPI-INT-002: Placement shall be computed from the receiving task's message declaration.
 - MPI-INT-003: Queue-full behavior shall be represented as an explicit error.
-- MPI-INT-004: Task-internal generated methods shall accept a task context argument when needed to suspend and resume handlers.
-- MPI-INT-005: Generated external blocking methods shall be explicitly named with a blocking suffix such as `_blocking`.
+- MPI-INT-004: Generated messaging methods shall require a task context.
+- MPI-INT-005: Generated handles and protocol bindings shall not expose external
+  blocking send or receive methods.
 - MPI-INT-006: `SessionId` shall be available to runtime protocol messages for calls, streams, cancellation, matching, tracing, and debugging.
 - MPI-INT-007: Stream batching, stream end, stream error, stream cancellation, and stream flow-control details should be hidden from ordinary consumer code.
 - MPI-INT-008: Public API errors should be typed and documented.
@@ -958,8 +970,8 @@ Interface rules:
 - MPI-INT-017: Protocol bindings exposed by a service instance may be cloned
   independently, but those bindings shall report stopped-task errors once the
   service instance has stopped the task.
-- MPI-INT-018: Service stop calls shall carry no request payload and no normal
-  result payload.
+- MPI-INT-018: Service shutdown shall be exposed as capability closure and
+  runtime joining, not as an externally callable protocol message.
 
 Conceptual transaction API:
 
@@ -995,7 +1007,7 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-008 | Cancel an unfinished stream by dropping the stream object. | approved |
 | MPI-VAL-009 | Avoid flooding a consumer queue with stream flow control. | approved |
 | MPI-VAL-010 | Use priority shutdown while normal work is queued. | approved |
-| MPI-VAL-011 | Use external blocking APIs explicitly. | approved |
+| MPI-VAL-011 | Main constructs tasks and joins runtimes without sending or receiving messages. | approved |
 | MPI-VAL-012 | Diagnose sessions and queues. | deferred |
 | MPI-VAL-013 | Coordinate a root transaction across several typed calls, abort on business rejection, and commit only after every participant prepares. | proposed |
 | MPI-VAL-014 | Run a hierarchical transaction where a child transaction commits into its parent and becomes globally committed only after the root durable commit decision. | proposed |
@@ -1016,7 +1028,8 @@ Verification should include:
 - session allocation and out-of-order response matching tests;
 - late reply and late stream reply tests;
 - stream batching, end, error, cancellation, and credit tests;
-- external blocking API tests or demonstrations;
+- compile-fail tests showing external code cannot send or receive messages;
+- tests for sender/session headers and nested proxy request/reply forwarding;
 - diagnostics roadmap inspection.
 - transaction coordination tests covering business rejection, queue-capacity
   suspension with deadlines, prepare, durable commit decision, durable abort
