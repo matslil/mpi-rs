@@ -65,22 +65,22 @@ impl std::ops::Sub<Duration> for TimeoutInstant {
     }
 }
 
-/// Opaque operation that delivers an expired timeout message.
+/// Operation that delivers a payload-free timeout-occurred event.
 ///
 /// The timeout service owns this object while the timeout is pending. It calls
 /// `try_deliver` until delivery succeeds, a non-retryable error occurs, or the
 /// service's local delivery wait bound expires.
 pub trait TimeoutDelivery: Send + 'static {
-    /// Attempt one delivery of the already-typed timeout message.
-    fn try_deliver(&mut self) -> Result<(), SendError>;
+    /// Attempt one delivery of the timeout-occurred event for `session_id`.
+    fn try_deliver(&mut self, session_id: SessionId) -> Result<(), SendError>;
 }
 
 impl<F> TimeoutDelivery for F
 where
-    F: FnMut() -> Result<(), SendError> + Send + 'static,
+    F: FnMut(SessionId) -> Result<(), SendError> + Send + 'static,
 {
-    fn try_deliver(&mut self) -> Result<(), SendError> {
-        self()
+    fn try_deliver(&mut self, session_id: SessionId) -> Result<(), SendError> {
+        self(session_id)
     }
 }
 
@@ -92,7 +92,7 @@ pub struct TimeoutRequest {
 }
 
 impl TimeoutRequest {
-    /// Construct a timeout request with an opaque delivery operation.
+    /// Construct a timeout request with a payload-free timeout-event delivery operation.
     #[must_use]
     pub fn new<D>(session_id: SessionId, deadline: TimeoutInstant, delivery: D) -> Self
     where
@@ -507,7 +507,7 @@ fn deliver_with_local_timeout(
 ) -> Result<(), TimeoutServiceError> {
     let delivery_deadline = Time::now() + config.delivery_timeout;
     loop {
-        match delivery.try_deliver() {
+        match delivery.try_deliver(session_id) {
             Ok(()) => return Ok(()),
             Err(SendError::QueueFull) => {
                 if Time::now().has_reached(delivery_deadline) {
@@ -542,8 +542,8 @@ mod tests {
         delay: Duration,
         tx: mpsc::Sender<SessionId>,
     ) -> TimeoutRequest {
-        TimeoutRequest::new(session_id, Time::now() + delay, move || {
-            tx.send(session_id).map_err(|_| SendError::TaskStopped)
+        TimeoutRequest::new(session_id, Time::now() + delay, move |delivered| {
+            tx.send(delivered).map_err(|_| SendError::TaskStopped)
         })
     }
 
@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn tos_req_007_expiry_delivers_opaque_message() {
+    fn tos_req_007_expiry_delivers_timeout_occurred_event() {
         let service = start_timeout_service::<8>();
         let (tx, rx) = mpsc::channel();
         let session_id = session(1);
@@ -651,12 +651,12 @@ mod tests {
             .request_blocking(TimeoutRequest::new(
                 session_id,
                 Time::now() + Duration::from_millis(5),
-                move || {
+                move |delivered| {
                     let attempt = attempts_for_delivery.fetch_add(1, Ordering::SeqCst);
                     if attempt == 0 {
                         return Err(SendError::QueueFull);
                     }
-                    tx.send(session_id).map_err(|_| SendError::TaskStopped)
+                    tx.send(delivered).map_err(|_| SendError::TaskStopped)
                 },
             ))
             .unwrap();
@@ -677,7 +677,7 @@ mod tests {
 
         service
             .protocol()
-            .request_blocking(TimeoutRequest::new(session_id, Time::now(), || {
+            .request_blocking(TimeoutRequest::new(session_id, Time::now(), |_| {
                 Err(SendError::QueueFull)
             }))
             .unwrap();
@@ -689,27 +689,26 @@ mod tests {
     }
 
     #[test]
-    fn tos_req_006_delivery_payload_remains_opaque_to_service() {
-        #[derive(Debug, Eq, PartialEq)]
-        struct SenderSpecificPayload {
-            value: u32,
-        }
-
+    fn tos_req_006_timeout_occurred_event_contains_only_session_id() {
         let service = start_timeout_service::<8>();
         let observed = Arc::new(Mutex::new(None));
         let observed_for_delivery = Arc::clone(&observed);
-        let payload = SenderSpecificPayload { value: 42 };
+        let session_id = session(7);
 
         service
             .protocol()
-            .request_blocking(TimeoutRequest::new(session(7), Time::now(), move || {
-                *observed_for_delivery.lock().unwrap() = Some(payload.value);
-                Ok(())
-            }))
+            .request_blocking(TimeoutRequest::new(
+                session_id,
+                Time::now(),
+                move |delivered| {
+                    *observed_for_delivery.lock().unwrap() = Some(delivered);
+                    Ok(())
+                },
+            ))
             .unwrap();
 
         std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(*observed.lock().unwrap(), Some(42));
+        assert_eq!(*observed.lock().unwrap(), Some(session_id));
     }
 
     #[test]

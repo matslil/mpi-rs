@@ -16,15 +16,15 @@ cancellation race handling.
 - Uses `mpi-core` task handles, queues, session IDs, and protocol generation.
 - Can be imported directly as `timeout_service`.
 - Can be re-exported from the `mpi` facade with `enable-timeout-service`.
-- Does not inspect application payloads. Timeout delivery is an opaque closure
-  or send operation supplied by the requester.
+- Emits a payload-free timeout-occurred event containing only the request's
+  `SessionId`; the requester supplies the typed event delivery operation.
 
 ## Usage
 
 Examples are in `examples/`:
 
 - [schedule_timeout.rs](examples/schedule_timeout.rs): start the service,
-  schedule a timeout, and receive the delivered value.
+  schedule a timeout event, and receive the payload-free timeout occurrence.
 - [cancel_timeout.rs](examples/cancel_timeout.rs): cancel before expiry and
   handle the no-delivery case.
 
@@ -37,8 +37,8 @@ Use one active timeout per `SessionId`. A duplicate active request is a service
 error because it makes cancellation ambiguous.
 
 Treat cancellation as best-effort. If a timeout expires while cancellation is
-in flight, the timeout may still be delivered. Receivers that expect this race
-should discard unknown-session timeout messages.
+in flight, the timeout-occurred event may still be delivered. Receivers that
+expect this race should discard events for unknown `SessionId` values.
 
 Handle `TimeoutServiceError` and `SendError` explicitly. Queue-full delivery is
 retried for the configured local delivery timeout; a stopped delivery target is
