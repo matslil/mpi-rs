@@ -1,36 +1,33 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use mpi::{EndpointId, MessagePlacement, SessionId, TaskHandle, TaskMessage, TaskQueue};
-use timeout_service::{Time, TimeoutCancel, TimeoutRequest, start_timeout_service};
+use mpi::{StreamEvent, task};
+use timeout_service::{
+    Time, TimeoutError, TimeoutOccurred, TimeoutServiceInstance, start_timeout_service,
+};
 
-enum ExampleMessage {
-    Timeout,
-}
+#[derive(Default)]
+struct Client;
 
-impl TaskMessage for ExampleMessage {
-    fn placement(&self) -> MessagePlacement {
-        MessagePlacement::Normal
+#[task(queue_size = 8, receives(StreamEvent<TimeoutOccurred, TimeoutError>))]
+impl Client {
+    #[start]
+    fn start(ctx: &mut ClientContext, service: TimeoutServiceInstance) {
+        let timeout = service
+            .timeout(ctx, Time::now() + Duration::from_secs(1))
+            .unwrap();
+        drop(timeout);
+
+        let mut verification = service
+            .timeout(ctx, Time::now() + Duration::from_millis(10))
+            .unwrap();
+        assert_eq!(verification.next(ctx).await.unwrap(), Some(TimeoutOccurred));
+        ctx.stop();
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = start_timeout_service::<8>();
-    let target = TaskHandle::<ExampleMessage, 8>::new(Arc::new(TaskQueue::new()));
-    let session_id = SessionId::new(EndpointId(1), 7);
-    let delivery_target = target.clone();
-
-    service.protocol().request_blocking(TimeoutRequest::new(
-        session_id,
-        Time::now() + Duration::from_millis(200),
-        move || delivery_target.send_message(ExampleMessage::Timeout),
-    ))?;
-    service
-        .protocol()
-        .cancel_blocking(TimeoutCancel::new(session_id))?;
-
-    std::thread::sleep(Duration::from_millis(300));
-    assert!(target.try_recv_message().is_none());
-    println!("timeout for {session_id} was canceled before delivery");
-    Ok(())
+fn main() {
+    let service = start_timeout_service();
+    let (_client, runtime) = Client::spawn(Client, service).unwrap();
+    runtime.join().unwrap();
+    println!("timeout stream was canceled by dropping it");
 }
