@@ -20,8 +20,8 @@ use crate::lifecycle::{
     TaskTerminationTarget,
 };
 use crate::message::{
-    CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
-    MessageTarget, QueueSpaceWakeupMessage, TaskMessage,
+    HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
+    QueueSpaceWakeupMessage, TaskMessage,
 };
 use crate::queue::{QueueSpaceWakeupTarget, TaskQueue};
 use crate::scope::TaskScope;
@@ -364,16 +364,6 @@ where
 {
     fn send_task_terminated(&self, event: TaskTerminated) -> Result<(), SendError> {
         self.send_message(M::task_terminated(event))
-    }
-}
-
-impl<M, T, const N: usize> MessageTarget<T> for TaskHandle<M, N>
-where
-    M: TaskMessage + CanReceive<T>,
-    T: Send + 'static,
-{
-    fn send(&self, value: T) -> Result<(), SendError> {
-        self.send_message(M::wrap(value))
     }
 }
 
@@ -868,13 +858,6 @@ where
     }
 
     fn task_termination_target(&self) -> Arc<dyn TaskTerminationTarget> {
-        Arc::new(self.self_handle())
-    }
-
-    fn message_target<T: Send + 'static>(&self) -> Arc<dyn MessageTarget<T>>
-    where
-        Self::Message: CanReceive<T>,
-    {
         Arc::new(self.self_handle())
     }
 

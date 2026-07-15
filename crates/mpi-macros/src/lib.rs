@@ -72,14 +72,12 @@ impl Parse for TaskArgs {
 struct EventArgs {
     priority: bool,
     protocol: Option<Path>,
-    receive: bool,
 }
 
 impl Parse for EventArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut priority = false;
         let mut protocol = None;
-        let mut receive = false;
 
         while !input.is_empty() {
             if input.peek(Ident) {
@@ -89,16 +87,14 @@ impl Parse for EventArgs {
                 } else if key == "protocol" {
                     input.parse::<Token![=]>()?;
                     protocol = Some(input.parse()?);
-                } else if key == "receive" {
-                    receive = true;
                 } else {
                     return Err(syn::Error::new_spanned(
                         key,
-                        "expected `priority`, `protocol`, or `receive`",
+                        "expected `priority` or `protocol`",
                     ));
                 }
             } else {
-                return Err(input.error("expected `priority`, `protocol`, or `receive`"));
+                return Err(input.error("expected `priority` or `protocol`"));
             }
 
             if input.peek(Token![,]) {
@@ -106,11 +102,7 @@ impl Parse for EventArgs {
             }
         }
 
-        Ok(Self {
-            priority,
-            protocol,
-            receive,
-        })
+        Ok(Self { priority, protocol })
     }
 }
 
@@ -317,7 +309,6 @@ enum HandlerKind {
     Event {
         priority: bool,
         protocol: Option<Path>,
-        receive: bool,
     },
     Call {
         reply: Option<Box<Type>>,
@@ -388,7 +379,6 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                     EventArgs {
                         priority: false,
                         protocol: None,
-                        receive: false,
                     }
                 } else {
                     attr.parse_args::<EventArgs>()?
@@ -396,7 +386,6 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
                 HandlerKind::Event {
                     priority: args.priority,
                     protocol: args.protocol,
-                    receive: args.receive,
                 }
             }
             "call" => {
@@ -984,12 +973,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             "task terminated handler must take exactly one TaskTerminated argument after the context",
                         ));
                     }
-                    if matches!(kind, HandlerKind::Event { receive: true, .. }) && args.len() != 1 {
-                        return compile_error(syn::Error::new_spanned(
-                            &method.sig,
-                            "#[event(receive)] handler must take exactly one message argument after the context",
-                        ));
-                    }
                     if matches!(kind, HandlerKind::Stop) && !args.is_empty() {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
@@ -1080,7 +1063,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut dispatch_arms = Vec::new();
     let mut handle_methods = Vec::new();
     let mut protocol_impls = Vec::new();
-    let mut event_receive_impls = Vec::new();
     let mut start_args = Vec::new();
     let mut start_variant = None;
     let late_reply_callback = handlers
@@ -1254,7 +1236,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
-            HandlerKind::Event { priority, protocol, receive } => {
+            HandlerKind::Event { priority, protocol } => {
                 let placement = if *priority {
                     quote! { ::mpi::MessagePlacement::Priority }
                 } else {
@@ -1262,15 +1244,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 let blocking_method = format_ident!("{}_blocking", method_ident);
                 variants.push(quote! { #variant_ident { #(#arg_idents: #arg_tys),* } });
-                if *receive && let ([arg_ident], [arg_ty]) = (arg_idents.as_slice(), arg_tys.as_slice()) {
-                    event_receive_impls.push(quote! {
-                        impl ::mpi::CanReceive<#arg_ty> for #message_ident {
-                            fn wrap(value: #arg_ty) -> Self {
-                                Self::#variant_ident { #arg_ident: value }
-                            }
-                        }
-                    });
-                }
                 placements.push(quote! {
                     Self::#variant_ident { .. } => #placement
                 });
@@ -1974,7 +1947,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #(#protocol_impls)*
-        #(#event_receive_impls)*
 
         pub struct #context_ident {
             inner: ::mpi::TaskContext<#message_ident, #queue_size>,
@@ -1992,15 +1964,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 &self,
             ) -> ::std::sync::Arc<dyn ::mpi::TaskTerminationTarget> {
                 ::std::sync::Arc::new(self.inner.self_handle())
-            }
-
-            fn message_target<T: Send + 'static>(
-                &self,
-            ) -> ::std::sync::Arc<dyn ::mpi::MessageTarget<T>>
-            where
-                Self::Message: ::mpi::CanReceive<T>,
-            {
-                self.inner.message_target::<T>()
             }
 
             fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {

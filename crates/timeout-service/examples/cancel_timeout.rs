@@ -1,66 +1,33 @@
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mpi::{EndpointId, SessionId, task};
+use mpi::{StreamEvent, task};
 use timeout_service::{
-    Time, TimeoutCancel, TimeoutOccurred, TimeoutRequest, TimeoutServiceInstance,
-    start_timeout_service,
+    Time, TimeoutError, TimeoutOccurred, TimeoutServiceInstance, start_timeout_service,
 };
 
-struct Receiver {
-    occurred: Arc<Mutex<Option<SessionId>>>,
-}
+#[derive(Default)]
+struct Client;
 
-#[task(queue_size = 8)]
-impl Receiver {
+#[task(queue_size = 8, receives(StreamEvent<TimeoutOccurred, TimeoutError>))]
+impl Client {
     #[start]
-    fn start(
-        ctx: &mut ReceiverContext,
-        service: TimeoutServiceInstance<8>,
-        canceled: SessionId,
-        verification: SessionId,
-    ) {
-        let canceled_request =
-            TimeoutRequest::new(ctx, canceled, Time::now() + Duration::from_millis(20));
-        service.protocol().request(ctx, canceled_request).unwrap();
-        service
-            .protocol()
-            .cancel(ctx, TimeoutCancel::new(canceled))
+    fn start(ctx: &mut ClientContext, service: TimeoutServiceInstance) {
+        let timeout = service
+            .timeout(ctx, Time::now() + Duration::from_secs(1))
             .unwrap();
+        drop(timeout);
 
-        let verification_request =
-            TimeoutRequest::new(ctx, verification, Time::now() + Duration::from_millis(40));
-        service
-            .protocol()
-            .request(ctx, verification_request)
+        let mut verification = service
+            .timeout(ctx, Time::now() + Duration::from_millis(10))
             .unwrap();
-    }
-
-    #[event(receive)]
-    fn timeout_occurred(ctx: &mut ReceiverContext, occurred: TimeoutOccurred) {
-        ctx.with_state(|state| {
-            *state.occurred.lock().unwrap() = Some(occurred.session_id());
-        });
+        assert_eq!(verification.next(ctx).await.unwrap(), Some(TimeoutOccurred));
         ctx.stop();
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = start_timeout_service::<8>();
-    let observed = Arc::new(Mutex::new(None));
-    let canceled = SessionId::new(EndpointId(1), 7);
-    let verification = SessionId::new(EndpointId(1), 8);
-    let (_receiver, runtime) = Receiver::spawn(
-        Receiver {
-            occurred: Arc::clone(&observed),
-        },
-        service.clone(),
-        canceled,
-        verification,
-    )?;
-
-    runtime.join()?;
-    assert_eq!(*observed.lock().unwrap(), Some(verification));
-    println!("timeout for {canceled} was canceled before it occurred");
-    Ok(())
+fn main() {
+    let service = start_timeout_service();
+    let (_client, runtime) = Client::spawn(Client, service).unwrap();
+    runtime.join().unwrap();
+    println!("timeout stream was canceled by dropping it");
 }

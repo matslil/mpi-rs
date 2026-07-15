@@ -1,46 +1,32 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mpi::{EndpointId, SessionId, task};
+use mpi::{StreamEvent, task};
 use timeout_service::{
-    Time, TimeoutOccurred, TimeoutRequest, TimeoutServiceInstance, start_timeout_service,
+    Time, TimeoutError, TimeoutOccurred, TimeoutServiceInstance, start_timeout_service,
 };
 
-struct Receiver {
-    occurred: Arc<Mutex<Option<SessionId>>>,
-}
+struct Client(Arc<Mutex<bool>>);
 
-#[task(queue_size = 8)]
-impl Receiver {
+#[task(queue_size = 8, receives(StreamEvent<TimeoutOccurred, TimeoutError>))]
+impl Client {
     #[start]
-    fn start(ctx: &mut ReceiverContext, service: TimeoutServiceInstance<8>, session_id: SessionId) {
-        let request = TimeoutRequest::new(ctx, session_id, Time::now() + Duration::from_millis(10));
-        service.protocol().request(ctx, request).unwrap();
-    }
-
-    #[event(receive)]
-    fn timeout_occurred(ctx: &mut ReceiverContext, occurred: TimeoutOccurred) {
-        ctx.with_state(|state| {
-            *state.occurred.lock().unwrap() = Some(occurred.session_id());
-        });
+    fn start(ctx: &mut ClientContext, service: TimeoutServiceInstance) {
+        let mut timeout = service
+            .timeout(ctx, Time::now() + Duration::from_millis(10))
+            .unwrap();
+        assert_eq!(timeout.next(ctx).await.unwrap(), Some(TimeoutOccurred));
+        assert_eq!(timeout.next(ctx).await.unwrap(), None);
+        ctx.with_state(|state| *state.0.lock().unwrap() = true);
         ctx.stop();
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = start_timeout_service::<8>();
-    let observed = Arc::new(Mutex::new(None));
-    let session_id = SessionId::new(EndpointId(1), 42);
-    let (_receiver, runtime) = Receiver::spawn(
-        Receiver {
-            occurred: Arc::clone(&observed),
-        },
-        service.clone(),
-        session_id,
-    )?;
-
-    runtime.join()?;
-    assert_eq!(*observed.lock().unwrap(), Some(session_id));
-    println!("timeout occurred for {session_id}");
-    Ok(())
+fn main() {
+    let service = start_timeout_service();
+    let occurred = Arc::new(Mutex::new(false));
+    let (_client, runtime) = Client::spawn(Client(Arc::clone(&occurred)), service).unwrap();
+    runtime.join().unwrap();
+    assert!(*occurred.lock().unwrap());
+    println!("timeout occurred");
 }

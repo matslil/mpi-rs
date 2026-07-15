@@ -6,7 +6,7 @@ use crate::call::{CallResponseMessage, CallSession};
 use crate::lifecycle::TaskTerminationMessage;
 use crate::lifecycle::TaskTerminationTarget;
 use crate::message::LateReplyPolicy;
-use crate::message::{CanReceive, MessageTarget, QueueSpaceWakeupMessage, TaskMessage};
+use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
 use crate::session::EndpointId;
 use crate::session::SessionId;
 use crate::stream::StreamEventMessage;
@@ -29,11 +29,6 @@ pub trait TaskScope {
 
     /// Return the infrastructure termination-message target for this task.
     fn task_termination_target(&self) -> Arc<dyn TaskTerminationTarget>;
-
-    /// Derive a typed return endpoint for the current task.
-    fn message_target<T: Send + 'static>(&self) -> Arc<dyn MessageTarget<T>>
-    where
-        Self::Message: CanReceive<T>;
 
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.
