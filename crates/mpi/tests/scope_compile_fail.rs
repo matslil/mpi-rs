@@ -89,6 +89,28 @@ fn assert_fails_contains(name: &str, source: &str, expected: &[&str]) {
 }
 
 #[test]
+fn macro_req_036_external_scope_cannot_subscribe_to_supervision() {
+    assert_fails_task_scope(
+        "supervise",
+        r#"
+use mpi::task;
+
+#[derive(Default)]
+struct Worker;
+
+#[task(queue_size = 4)]
+impl Worker {}
+
+fn main() {
+    let (worker, _runtime) = Worker::spawn(Worker).unwrap();
+    let _monitor = worker.supervise(&mut ());
+}
+"#,
+        "supervise",
+    );
+}
+
+#[test]
 fn req_027_event_api_rejects_non_task_scope_context() {
     assert_fails_task_scope(
         "event",

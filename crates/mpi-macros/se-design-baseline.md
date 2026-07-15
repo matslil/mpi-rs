@@ -333,7 +333,9 @@ Status: proposed
 
 Generated task handles shall expose a task-scoped supervision method that
 creates a cancellable task monitor for the handle's endpoint. The generated API
-shall not expose external supervision subscription methods.
+shall not expose external supervision subscription methods. Generated task
+message enums shall carry infrastructure task-termination messages, and a task
+may declare one `#[task_terminated]` handler for explicitly supervised events.
 
 Verification: test and compile-fail test
 
@@ -377,7 +379,8 @@ Stable architecture ID anchors:
   handle surface. User-declared handlers or task symbols that would collide
   with those names fail during macro expansion.
 - MACRO-ARCH-015: Generated supervision methods delegate to endpoint lifecycle
-  monitoring and require generated task context.
+  monitoring and require generated task context. Termination delivery uses a
+  hidden generated message variant in the subscriber task queue.
 
 ## Interface
 
@@ -495,6 +498,9 @@ Interface rules:
   a built-in generated handle method or another generated messaging method.
 - MACRO-INT-023: Each generated task handle shall expose `supervise(ctx)` or an
   equivalently explicit task-scoped method returning a `TaskMonitor`.
+- MACRO-INT-024: `#[task_terminated]` shall declare at most one handler accepting
+  the supervised `TaskTerminated` event; infrastructure termination for calls
+  and streams shall not be dispatched to that handler.
 
 ## Validation Scenarios
 
@@ -542,4 +548,4 @@ Verification should include:
 | MACRO-REQ-020..MACRO-REQ-025 | MACRO-ARCH-008..MACRO-ARCH-010 | MACRO-INT-011..MACRO-INT-016 | MACRO-VAL-006..MACRO-VAL-008 |
 | MACRO-REQ-030..MACRO-REQ-034 | MACRO-ARCH-011..MACRO-ARCH-013 | MACRO-INT-017..MACRO-INT-020 | MACRO-VAL-009 |
 | MACRO-REQ-035 | MACRO-ARCH-014 | MACRO-INT-021..MACRO-INT-022 | MACRO-VAL-010 |
-| MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023 | MACRO-VAL-011 |
+| MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023, MACRO-INT-024 | MACRO-VAL-011 |

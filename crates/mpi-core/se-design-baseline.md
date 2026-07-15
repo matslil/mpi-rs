@@ -819,7 +819,9 @@ Status: proposed
 
 When a task endpoint terminates, every active call or stream waiting on that
 endpoint shall complete with a typed target-terminated outcome carrying the
-recorded task termination reason.
+recorded task termination reason. The infrastructure shall generate and enqueue
+a task-termination message at the waiting task; receiving that message shall
+complete the matching session rather than dispatch an application payload.
 
 Verification: test
 
@@ -829,7 +831,9 @@ Status: proposed
 
 A task shall be able to subscribe from task scope to another endpoint's
 termination. The subscription shall produce exactly one task-terminated event,
-or complete immediately when the target is already terminated.
+or enqueue that event immediately when the target is already terminated. Unlike
+call and stream termination, an explicitly supervised event shall be dispatched
+to the task implementer's task-termination handler.
 
 Verification: test
 
@@ -971,12 +975,15 @@ Architecture rules:
   runtime boundary. Catching a panic records sanitized endpoint termination
   before the task thread returns; it does not suppress the configured panic
   hook.
-- MPI-ARCH-104: Endpoint termination atomically closes message acceptance,
-  completes active call and stream sessions, and notifies task monitors.
+- MPI-ARCH-104: Endpoint termination atomically closes message acceptance and
+  generates task-termination messages for active call, stream, and supervision
+  sessions. Those messages use the receiving task's generated queue.
 - MPI-ARCH-105: Supervision registration and endpoint termination synchronize
   through the same lifecycle state so registration cannot miss termination.
 - MPI-ARCH-106: Supervision is an infrastructure lifecycle subscription, not an
-  application protocol and not a general-purpose connection object.
+  application protocol and not a general-purpose connection object. Its
+  generated termination message is dispatched to an explicit task-termination
+  handler, while call and stream termination is consumed by infrastructure.
 - MPI-ARCH-107: A task endpoint owns cleanup registrations for subscriptions
   created by that task, allowing subscriber termination to cancel them.
 
@@ -1088,6 +1095,13 @@ pub enum TaskTermination {
 pub struct TaskMonitor {
     // target endpoint, subscriber endpoint, and supervision session
 }
+
+pub struct TaskTerminated {
+    pub session_id: SessionId,
+    pub target: EndpointId,
+    pub termination: TaskTermination,
+    pub supervised: bool,
+}
 ```
 
 Interface rules:
@@ -1118,12 +1132,16 @@ Interface rules:
   runtime joining, not as an externally callable protocol message.
 - MPI-INT-019: Starting task supervision shall require task scope and return a
   cancellable `TaskMonitor` associated with a supervision `SessionId`.
-- MPI-INT-020: Waiting on a task monitor shall yield `TaskTermination`; dropping
-  an unfinished monitor shall request cancellation without blocking.
+- MPI-INT-020: Retaining a task monitor shall keep its supervision subscription
+  active; dropping it shall request cancellation without blocking. Termination
+  is received by the subscriber's task-termination handler.
 - MPI-INT-021: Call and stream APIs shall expose target termination as a typed
   infrastructure error or terminal outcome, not as an application payload.
 - MPI-INT-022: `TaskRuntime::join` shall report panicked termination as a typed
   error and shall not resume the caught panic payload.
+- MPI-INT-023: Generated task message enums shall carry infrastructure-generated
+  task-termination messages. Call and stream messages complete matching waiters;
+  supervised messages dispatch to the declared task-termination handler.
 
 Conceptual transaction API:
 
@@ -1218,4 +1236,4 @@ Verification should include:
 | MPI-REQ-100 | MPI-CMP-012 | MPI-INT-006, MPI-INT-008 | MPI-VAL-012 |
 | MPI-REQ-110..MPI-REQ-127 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-099 | MPI-INT-009..MPI-INT-014 | MPI-VAL-013..MPI-VAL-017 |
 | MPI-REQ-130..MPI-REQ-135 | MPI-CMP-015, MPI-ARCH-100..MPI-ARCH-102 | MPI-INT-015..MPI-INT-018 | MPI-VAL-018 |
-| MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-022 | MPI-VAL-019, MPI-VAL-020 |
+| MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-023 | MPI-VAL-019, MPI-VAL-020 |

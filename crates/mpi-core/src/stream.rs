@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 
 use crate::error::SendError;
+use crate::lifecycle::{TaskMonitor, TaskTermination};
 use crate::message::{HasSessionId, LateReplyPolicy};
 use crate::queue::QueueSpaceWakeupTarget;
 use crate::scope::TaskScope;
@@ -767,12 +768,36 @@ pub type StreamSession<T, E> = (
 );
 
 type StreamOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
+type StreamWaiterSender<T, E> = Sender<Result<StreamEvent<T, E>, TaskTermination>>;
+
+/// Typed terminal error returned by a task-internal stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StreamError<E> {
+    /// The producer returned an application-defined stream error.
+    Application(E),
+    /// The producer task terminated before finishing the stream.
+    TargetTerminated(TaskTermination),
+}
+
+impl<E: core::fmt::Display> core::fmt::Display for StreamError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Application(error) => write!(f, "stream failed: {error}"),
+            Self::TargetTerminated(termination) => {
+                write!(f, "stream target terminated: {termination:?}")
+            }
+        }
+    }
+}
+
+impl<E> std::error::Error for StreamError<E> where E: std::error::Error + 'static {}
 
 /// Task-internal stream consumer for generated handlers.
 pub struct SuspendedMessageStream<T, E> {
     stream: MessageStream<T, E>,
-    receiver: Receiver<StreamEvent<T, E>>,
+    receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
     on_drop: Option<StreamOnDrop>,
+    target_monitor: Option<TaskMonitor>,
 }
 
 impl<T, E> SuspendedMessageStream<T, E> {
@@ -782,12 +807,13 @@ impl<T, E> SuspendedMessageStream<T, E> {
     pub fn new(
         session_id: SessionId,
         control: Arc<dyn StreamControl>,
-        receiver: Receiver<StreamEvent<T, E>>,
+        receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
     ) -> Self {
         Self {
             stream: MessageStream::new(session_id, control),
             receiver,
             on_drop: None,
+            target_monitor: None,
         }
     }
 
@@ -796,7 +822,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
     pub fn new_with_on_drop<F>(
         session_id: SessionId,
         control: Arc<dyn StreamControl>,
-        receiver: Receiver<StreamEvent<T, E>>,
+        receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
         on_drop: F,
     ) -> Self
     where
@@ -806,6 +832,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
             stream: MessageStream::new(session_id, control),
             receiver,
             on_drop: Some(Box::new(on_drop)),
+            target_monitor: None,
         }
     }
 
@@ -821,6 +848,13 @@ impl<T, E> SuspendedMessageStream<T, E> {
         self.stream.is_finished()
     }
 
+    /// Retain the producer lifecycle registration for this active stream.
+    #[must_use]
+    pub fn with_target_monitor(mut self, monitor: TaskMonitor) -> Self {
+        self.target_monitor = Some(monitor);
+        self
+    }
+
     /// Return a context-returning computation for the next item, end, or stream error.
     pub fn next<'a>(&'a mut self, _ctx: &mut impl TaskScope) -> SuspendedStreamNext<'a, T, E> {
         SuspendedStreamNext { stream: self }
@@ -828,6 +862,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
 
     fn disarm_on_drop(&mut self) {
         self.on_drop = None;
+        self.target_monitor = None;
     }
 }
 
@@ -849,7 +884,7 @@ pub struct SuspendedStreamNext<'a, T, E> {
 /// Compatibility bridge for Rust `.await` syntax in user-authored async
 /// handlers. The task-local runtime drives the same state through `CtxFuture`.
 impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
-    type Output = Result<Option<T>, E>;
+    type Output = Result<Option<T>, StreamError<E>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut().try_resume() {
@@ -863,11 +898,11 @@ impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
 }
 
 impl<T, E> SuspendedStreamNext<'_, T, E> {
-    fn try_resume(&mut self) -> CtxPoll<Result<Option<T>, E>> {
+    fn try_resume(&mut self) -> CtxPoll<Result<Option<T>, StreamError<E>>> {
         match self.stream.stream.next_buffered() {
             Ok(Some(value)) => return CtxPoll::Ready(Ok(Some(value))),
             Ok(None) => {}
-            Err(error) => return CtxPoll::Ready(Err(error)),
+            Err(error) => return CtxPoll::Ready(Err(StreamError::Application(error))),
         }
 
         if self.stream.stream.is_finished() {
@@ -876,12 +911,16 @@ impl<T, E> SuspendedStreamNext<'_, T, E> {
         }
 
         match self.stream.receiver.try_recv() {
-            Ok(event) => {
+            Ok(Ok(event)) => {
                 let result = self.stream.stream.next_from_event(event);
                 if self.stream.stream.is_finished() {
                     self.stream.disarm_on_drop();
                 }
-                CtxPoll::Ready(result)
+                CtxPoll::Ready(result.map_err(StreamError::Application))
+            }
+            Ok(Err(termination)) => {
+                self.stream.disarm_on_drop();
+                CtxPoll::Ready(Err(StreamError::TargetTerminated(termination)))
             }
             Err(TryRecvError::Empty) => CtxPoll::Pending,
             Err(TryRecvError::Disconnected) => {
@@ -893,7 +932,7 @@ impl<T, E> SuspendedStreamNext<'_, T, E> {
 }
 
 impl<Cx, T, E> CtxFuture<Cx> for SuspendedStreamNext<'_, T, E> {
-    type Output = Result<Option<T>, E>;
+    type Output = Result<Option<T>, StreamError<E>>;
 
     fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
         self.try_resume()
@@ -905,7 +944,7 @@ impl<Cx, T, E> CtxFuture<Cx> for SuspendedStreamNext<'_, T, E> {
 pub fn suspended_stream_waiter<T, E>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
-) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>) {
+) -> (StreamWaiterSender<T, E>, SuspendedMessageStream<T, E>) {
     let (sender, receiver) = std::sync::mpsc::channel();
     (
         sender,
@@ -920,7 +959,7 @@ pub(crate) fn suspended_stream_waiter_with_on_drop<T, E, F>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
     on_drop: F,
-) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>)
+) -> (StreamWaiterSender<T, E>, SuspendedMessageStream<T, E>)
 where
     F: FnOnce(SessionId) + 'static,
 {

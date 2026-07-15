@@ -1,5 +1,6 @@
 pub mod call;
 pub mod error;
+pub mod lifecycle;
 pub mod message;
 pub mod queue;
 pub mod runtime;
@@ -16,11 +17,16 @@ pub use call::{
 };
 pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, StdFutureCtx, from_std_future, resume_fn};
 pub use error::{CallError, RecvError, SendError};
+pub use lifecycle::{
+    TaskMonitor, TaskTerminated, TaskTermination, TaskTerminationMessage, TaskTerminationTarget,
+};
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
     MessagePlacement, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage, TaskMessage,
 };
-pub use mpi_macros::{call, event, late_reply, protocol, start, stop, stream, task};
+pub use mpi_macros::{
+    call, event, late_reply, protocol, start, stop, stream, task, task_terminated,
+};
 pub use queue::{QueueSpaceWakeupTarget, TaskQueue, TaskQueueSnapshot};
 pub use runtime::{
     block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_handler, block_on_task,
