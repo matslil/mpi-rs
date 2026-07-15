@@ -172,6 +172,7 @@ impl ProtocolCounter {
 struct Client {
     observed: u32,
     observed_probe: Option<mpsc::Sender<u32>>,
+    delayed_completion_probe: Option<mpsc::Sender<()>>,
 }
 
 #[task(
@@ -231,6 +232,9 @@ impl Client {
         let observed = counter.delayed(ctx).await.unwrap();
         ctx.with_state(|state| {
             state.observed = observed;
+            if let Some(probe) = &state.delayed_completion_probe {
+                let _ = probe.send(());
+            }
         });
     }
 
@@ -711,8 +715,10 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
     })
     .unwrap();
     let (observed_probe_tx, observed_probe_rx) = mpsc::channel();
+    let (delayed_completion_tx, delayed_completion_rx) = mpsc::channel();
     let (client, client_runtime) = Client::spawn(Client {
         observed_probe: Some(observed_probe_tx),
+        delayed_completion_probe: Some(delayed_completion_tx),
         ..Client::default()
     })
     .unwrap();
@@ -739,6 +745,9 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("generated dispatch did not complete the nested call before release");
     release_tx.send(()).unwrap();
+    delayed_completion_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("suspended handler did not store the delayed reply after release");
 
     observed_thread.join().unwrap();
     assert_eq!(client.observed_blocking().unwrap(), 10);
