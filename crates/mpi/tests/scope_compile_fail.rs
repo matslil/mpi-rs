@@ -675,3 +675,28 @@ fn main() {}
         &["CanReceive", "OtherCounterProtocolV1", "Reply"],
     );
 }
+
+#[test]
+fn macro_req_040_start_callback_rejects_payload_arguments() {
+    assert_fails_contains(
+        "start_callback_payload",
+        r#"
+use mpi::task;
+
+struct Worker;
+
+#[task(queue_size = 4)]
+impl Worker {
+    fn new(_value: u32) -> Self {
+        Self
+    }
+
+    #[start]
+    fn start(_ctx: &mut WorkerContext, _value: u32) {}
+}
+
+fn main() {}
+"#,
+        &["start callback", "generated task context"],
+    );
+}

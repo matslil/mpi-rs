@@ -63,12 +63,12 @@ impl std::error::Error for TimeoutError {}
 #[derive(Default)]
 struct TimeoutTask;
 
-#[task(
-    queue_size = 32,
-    service_instance = TimeoutServiceInstance,
-    service_start = start_timeout_service
-)]
+#[task(queue_size = 32)]
 impl TimeoutTask {
+    fn new() -> Self {
+        Self
+    }
+
     #[stream(item = TimeoutOccurred, error = TimeoutError, batch_size = 1)]
     fn timeout(
         ctx: &mut TimeoutTaskContext,
@@ -82,7 +82,7 @@ impl TimeoutTask {
     }
 }
 
-impl TimeoutServiceInstance {
+impl TimeoutTaskServiceInstance {
     /// Start a single-result timeout stream from task scope.
     pub fn timeout<C>(
         &self,

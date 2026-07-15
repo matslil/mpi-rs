@@ -24,7 +24,7 @@ Core concepts:
 - `TransactionPath` identifies a root or nested transaction instance within a
   transaction hierarchy;
 - normal and priority messages are placed according to the receiver's declaration;
-- the start message is forced to priority and must be the first application message received by a new task;
+- task state is constructed before spawning, and task spawning injects no application message;
 - handlers suspend while waiting for replies or stream events instead of blocking the task thread.
 
 ### Lifecycle terminology
@@ -56,7 +56,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-022: Contributors need a practical implementation order that allows incremental development and review.
 - SN-023: Contributors need compile-time receive checks to prevent handlers from waiting for undeclared response or stream event messages.
 - SN-040: Runtime users need predictable queue ordering for normal and priority messages.
-- SN-041: Runtime users need the start message to be the first application message received by a newly spawned task.
+- SN-041: Obsolete; startup no longer uses an application start message.
 - SN-042: Runtime users need calls and streams to match replies by logical interaction so concurrent handlers do not receive each other's replies.
 - SN-043: Runtime users need cancellation and late stream replies to be handled safely without hiding ordinary protocol flaws.
 - SN-045: Maintainers and operators need diagnostics for sessions, queues, timeouts, deadlocks, unknown-session replies, and stream lifecycle issues.
@@ -139,10 +139,10 @@ original IDs used by tests, reports, and traceability.
 - REQ-035: For calls and streams, request placement and response or stream-event placement shall be independently declared by the receiving task for each received message.
 - REQ-036: Each task queue shall reserve configurable capacity for priority messages so normal messages cannot consume all queue slots; the default shall be one slot.
 - REQ-037: The task declaration interface shall allow priority-reserved queue capacity to be configured per task.
-- REQ-040: Task creation shall create and enqueue a start message for the new task.
-- REQ-041: The generated start message shall be priority even if the user does not explicitly declare it as priority.
-- REQ-042: The first application message received by a newly spawned task shall be its start message.
-- REQ-043: The task model shall not require a separate out-of-band task initialization path for normal task startup.
+- REQ-040: Obsolete; task creation no longer creates or enqueues a start message.
+- REQ-041: Obsolete; there is no generated start message whose placement must be forced.
+- REQ-042: Obsolete; startup is a lifecycle phase rather than an application message.
+- REQ-043: Obsolete; task state construction and the optional start callback are explicit out-of-band lifecycle phases.
 - REQ-060: Handlers shall be expressible as async functions executed by a task-local runtime.
 - REQ-061: Awaiting a specific reply or stream event shall suspend the handler continuation instead of blocking the task OS thread.
 - REQ-062: While one handler is suspended waiting for a reply or stream event, the task shall continue receiving and handling other messages.
@@ -290,7 +290,7 @@ Status: proposed
 
 ### MPI-REQ-020: Message model
 
-The runtime message model shall include events, calls, streams, responses, stream events, stream cancellation, start messages, and internal runtime/control messages when needed.
+The runtime message model shall include events, calls, streams, responses, stream events, stream cancellation, and internal runtime/control messages when needed. Task lifecycle callbacks are not messages.
 
 Verification: inspection
 
@@ -334,7 +334,7 @@ Task creation shall create and enqueue a start message for the new task.
 
 Verification: test
 
-Status: approved
+Status: obsolete
 
 ### MPI-REQ-031: Start message forced priority
 
@@ -342,7 +342,7 @@ The start message shall be priority even if generated code or user declarations 
 
 Verification: test
 
-Status: approved
+Status: obsolete
 
 ### MPI-REQ-032: Start message first
 
@@ -350,7 +350,10 @@ The first application message received by a newly spawned task shall be its star
 
 Verification: test
 
-Status: approved
+Status: obsolete
+
+These requirements preserve the historical start-message contract and are not
+applicable to the current lifecycle design.
 
 ### MPI-REQ-040: Suspended receive
 
@@ -935,6 +938,26 @@ Verification: test and inspection
 
 Status: approved
 
+### MPI-REQ-151: Message-free task spawn
+
+Spawning a task shall create its queue, endpoint, and runtime without injecting
+an application message into that queue.
+
+Verification: test and inspection
+
+Status: approved
+
+### MPI-REQ-152: Pre-dispatch lifecycle phase
+
+The runtime shall allow generated task lifecycle code to begin on the task
+thread before the ordinary receive loop starts. If that code suspends while
+using full task context, the ordinary nested-dispatch rules shall remain
+available so awaited messages can make progress.
+
+Verification: test and inspection
+
+Status: approved
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -979,14 +1002,14 @@ Architecture rules:
 
 - MPI-ARCH-010: Each task owns exactly one logical message queue.
 - MPI-ARCH-011: Each task has a generated message enum representing received messages.
-- MPI-ARCH-012: Task initialization is performed through the start message.
+- MPI-ARCH-012: Obsolete; task initialization is not performed through a start message.
 - MPI-ARCH-020: Normal messages are inserted at the tail of the normal queue.
 - MPI-ARCH-021: Priority messages are inserted at the tail of the priority queue.
 - MPI-ARCH-022: Receive first tries the head of the priority queue, then the head of the normal queue.
 - MPI-ARCH-023: Total queue capacity is shared between normal and priority queues.
 - MPI-ARCH-024: Message placement is determined by the receiving task's declaration.
 - MPI-ARCH-025: Receiver-owned send reservations count against total queue capacity but do not affect message ordering until consumed.
-- MPI-ARCH-030: Start messages are forced to priority and no other application message can be received before start.
+- MPI-ARCH-030: Obsolete; the current task lifecycle has no start message.
 - MPI-ARCH-040: Task-internal waits suspend handler continuations and do not block the task OS thread.
 - MPI-ARCH-041: The receive loop checks suspended waiters before normal handler dispatch.
 - MPI-ARCH-042: Suspended handler continuations shall not retain mutable borrows of task state or task context while suspended.
@@ -1044,6 +1067,9 @@ Architecture rules:
   notification for blocking external scope and stored Rust wakers for suspended
   task handlers. Delivery stores the value before notifying or waking, and
   disconnection is represented explicitly in the waiter state.
+- MPI-ARCH-111: Task spawning creates no application message. Generated
+  lifecycle code begins on the task thread before entering the ordinary receive
+  loop; suspension may use the same nested dispatch as other task handlers.
 
 ## Transaction architecture
 
@@ -1209,6 +1235,8 @@ Interface rules:
 - MPI-INT-027: The internal waiter interface shall provide blocking receive,
   non-blocking receive, disconnection, and waker registration without exposing
   an additional message-passing channel API to applications.
+- MPI-INT-028: `spawn_task(priority_reserved, run)` shall start a task runtime
+  without accepting or enqueuing a start message.
 
 Conceptual transaction API:
 
@@ -1234,8 +1262,8 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 
 | ID | Scenario | Status |
 |---|---|---|
-| MPI-VAL-001 | Declare a simple task with queue size, start handler, and event handler through generated code. | approved |
-| MPI-VAL-002 | Start task predictably; start is priority and received first. | approved |
+| MPI-VAL-001 | Declare a simple task with queue size, optional start callback, and event handler through generated code. | approved |
+| MPI-VAL-002 | Construct task state, optionally run a start callback, and then begin ordinary message processing without a queued start message. | approved |
 | MPI-VAL-003 | Send an asynchronous event through a generated handle method and receive explicit queue-full errors. | approved |
 | MPI-VAL-004 | Perform a typed synchronous call without blocking the task OS thread. | approved |
 | MPI-VAL-005 | Handle concurrent same-type calls with out-of-order replies. | approved |
@@ -1261,7 +1289,7 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 Verification should include:
 
 - queue capacity, queue-full, normal FIFO, priority FIFO, and priority-before-normal tests;
-- start enqueue, forced priority, and received-first tests;
+- tests showing task spawn injects no application message and lifecycle code runs before ordinary receive processing;
 - task endpoint lifecycle tests;
 - suspended call and stream tests proving continued task progress;
 - compile-fail tests for missing receive declarations;
@@ -1301,7 +1329,7 @@ Verification should include:
 |---|---|---|---|
 | MPI-REQ-010..MPI-REQ-019 | MPI-ARCH-010, MPI-ARCH-020..MPI-ARCH-025 | MPI-INT-001..MPI-INT-004 | MPI-VAL-002, MPI-VAL-003, MPI-VAL-010 |
 | MPI-REQ-020..MPI-REQ-024 | MPI-ARCH-020..MPI-ARCH-025 | MPI-INT-001..MPI-INT-003 | MPI-VAL-003, MPI-VAL-010 |
-| MPI-REQ-030..MPI-REQ-032 | MPI-ARCH-030 | MPI-INT-001, MPI-INT-002 | MPI-VAL-002 |
+| MPI-REQ-030..MPI-REQ-032 (obsolete) | MPI-ARCH-030 (obsolete) | none | none |
 | MPI-REQ-040..MPI-REQ-043 | MPI-ARCH-040..MPI-ARCH-042 | MPI-INT-004 | MPI-VAL-004, MPI-VAL-005 |
 | MPI-REQ-050 | MPI-CMP-011 | MPI-INT-004 | MPI-VAL-006 |
 | MPI-REQ-060..MPI-REQ-074 | MPI-ARCH-050, MPI-ARCH-060 | MPI-INT-006 | MPI-VAL-004, MPI-VAL-005 |
@@ -1313,3 +1341,4 @@ Verification should include:
 | MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-023 | MPI-VAL-019, MPI-VAL-020 |
 | MPI-REQ-146..MPI-REQ-149 | MPI-ARCH-108, MPI-ARCH-109 | MPI-INT-025 | MPI-VAL-021 |
 | MPI-REQ-150 | MPI-ARCH-110 | MPI-INT-027 | MPI-VAL-004, MPI-VAL-007, MPI-VAL-011 |
+| MPI-REQ-151..MPI-REQ-152 | MPI-ARCH-111 | MPI-INT-028 | MPI-VAL-001, MPI-VAL-002 |

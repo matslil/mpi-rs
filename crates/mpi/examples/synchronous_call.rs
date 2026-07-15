@@ -7,11 +7,8 @@ struct Store {
 
 #[task(queue_size = 8)]
 impl Store {
-    #[start]
-    fn start(ctx: &mut StoreContext, value: u32) {
-        ctx.with_state(|state| {
-            state.value = value;
-        });
+    fn new(value: u32) -> Self {
+        Self { value }
     }
 
     #[call]
@@ -55,7 +52,7 @@ impl Client {
 }
 
 fn main() {
-    let (store, store_runtime) = Store::spawn(Store::default(), 42).unwrap();
+    let (store, store_runtime) = Store::spawn(Store::new(42)).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.fetch_blocking(store.clone()).unwrap();

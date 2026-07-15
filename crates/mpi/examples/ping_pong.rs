@@ -7,11 +7,8 @@ struct PingPong {
 
 #[task(queue_size = 8)]
 impl PingPong {
-    #[start]
-    fn start(ctx: &mut PingPongContext, initial: u32) {
-        ctx.with_state(|state| {
-            state.value = initial;
-        });
+    fn new(initial: u32) -> Self {
+        Self { value: initial }
     }
 
     #[event]
@@ -33,7 +30,7 @@ impl PingPong {
 }
 
 fn main() {
-    let (task, runtime) = PingPong::spawn(PingPong::default(), 2).unwrap();
+    let (task, runtime) = PingPong::spawn(PingPong::new(2)).unwrap();
 
     task.ping_blocking(3).unwrap();
     task.ping_blocking(5).unwrap();

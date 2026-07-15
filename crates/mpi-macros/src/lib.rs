@@ -23,8 +23,6 @@ struct TaskArgs {
     queue_size: TokenStream2,
     priority_reserved: TokenStream2,
     receives: Vec<Type>,
-    service_instance: Option<Ident>,
-    service_start: Option<Ident>,
 }
 
 impl Parse for TaskArgs {
@@ -32,8 +30,6 @@ impl Parse for TaskArgs {
         let mut queue_size = None;
         let mut priority_reserved = None;
         let mut receives = Vec::new();
-        let mut service_instance = None;
-        let mut service_start = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -51,16 +47,10 @@ impl Parse for TaskArgs {
                 receives = Punctuated::<Type, Token![,]>::parse_terminated(&content)?
                     .into_iter()
                     .collect();
-            } else if key == "service_instance" {
-                input.parse::<Token![=]>()?;
-                service_instance = Some(input.parse()?);
-            } else if key == "service_start" {
-                input.parse::<Token![=]>()?;
-                service_start = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `queue_size`, `priority_reserved`, `receives`, `service_instance`, or `service_start`",
+                    "expected `queue_size`, `priority_reserved`, or `receives`",
                 ));
             }
 
@@ -75,8 +65,6 @@ impl Parse for TaskArgs {
             queue_size,
             priority_reserved,
             receives,
-            service_instance,
-            service_start,
         })
     }
 }
@@ -946,16 +934,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let handle_ident = format_ident!("{}Handle", task_ident);
     let context_ident = format_ident!("{}Context", task_ident);
     let stream_control_ident = format_ident!("{}StreamControl", task_ident);
-    let service = match (args.service_instance, args.service_start) {
-        (Some(instance), Some(start)) => Some((instance, start)),
-        (None, None) => None,
-        _ => {
-            return compile_error(syn::Error::new_spanned(
-                &task_ident,
-                "`service_instance` and `service_start` must be specified together",
-            ));
-        }
-    };
+    let service_instance_ident = format_ident!("{}ServiceInstance", task_ident);
     let queue_size = args.queue_size;
     let priority_reserved = args.priority_reserved;
     let receives = args.receives;
@@ -995,6 +974,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             "task terminated handler must take exactly one TaskTerminated argument after the context",
                         ));
                     }
+                    if matches!(kind, HandlerKind::Start) && !args.is_empty() {
+                        return compile_error(syn::Error::new_spanned(
+                            &method.sig,
+                            "start callback must take only the generated task context",
+                        ));
+                    }
                     if matches!(kind, HandlerKind::Stop) && !args.is_empty() {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
@@ -1018,6 +1003,64 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
             other => stripped_items.push(other),
+        }
+    }
+
+    let constructors: Vec<_> = stripped_items
+        .iter()
+        .filter_map(|item| match item {
+            ImplItem::Fn(method) if method.sig.ident == "new" => Some(method),
+            _ => None,
+        })
+        .collect();
+    if constructors.len() > 1 {
+        return compile_error(syn::Error::new_spanned(
+            &task_ident,
+            "#[task] supports at most one user-state constructor named `new`",
+        ));
+    }
+    let has_constructor = !constructors.is_empty();
+    let mut constructor_args = Vec::new();
+    if let Some(constructor) = constructors.first() {
+        if constructor.sig.asyncness.is_some() {
+            return compile_error(syn::Error::new_spanned(
+                &constructor.sig,
+                "task `new` constructor must not be async",
+            ));
+        }
+        let returns_self = match &constructor.sig.output {
+            syn::ReturnType::Type(_, ty) => matches!(
+                &**ty,
+                Type::Path(path)
+                    if path.qself.is_none()
+                        && path.path.segments.len() == 1
+                        && path.path.is_ident("Self")
+            ),
+            syn::ReturnType::Default => false,
+        };
+        if !returns_self {
+            return compile_error(syn::Error::new_spanned(
+                &constructor.sig.output,
+                "task `new` constructor must return `Self`",
+            ));
+        }
+        for input in &constructor.sig.inputs {
+            let FnArg::Typed(argument) = input else {
+                return compile_error(syn::Error::new_spanned(
+                    input,
+                    "task `new` constructor must not take a self receiver",
+                ));
+            };
+            let Pat::Ident(pattern) = &*argument.pat else {
+                return compile_error(syn::Error::new_spanned(
+                    &argument.pat,
+                    "task `new` constructor arguments must use identifier patterns",
+                ));
+            };
+            constructor_args.push(HandlerArg {
+                ident: pattern.ident.clone(),
+                ty: (*argument.ty).clone(),
+            });
         }
     }
 
@@ -1085,8 +1128,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut dispatch_arms = Vec::new();
     let mut handle_methods = Vec::new();
     let mut protocol_impls = Vec::new();
-    let mut start_args = Vec::new();
-    let mut start_variant = None;
+    let mut start_callback = quote! {};
     let late_reply_callback = handlers
         .iter()
         .find(|handler| matches!(handler.kind, HandlerKind::LateReply))
@@ -1239,24 +1281,15 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         match &handler.kind {
             HandlerKind::Start => {
-                start_args = handler.args.clone();
-                start_variant =
-                    Some(quote! { #message_ident::#variant_ident { #(#arg_idents),* } });
-                variants.push(quote! { #variant_ident { #(#arg_idents: #arg_tys),* } });
-                placements.push(quote! {
-                    Self::#variant_ident { .. } => ::mpi::MessagePlacement::Priority
-                });
-                dispatch_arms.push(quote! {
-                    #message_ident::#variant_ident { #(#arg_idents),* } => {
-                        let __ctx_inner = ctx.inner.clone();
-                        __run_handler(
-                            #handler_call,
-                            inner_handle,
-                            state,
-                            &__ctx_inner,
-                        );
-                    }
-                });
+                start_callback = quote! {
+                    let __ctx_inner = ctx.inner.clone();
+                    __run_handler(
+                        #handler_call,
+                        &inner_handle,
+                        &state,
+                        &__ctx_inner,
+                    );
+                };
             }
             HandlerKind::Event { priority, protocol } => {
                 let placement = if *priority {
@@ -1743,21 +1776,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
-    if start_count == 0 {
-        let variant_ident = format_ident!("Start");
-        start_variant = Some(quote! { #message_ident::#variant_ident });
-        variants.push(quote! { #variant_ident });
-        placements.push(quote! {
-            Self::#variant_ident => ::mpi::MessagePlacement::Priority
-        });
-        dispatch_arms.push(quote! {
-            #message_ident::#variant_ident => {}
-        });
-    }
-
-    let start_variant = start_variant.expect("start variant synthesized above");
-    let start_arg_idents: Vec<_> = start_args.iter().map(|arg| &arg.ident).collect();
-    let start_arg_tys: Vec<_> = start_args.iter().map(|arg| &arg.ty).collect();
+    let constructor_arg_idents: Vec<_> = constructor_args.iter().map(|arg| &arg.ident).collect();
+    let constructor_arg_tys: Vec<_> = constructor_args.iter().map(|arg| &arg.ty).collect();
     let receive_impls = receives.iter().map(|receive_ty| {
         quote! {
             impl ::mpi::CanReceive<#receive_ty> for #message_ident
@@ -1770,8 +1790,24 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     });
-    let service_definition = service.map(|(instance_ident, start_ident)| {
-        let inner_ident = format_ident!("__{}Inner", instance_ident);
+    let service_definition = {
+        let instance_ident = &service_instance_ident;
+        let inner_ident = format_ident!("__{}Inner", service_instance_ident);
+        let start_method = has_constructor.then(|| quote! {
+            /// Construct user state, start the task, and return its owning instance.
+            #[must_use]
+            pub fn start(#(#constructor_arg_idents: #constructor_arg_tys),*) -> Self {
+                let state = #task_ident::new(#(#constructor_arg_idents),*);
+                let (handle, runtime) = #task_ident::spawn(state)
+                    .expect("start task service instance");
+                Self {
+                    inner: ::std::sync::Arc::new(#inner_ident {
+                        handle,
+                        runtime: ::std::sync::Mutex::new(Some(runtime)),
+                    }),
+                }
+            }
+        });
         quote! {
             struct #inner_ident {
                 handle: #handle_ident,
@@ -1798,31 +1834,15 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             impl #instance_ident {
+                #start_method
+
                 /// Return a protocol binding for this running service task.
                 pub fn binding(&self) -> #handle_ident {
                     self.inner.handle.clone()
                 }
             }
-
-            /// Start the service task and return its owning service instance.
-            #[must_use]
-            pub fn #start_ident(#(#start_arg_idents: #start_arg_tys),*) -> #instance_ident
-            where
-                #task_ident: ::std::default::Default + Send + 'static,
-            {
-                let (handle, runtime) = #task_ident::spawn(
-                    #task_ident::default()
-                    #(, #start_arg_idents)*
-                ).expect("start service task");
-                #instance_ident {
-                    inner: ::std::sync::Arc::new(#inner_ident {
-                        handle,
-                        runtime: ::std::sync::Mutex::new(Some(runtime)),
-                    }),
-                }
-            }
         }
-    });
+    };
 
     let expanded = quote! {
         #item_impl
@@ -2112,13 +2132,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #task_ident {
             pub fn spawn(
                 state: Self
-                #(, #start_arg_idents: #start_arg_tys)*
             ) -> Result<(#handle_ident, ::mpi::TaskRuntime<()>), ::mpi::SendError>
             where
                 Self: Send + 'static,
             {
                 let (inner, runtime) = ::mpi::spawn_task::<#message_ident, _, _, #queue_size>(
-                    #start_variant,
                     #priority_reserved,
                     move |inner_handle| {
                         let state = ::std::rc::Rc::new(::std::cell::RefCell::new(state));
@@ -2185,6 +2203,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             state: state.clone(),
                         };
                         let mut deferred = ::std::collections::VecDeque::<#message_ident>::new();
+
+                        #start_callback
 
                         loop {
                             if ctx.is_stopped() {

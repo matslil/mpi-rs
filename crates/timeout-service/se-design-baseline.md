@@ -96,18 +96,19 @@ Status: approved
   timeouts; no active-timeout registry or bespoke cancel protocol exists.
 - TOS-ARCH-005: Generated MPI stream machinery owns session routing,
   backpressure, target termination, and terminal outcomes.
-- TOS-ARCH-006: The task macro generates the service instance and start
-  function. The generated instance owns the timeout task binding and runtime
-  join capability; the crate adds only its timeout protocol convenience method.
+- TOS-ARCH-006: The timeout task's pure `new()` constructor enables the task
+  macro to generate `TimeoutTaskServiceInstance::start()`. The generated
+  instance owns the timeout task binding and runtime join capability; the crate
+  adds only its timeout protocol convenience method.
 
 ## Interface
 
 ```rust
 pub struct TimeoutOccurred;
 
-pub fn start_timeout_service() -> TimeoutServiceInstance;
+impl TimeoutTaskServiceInstance {
+    pub fn start() -> Self;
 
-impl TimeoutServiceInstance {
     pub fn timeout<C>(
         &self,
         ctx: &mut C,
@@ -123,6 +124,9 @@ impl TimeoutServiceInstance {
   stream.
 - TOS-INT-004: Main scope may create the service and tasks but cannot start or
   consume timeout streams.
+- TOS-INT-005: Main starts the timeout service through
+  `TimeoutTaskServiceInstance::start()`; the task's `new()` constructor accepts
+  no framework context and constructs only task state.
 
 ## Validation
 
@@ -150,7 +154,7 @@ Status: approved
 
 | Requirements | Architecture | Interfaces | Validation |
 |---|---|---|---|
-| TOS-REQ-001, TOS-REQ-008 | TOS-ARCH-006 | TOS-INT-004 | TOS-VAL-001 |
+| TOS-REQ-001, TOS-REQ-008 | TOS-ARCH-006 | TOS-INT-004, TOS-INT-005 | TOS-VAL-001 |
 | TOS-REQ-002, TOS-REQ-006 | TOS-ARCH-001..TOS-ARCH-003 | TOS-INT-001 | TOS-VAL-001 |
 | TOS-REQ-003, TOS-REQ-005 | TOS-ARCH-002, TOS-ARCH-003, TOS-ARCH-005 | TOS-INT-001..TOS-INT-003 | TOS-VAL-001 |
 | TOS-REQ-004 | TOS-ARCH-004 | TOS-INT-003 | TOS-VAL-002 |

@@ -15,7 +15,6 @@ use mpi::{
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum TestMessage {
-    Start,
     Normal(u8),
     Priority(u8),
 }
@@ -23,7 +22,7 @@ enum TestMessage {
 impl TaskMessage for TestMessage {
     fn placement(&self) -> MessagePlacement {
         match self {
-            Self::Start | Self::Priority(_) => MessagePlacement::Priority,
+            Self::Priority(_) => MessagePlacement::Priority,
             Self::Normal(_) => MessagePlacement::Normal,
         }
     }
@@ -219,25 +218,24 @@ fn req_034_priority_messages_are_received_before_normal_messages() {
 }
 
 #[test]
-fn req_040_req_041_req_042_start_message_is_first() {
+fn mpi_req_151_spawn_injects_no_application_message() {
     let ready = Arc::new(Barrier::new(2));
     let task_ready = Arc::clone(&ready);
-    let (handle, runtime) =
-        spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, 1, move |handle| {
-            task_ready.wait();
-            handle.send_message(TestMessage::Priority(9)).unwrap();
-            let first = handle.recv_message().unwrap();
-            let second = handle.recv_message().unwrap();
-            (first, second)
-        })
-        .unwrap();
+    let (handle, runtime) = spawn_task::<TestMessage, _, _, 4>(1, move |handle| {
+        task_ready.wait();
+        handle.send_message(TestMessage::Priority(9)).unwrap();
+        let first = handle.recv_message().unwrap();
+        let second = handle.recv_message().unwrap();
+        (first, second)
+    })
+    .unwrap();
 
     handle.send_message(TestMessage::Normal(1)).unwrap();
     ready.wait();
     let (first, second) = runtime.join().unwrap();
 
-    assert_eq!(first, TestMessage::Start);
-    assert_eq!(second, TestMessage::Priority(9));
+    assert_eq!(first, TestMessage::Priority(9));
+    assert_eq!(second, TestMessage::Normal(1));
 }
 
 #[test]
@@ -354,7 +352,6 @@ fn req_090_response_carries_session_id_and_value() {
 }
 
 enum CallMessage {
-    Start,
     Get {
         session_id: SessionId,
         reply: SyncReplySender<u32>,
@@ -364,7 +361,6 @@ enum CallMessage {
 impl TaskMessage for CallMessage {
     fn placement(&self) -> MessagePlacement {
         match self {
-            Self::Start => MessagePlacement::Priority,
             Self::Get { .. } => MessagePlacement::Normal,
         }
     }
@@ -372,16 +368,13 @@ impl TaskMessage for CallMessage {
 
 #[test]
 fn req_091_req_120_external_call_blocking_returns_one_typed_response() {
-    let (handle, runtime) = spawn_task::<CallMessage, _, _, 4>(CallMessage::Start, 1, |handle| {
-        assert!(matches!(handle.recv_message().unwrap(), CallMessage::Start));
-        match handle.recv_message().unwrap() {
+    let (handle, runtime) =
+        spawn_task::<CallMessage, _, _, 4>(1, |handle| match handle.recv_message().unwrap() {
             CallMessage::Get { session_id, reply } => {
                 reply.send(Response::new(session_id, 42)).unwrap();
             }
-            CallMessage::Start => panic!("unexpected second start message"),
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
 
     let response = handle
         .call_blocking(|session_id, reply| CallMessage::Get { session_id, reply })
