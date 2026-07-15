@@ -13,8 +13,8 @@ the `mpi-core` crate.
 `timeout-service` lets tasks schedule session-associated timeout-occurred events
 for future delivery.
 
-The timeout service receives timeout requests that contain a `SessionId`, a
-delivery target, and an absolute monotonic deadline. If the deadline expires
+The timeout service receives timeout requests that contain a `SessionId`, an
+infrastructure-derived sender endpoint, and an absolute monotonic deadline. If the deadline expires
 before a matching cancel is processed, the timeout service sends a
 timeout-occurred event containing only the request `SessionId` to the declared
 delivery target.
@@ -29,7 +29,8 @@ delivery target.
 - accepting timeout requests keyed by `SessionId`;
 - accepting best-effort timeout cancel messages keyed by `SessionId`;
 - detecting illegal duplicate active timeout requests for the same `SessionId`;
-- delivering payload-free timeout-occurred events through `mpi` send behavior;
+- deriving the timeout-event return endpoint from requesting task scope and
+  delivering payload-free timeout-occurred events through `mpi` send behavior;
 - bounding expired-timeout delivery waits with a local timeout handled by the
   timeout service itself;
 - returning a service instance whose lifetime owns the timeout task and its
@@ -152,7 +153,7 @@ Status: proposed
 
 When an active timeout request reaches its deadline before a matching cancel is
 processed, the timeout service shall send the timeout-occurred event to the
-request's declared delivery target.
+request sender endpoint derived by the infrastructure from task scope.
 
 Source: TOS-SN-001.
 
@@ -281,7 +282,7 @@ Status: proposed
 | TOS-CMP-002 | Time API | Provides `Time::now()` and the crate-owned monotonic deadline type. |
 | TOS-CMP-003 | Active timeout registry | Tracks active requests by `SessionId` and rejects duplicate active requests. |
 | TOS-CMP-004 | Timer backend | Waits until the next active deadline using local monotonic timer primitives. |
-| TOS-CMP-005 | Timeout-event delivery operation | Sends a timeout-occurred event containing only the expired request's `SessionId`. |
+| TOS-CMP-005 | Timeout-event return routing | Sends a timeout-occurred event containing only the expired request's `SessionId`. |
 | TOS-CMP-006 | Timeout service instance | Owns the timeout task lifetime and exposes the timeout protocol binding. |
 
 Architecture rules:
@@ -297,15 +298,20 @@ Architecture rules:
   service receive declaration.
 - TOS-ARCH-007: Timeout requests and timeout-occurred events contain no
   application-specific timeout payload.
-- TOS-ARCH-008: Expired timeout delivery sends a timeout-occurred event with the
-  request `SessionId` using `mpi` send semantics and may suspend under normal
-  queue backpressure.
+- TOS-ARCH-008: Request construction derives a typed sender endpoint from task
+  scope and stores it as infrastructure routing data. Expired timeout delivery
+  sends a timeout-occurred event with the request `SessionId` through that
+  endpoint using `mpi` send semantics and may suspend under normal queue
+  backpressure.
 - TOS-ARCH-009: The timeout service's own bound on expiry send wait uses local
   timer primitives and does not depend on a nested timeout request.
 - TOS-ARCH-010: Platform-specific timer backend details are hidden behind the
   crate time and timer backend interfaces.
 - TOS-ARCH-011: The timeout service is exposed through a service instance whose
   lifetime owns the timeout task and protocol binding.
+- TOS-ARCH-012: The timeout worker is spawned through the `mpi` task runtime so
+  endpoint termination and unwind panic isolation follow the common task
+  lifecycle design.
 
 ## Interface
 
@@ -329,7 +335,7 @@ Conceptual timeout request fields:
 TimeoutRequest {
     session_id: SessionId,
     deadline: TimeoutInstant,
-    delivery_target,
+    sender_endpoint, // infrastructure-derived, not caller-supplied payload
 }
 ```
 
@@ -352,17 +358,17 @@ TimeoutCancel {
 Conceptual service interface:
 
 ```rust
-mpi::protocol! {
-    pub protocol TimeoutServiceProtocolV1 {
-        event request(TimeoutRequest);
-        event cancel(TimeoutCancel);
-    }
+impl TimeoutServiceBinding<'_> {
+    pub fn request(&self, ctx: &mut impl TaskScope, request: TimeoutRequest)
+        -> Result<(), SendError>;
+    pub fn cancel(&self, ctx: &mut impl TaskScope, cancel: TimeoutCancel)
+        -> Result<(), SendError>;
 }
 
 pub fn start_timeout_service<const N: usize>() -> TimeoutServiceInstance<N>;
 
 impl<const N: usize> TimeoutServiceInstance<N> {
-    pub fn protocol(&self) -> TimeoutServiceProtocolV1::Binding<&TimeoutServiceEndpoint<N>>;
+    pub fn protocol(&self) -> TimeoutServiceBinding<'_, N>;
 }
 ```
 
@@ -372,8 +378,10 @@ Interface rules:
   from the same crate-owned monotonic time type when constructing deadlines.
 - TOS-INT-002: Timeout request deadlines shall use `TimeoutInstant`.
 - TOS-INT-003: Timeout requests and timeout cancels shall carry `SessionId`.
-- TOS-INT-004: Timeout requests shall provide a typed delivery operation for a
-  timeout-occurred event containing only the request `SessionId`.
+- TOS-INT-004: Timeout requests shall retain a typed infrastructure return
+  endpoint for a timeout-occurred event containing only the request `SessionId`. The endpoint
+  shall be derived by `TimeoutRequest::new(ctx, session_id, deadline)` from the
+  requesting task and shall not be supplied as a request payload.
 - TOS-INT-005: Timeout cancel messages shall be declared as priority messages by
   the timeout service.
 - TOS-INT-006: Receivers shall handle timeout occurrence as an event and should
@@ -415,7 +423,7 @@ Verification should include:
 Status: proposed
 
 A task schedules a timeout request event with a `SessionId`, absolute monotonic
-deadline, and delivery target. The timeout service stores the request and later
+deadline, and infrastructure-derived sender endpoint. The timeout service stores the request and later
 sends a timeout-occurred event when the deadline expires.
 
 Expected outcome:
@@ -505,7 +513,7 @@ Evidence type: test or demonstration
 | TOS-REQ-009, TOS-REQ-010 | TOS-ARCH-004, TOS-ARCH-005 | TOS-INT-003 | test, analysis | TOS-VAL-002, TOS-VAL-003 |
 | TOS-REQ-011 | TOS-ARCH-006 | TOS-INT-005 | inspection | TOS-VAL-002 |
 | TOS-REQ-012 | TOS-ARCH-005 | TOS-INT-006 | inspection | TOS-VAL-003 |
-| TOS-REQ-013, TOS-REQ-014 | TOS-ARCH-008, TOS-ARCH-009 | timeout-event delivery operation | test, inspection | TOS-VAL-004 |
+| TOS-REQ-013, TOS-REQ-014 | TOS-ARCH-008, TOS-ARCH-009 | timeout-event return routing | test, inspection | TOS-VAL-004 |
 | TOS-REQ-015 | TOS-CMP-004, TOS-ARCH-010 | platform backend interface | inspection | TOS-VAL-001 |
-| TOS-REQ-016 | TOS-CMP-006, TOS-ARCH-011 | TOS-INT-007, TOS-INT-008 | test, inspection | TOS-VAL-005 |
+| TOS-REQ-016 | TOS-CMP-006, TOS-ARCH-011, TOS-ARCH-012 | TOS-INT-007, TOS-INT-008 | test, inspection | TOS-VAL-005 |
 | TOS-REQ-017 | feature configuration | TOS-INT-009 | inspection | TOS-VAL-005 |

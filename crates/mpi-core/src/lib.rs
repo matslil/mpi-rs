@@ -24,7 +24,8 @@ pub use lifecycle::{
 };
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
-    MessagePlacement, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage, TaskMessage,
+    MessagePlacement, MessageTarget, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage,
+    TaskMessage,
 };
 pub use mpi_macros::{
     call, event, late_reply, protocol, start, stop, stream, task, task_terminated,

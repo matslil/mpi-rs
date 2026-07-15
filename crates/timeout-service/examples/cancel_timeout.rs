@@ -1,47 +1,66 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mpi::{EndpointId, SessionId, task};
-use timeout_service::{Time, TimeoutCancel, TimeoutRequest, start_timeout_service};
+use timeout_service::{
+    Time, TimeoutCancel, TimeoutOccurred, TimeoutRequest, TimeoutServiceInstance,
+    start_timeout_service,
+};
 
-#[derive(Default)]
 struct Receiver {
-    occurred: Option<SessionId>,
+    occurred: Arc<Mutex<Option<SessionId>>>,
 }
 
 #[task(queue_size = 8)]
 impl Receiver {
-    #[event]
-    fn timeout_occurred(ctx: &mut ReceiverContext, session_id: SessionId) {
-        ctx.with_state(|state| {
-            state.occurred = Some(session_id);
-        });
+    #[start]
+    fn start(
+        ctx: &mut ReceiverContext,
+        service: TimeoutServiceInstance<8>,
+        canceled: SessionId,
+        verification: SessionId,
+    ) {
+        let canceled_request =
+            TimeoutRequest::new(ctx, canceled, Time::now() + Duration::from_millis(20));
+        service.protocol().request(ctx, canceled_request).unwrap();
+        service
+            .protocol()
+            .cancel(ctx, TimeoutCancel::new(canceled))
+            .unwrap();
+
+        let verification_request =
+            TimeoutRequest::new(ctx, verification, Time::now() + Duration::from_millis(40));
+        service
+            .protocol()
+            .request(ctx, verification_request)
+            .unwrap();
     }
 
-    #[call]
-    fn occurred(ctx: &mut ReceiverContext) -> Option<SessionId> {
-        ctx.with_state(|state| state.occurred)
+    #[event(receive)]
+    fn timeout_occurred(ctx: &mut ReceiverContext, occurred: TimeoutOccurred) {
+        ctx.with_state(|state| {
+            *state.occurred.lock().unwrap() = Some(occurred.session_id());
+        });
+        ctx.stop();
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = start_timeout_service::<8>();
-    let (receiver, runtime) = Receiver::spawn(Receiver::default())?;
-    let session_id = SessionId::new(EndpointId(1), 7);
-    let delivery_target = receiver.clone();
+    let observed = Arc::new(Mutex::new(None));
+    let canceled = SessionId::new(EndpointId(1), 7);
+    let verification = SessionId::new(EndpointId(1), 8);
+    let (_receiver, runtime) = Receiver::spawn(
+        Receiver {
+            occurred: Arc::clone(&observed),
+        },
+        service.clone(),
+        canceled,
+        verification,
+    )?;
 
-    service.protocol().request_blocking(TimeoutRequest::new(
-        session_id,
-        Time::now() + Duration::from_millis(200),
-        move |occurred| delivery_target.timeout_occurred_blocking(occurred),
-    ))?;
-    service
-        .protocol()
-        .cancel_blocking(TimeoutCancel::new(session_id))?;
-
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(receiver.occurred_blocking()?, None);
-    receiver.stop_blocking()?;
     runtime.join()?;
-    println!("timeout for {session_id} was canceled before it occurred");
+    assert_eq!(*observed.lock().unwrap(), Some(verification));
+    println!("timeout for {canceled} was canceled before it occurred");
     Ok(())
 }

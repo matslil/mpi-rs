@@ -1130,6 +1130,10 @@ pub trait CanReceive<T>: TaskMessage {
     fn wrap(value: T) -> Self;
 }
 
+pub trait MessageTarget<T>: Send + Sync {
+    fn send(&self, value: T) -> Result<(), SendError>;
+}
+
 pub enum TaskTermination {
     Completed,
     Stopped,

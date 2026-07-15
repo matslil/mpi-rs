@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mpi::{
-    MessagePlacement, QueueSpaceWakeupMessage, SendError, SessionId, TaskHandle, TaskMessage,
-    TaskQueue, protocol,
+    CanReceive, MessagePlacement, MessageTarget, QueueSpaceWakeupMessage, SendError, SessionId,
+    TaskHandle, TaskMessage, TaskRuntime, spawn_task,
 };
 
 /// Crate-owned monotonic time source.
@@ -65,22 +65,17 @@ impl std::ops::Sub<Duration> for TimeoutInstant {
     }
 }
 
-/// Operation that delivers a payload-free timeout-occurred event.
-///
-/// The timeout service owns this object while the timeout is pending. It calls
-/// `try_deliver` until delivery succeeds, a non-retryable error occurs, or the
-/// service's local delivery wait bound expires.
-pub trait TimeoutDelivery: Send + 'static {
-    /// Attempt one delivery of the timeout-occurred event for `session_id`.
-    fn try_deliver(&mut self, session_id: SessionId) -> Result<(), SendError>;
+/// Payload-free event emitted when a requested timeout occurs.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct TimeoutOccurred {
+    session_id: SessionId,
 }
 
-impl<F> TimeoutDelivery for F
-where
-    F: FnMut(SessionId) -> Result<(), SendError> + Send + 'static,
-{
-    fn try_deliver(&mut self, session_id: SessionId) -> Result<(), SendError> {
-        self(session_id)
+impl TimeoutOccurred {
+    /// Return the timeout session that expired.
+    #[must_use]
+    pub const fn session_id(&self) -> SessionId {
+        self.session_id
     }
 }
 
@@ -88,20 +83,21 @@ where
 pub struct TimeoutRequest {
     session_id: SessionId,
     deadline: TimeoutInstant,
-    delivery: Box<dyn TimeoutDelivery>,
+    sender: Arc<dyn MessageTarget<TimeoutOccurred>>,
 }
 
 impl TimeoutRequest {
-    /// Construct a timeout request with a payload-free timeout-event delivery operation.
+    /// Construct a timeout request using the requesting task as its return endpoint.
     #[must_use]
-    pub fn new<D>(session_id: SessionId, deadline: TimeoutInstant, delivery: D) -> Self
+    pub fn new<C>(ctx: &C, session_id: SessionId, deadline: TimeoutInstant) -> Self
     where
-        D: TimeoutDelivery,
+        C: mpi::TaskScope,
+        C::Message: CanReceive<TimeoutOccurred>,
     {
         Self {
             session_id,
             deadline,
-            delivery: Box::new(delivery),
+            sender: ctx.message_target::<TimeoutOccurred>(),
         }
     }
 
@@ -115,6 +111,19 @@ impl TimeoutRequest {
     #[must_use]
     pub const fn deadline(&self) -> TimeoutInstant {
         self.deadline
+    }
+
+    #[cfg(test)]
+    fn with_target(
+        session_id: SessionId,
+        deadline: TimeoutInstant,
+        sender: Arc<dyn MessageTarget<TimeoutOccurred>>,
+    ) -> Self {
+        Self {
+            session_id,
+            deadline,
+            sender,
+        }
     }
 }
 
@@ -138,16 +147,39 @@ impl TimeoutCancel {
     }
 }
 
-// Message protocol accepted by the timeout service task.
-protocol! {
-    pub protocol TimeoutServiceProtocolV1 {
-        event request(TimeoutRequest);
-        event cancel(TimeoutCancel);
+/// Task-scoped timeout service protocol.
+pub struct TimeoutServiceProtocolV1;
+
+/// Protocol instance bound to one timeout service endpoint.
+pub struct TimeoutServiceBinding<'a, const N: usize> {
+    endpoint: &'a TimeoutServiceEndpoint<N>,
+}
+
+impl<const N: usize> TimeoutServiceBinding<'_, N> {
+    /// Schedule a timeout from task scope.
+    pub fn request(
+        &self,
+        _ctx: &mut impl mpi::TaskScope,
+        request: TimeoutRequest,
+    ) -> Result<(), SendError> {
+        self.endpoint.handle.request(request)
+    }
+
+    /// Cancel a timeout from task scope.
+    pub fn cancel(
+        &self,
+        _ctx: &mut impl mpi::TaskScope,
+        cancel: TimeoutCancel,
+    ) -> Result<(), SendError> {
+        self.endpoint.handle.cancel(cancel)
     }
 }
 
 /// Messages received by the timeout service task.
 enum TimeoutServiceMessage {
+    /// Start the timeout service task.
+    Start,
+
     /// Schedule a timeout.
     Request(TimeoutRequest),
 
@@ -164,7 +196,9 @@ enum TimeoutServiceMessage {
 impl TaskMessage for TimeoutServiceMessage {
     fn placement(&self) -> MessagePlacement {
         match self {
-            Self::Cancel(_) | Self::QueueSpaceWakeup | Self::Stop => MessagePlacement::Priority,
+            Self::Start | Self::Cancel(_) | Self::QueueSpaceWakeup | Self::Stop => {
+                MessagePlacement::Priority
+            }
             Self::Request(_) => MessagePlacement::Normal,
         }
     }
@@ -296,37 +330,9 @@ impl<const N: usize> TimeoutServiceEndpoint<N> {
     }
 }
 
-impl<const N: usize> TimeoutServiceProtocolV1::request::Target for &TimeoutServiceEndpoint<N> {
-    fn request(
-        &self,
-        _ctx: &mut impl mpi::TaskScope,
-        request: TimeoutRequest,
-    ) -> Result<(), SendError> {
-        self.handle.request(request)
-    }
-
-    fn request_blocking(&self, request: TimeoutRequest) -> Result<(), SendError> {
-        self.handle.request(request)
-    }
-}
-
-impl<const N: usize> TimeoutServiceProtocolV1::cancel::Target for &TimeoutServiceEndpoint<N> {
-    fn cancel(
-        &self,
-        _ctx: &mut impl mpi::TaskScope,
-        cancel: TimeoutCancel,
-    ) -> Result<(), SendError> {
-        self.handle.cancel(cancel)
-    }
-
-    fn cancel_blocking(&self, cancel: TimeoutCancel) -> Result<(), SendError> {
-        self.handle.cancel(cancel)
-    }
-}
-
 struct TimeoutServiceInner<const N: usize> {
     endpoint: TimeoutServiceEndpoint<N>,
-    join: Mutex<Option<std::thread::JoinHandle<Result<(), TimeoutServiceError>>>>,
+    join: Mutex<Option<TaskRuntime<Result<(), TimeoutServiceError>>>>,
 }
 
 impl<const N: usize> TimeoutServiceInner<N> {
@@ -375,8 +381,10 @@ impl<const N: usize> Clone for TimeoutServiceInstance<N> {
 impl<const N: usize> TimeoutServiceInstance<N> {
     /// Return the timeout protocol binding for this service instance.
     #[must_use]
-    pub fn protocol(&self) -> TimeoutServiceProtocolV1::Binding<&TimeoutServiceEndpoint<N>> {
-        TimeoutServiceProtocolV1::bind(&self.inner.endpoint)
+    pub fn protocol(&self) -> TimeoutServiceBinding<'_, N> {
+        TimeoutServiceBinding {
+            endpoint: &self.inner.endpoint,
+        }
     }
 
     #[cfg(test)]
@@ -393,11 +401,21 @@ impl<const N: usize> TimeoutServiceInstance<N> {
         join.join()
             .map_err(|_| TimeoutServiceError::ThreadPanicked)?
     }
+
+    #[cfg(test)]
+    fn request_for_test(&self, request: TimeoutRequest) -> Result<(), SendError> {
+        self.inner.endpoint.handle.request(request)
+    }
+
+    #[cfg(test)]
+    fn cancel_for_test(&self, cancel: TimeoutCancel) -> Result<(), SendError> {
+        self.inner.endpoint.handle.cancel(cancel)
+    }
 }
 
 struct ActiveTimeout {
     deadline: TimeoutInstant,
-    delivery: Box<dyn TimeoutDelivery>,
+    sender: Arc<dyn MessageTarget<TimeoutOccurred>>,
 }
 
 /// Start a timeout service with default configuration.
@@ -409,18 +427,24 @@ pub fn start_timeout_service<const N: usize>() -> TimeoutServiceInstance<N> {
 pub fn start_timeout_service_with_config<const N: usize>(
     config: TimeoutServiceConfig,
 ) -> TimeoutServiceInstance<N> {
-    let queue = Arc::new(
-        TaskQueue::<TimeoutServiceMessage, N>::with_priority_reserved(config.priority_reserved),
-    );
+    let (task_handle, runtime) = spawn_task::<TimeoutServiceMessage, _, _, N>(
+        TimeoutServiceMessage::Start,
+        config.priority_reserved,
+        move |task_handle| {
+            let worker_handle = TimeoutServiceHandle {
+                handle: task_handle,
+            };
+            run_service(worker_handle, config)
+        },
+    )
+    .expect("timeout service queue must accept its start message");
     let handle = TimeoutServiceHandle {
-        handle: TaskHandle::new(queue),
+        handle: task_handle,
     };
-    let worker_handle = handle.clone();
-    let join = std::thread::spawn(move || run_service(worker_handle, config));
     TimeoutServiceInstance {
         inner: Arc::new(TimeoutServiceInner {
             endpoint: TimeoutServiceEndpoint::new(handle),
-            join: Mutex::new(Some(join)),
+            join: Mutex::new(Some(runtime)),
         }),
     }
 }
@@ -436,6 +460,7 @@ fn run_service<const N: usize>(
     loop {
         while let Some(message) = handle.task_handle().try_recv_message() {
             match message {
+                TimeoutServiceMessage::Start => {}
                 TimeoutServiceMessage::Request(request) => {
                     if canceled.remove(&request.session_id) {
                         continue;
@@ -448,7 +473,7 @@ fn run_service<const N: usize>(
                         request.session_id,
                         ActiveTimeout {
                             deadline: request.deadline,
-                            delivery: request.delivery,
+                            sender: request.sender,
                         },
                     );
                 }
@@ -478,7 +503,7 @@ fn run_service<const N: usize>(
             if timeout.deadline != deadline {
                 continue;
             }
-            deliver_with_local_timeout(session_id, timeout.delivery, config)?;
+            deliver_with_local_timeout(session_id, timeout.sender, config)?;
             delivered = true;
         }
 
@@ -502,12 +527,12 @@ fn run_service<const N: usize>(
 
 fn deliver_with_local_timeout(
     session_id: SessionId,
-    mut delivery: Box<dyn TimeoutDelivery>,
+    sender: Arc<dyn MessageTarget<TimeoutOccurred>>,
     config: TimeoutServiceConfig,
 ) -> Result<(), TimeoutServiceError> {
     let delivery_deadline = Time::now() + config.delivery_timeout;
     loop {
-        match delivery.try_deliver(session_id) {
+        match sender.send(TimeoutOccurred { session_id }) {
             Ok(()) => return Ok(()),
             Err(SendError::QueueFull) => {
                 if Time::now().has_reached(delivery_deadline) {
@@ -526,7 +551,6 @@ fn deliver_with_local_timeout(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
 
     use mpi::EndpointId;
@@ -537,14 +561,50 @@ mod tests {
         SessionId::new(EndpointId(7), sequence)
     }
 
-    fn request_with_sender(
+    struct RecordingTarget {
+        observed: Arc<Mutex<Vec<SessionId>>>,
+    }
+
+    impl MessageTarget<TimeoutOccurred> for RecordingTarget {
+        fn send(&self, occurred: TimeoutOccurred) -> Result<(), SendError> {
+            self.observed.lock().unwrap().push(occurred.session_id());
+            Ok(())
+        }
+    }
+
+    struct RetryTarget {
+        attempts: Arc<AtomicUsize>,
+        observed: Arc<Mutex<Vec<SessionId>>>,
+    }
+
+    impl MessageTarget<TimeoutOccurred> for RetryTarget {
+        fn send(&self, occurred: TimeoutOccurred) -> Result<(), SendError> {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(SendError::QueueFull);
+            }
+            self.observed.lock().unwrap().push(occurred.session_id());
+            Ok(())
+        }
+    }
+
+    struct FullTarget;
+
+    impl MessageTarget<TimeoutOccurred> for FullTarget {
+        fn send(&self, _occurred: TimeoutOccurred) -> Result<(), SendError> {
+            Err(SendError::QueueFull)
+        }
+    }
+
+    fn request_with_target(
         session_id: SessionId,
         delay: Duration,
-        tx: mpsc::Sender<SessionId>,
+        observed: Arc<Mutex<Vec<SessionId>>>,
     ) -> TimeoutRequest {
-        TimeoutRequest::new(session_id, Time::now() + delay, move |delivered| {
-            tx.send(delivered).map_err(|_| SendError::TaskStopped)
-        })
+        TimeoutRequest::with_target(
+            session_id,
+            Time::now() + delay,
+            Arc::new(RecordingTarget { observed }),
+        )
     }
 
     #[test]
@@ -559,41 +619,43 @@ mod tests {
     #[test]
     fn tos_req_007_expiry_delivers_timeout_occurred_event() {
         let service = start_timeout_service::<8>();
-        let (tx, rx) = mpsc::channel();
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(1);
 
         service
-            .protocol()
-            .request_blocking(request_with_sender(
+            .request_for_test(request_with_target(
                 session_id,
                 Duration::from_millis(5),
-                tx,
+                Arc::clone(&observed),
             ))
             .unwrap();
 
-        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while observed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(*observed.lock().unwrap(), vec![session_id]);
     }
 
     #[test]
     fn tos_req_009_cancel_discards_pending_timeout() {
         let service = start_timeout_service::<8>();
-        let (tx, rx) = mpsc::channel();
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(2);
 
         service
-            .protocol()
-            .request_blocking(request_with_sender(
+            .request_for_test(request_with_target(
                 session_id,
                 Duration::from_millis(100),
-                tx,
+                Arc::clone(&observed),
             ))
             .unwrap();
         service
-            .protocol()
-            .cancel_blocking(TimeoutCancel::new(session_id))
+            .cancel_for_test(TimeoutCancel::new(session_id))
             .unwrap();
 
-        assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(observed.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -603,20 +665,22 @@ mod tests {
             ..TimeoutServiceConfig::default()
         };
         let service = start_timeout_service_with_config::<8>(config);
-        let (tx, _rx) = mpsc::channel();
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(3);
 
         service
-            .protocol()
-            .request_blocking(request_with_sender(
+            .request_for_test(request_with_target(
                 session_id,
                 Duration::from_secs(10),
-                tx.clone(),
+                Arc::clone(&observed),
             ))
             .unwrap();
         service
-            .protocol()
-            .request_blocking(request_with_sender(session_id, Duration::from_secs(10), tx))
+            .request_for_test(request_with_target(
+                session_id,
+                Duration::from_secs(10),
+                observed,
+            ))
             .unwrap();
 
         assert_eq!(
@@ -643,25 +707,25 @@ mod tests {
         let service = start_timeout_service_with_config::<8>(config);
         let attempts = Arc::new(AtomicUsize::new(0));
         let attempts_for_delivery = Arc::clone(&attempts);
-        let (tx, rx) = mpsc::channel();
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(5);
 
         service
-            .protocol()
-            .request_blocking(TimeoutRequest::new(
+            .request_for_test(TimeoutRequest::with_target(
                 session_id,
                 Time::now() + Duration::from_millis(5),
-                move |delivered| {
-                    let attempt = attempts_for_delivery.fetch_add(1, Ordering::SeqCst);
-                    if attempt == 0 {
-                        return Err(SendError::QueueFull);
-                    }
-                    tx.send(delivered).map_err(|_| SendError::TaskStopped)
-                },
+                Arc::new(RetryTarget {
+                    attempts: attempts_for_delivery,
+                    observed: Arc::clone(&observed),
+                }),
             ))
             .unwrap();
 
-        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while observed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(*observed.lock().unwrap(), vec![session_id]);
         assert!(attempts.load(Ordering::SeqCst) >= 2);
     }
 
@@ -676,10 +740,11 @@ mod tests {
         let session_id = session(6);
 
         service
-            .protocol()
-            .request_blocking(TimeoutRequest::new(session_id, Time::now(), |_| {
-                Err(SendError::QueueFull)
-            }))
+            .request_for_test(TimeoutRequest::with_target(
+                session_id,
+                Time::now(),
+                Arc::new(FullTarget),
+            ))
             .unwrap();
 
         assert_eq!(
@@ -691,24 +756,21 @@ mod tests {
     #[test]
     fn tos_req_006_timeout_occurred_event_contains_only_session_id() {
         let service = start_timeout_service::<8>();
-        let observed = Arc::new(Mutex::new(None));
-        let observed_for_delivery = Arc::clone(&observed);
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(7);
 
         service
-            .protocol()
-            .request_blocking(TimeoutRequest::new(
+            .request_for_test(TimeoutRequest::with_target(
                 session_id,
                 Time::now(),
-                move |delivered| {
-                    *observed_for_delivery.lock().unwrap() = Some(delivered);
-                    Ok(())
-                },
+                Arc::new(RecordingTarget {
+                    observed: Arc::clone(&observed),
+                }),
             ))
             .unwrap();
 
         std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(*observed.lock().unwrap(), Some(session_id));
+        assert_eq!(*observed.lock().unwrap(), vec![session_id]);
     }
 
     #[test]
@@ -717,18 +779,21 @@ mod tests {
         let clone = service.clone();
         drop(service);
 
-        let (tx, rx) = mpsc::channel();
+        let observed = Arc::new(Mutex::new(Vec::new()));
         let session_id = session(8);
         clone
-            .protocol()
-            .request_blocking(request_with_sender(
+            .request_for_test(request_with_target(
                 session_id,
                 Duration::from_millis(5),
-                tx,
+                Arc::clone(&observed),
             ))
             .unwrap();
 
-        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), session_id);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while observed.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(*observed.lock().unwrap(), vec![session_id]);
         drop(clone);
     }
 }

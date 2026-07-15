@@ -1,7 +1,7 @@
 # timeout-service
 
 `timeout-service` provides a local `mpi`-based timeout service. It schedules a
-session-associated delivery operation for an absolute monotonic deadline and
+session-associated timeout event for an absolute monotonic deadline and
 supports best-effort cancellation by `SessionId`.
 
 ## What It Solves
@@ -17,7 +17,8 @@ cancellation race handling.
 - Can be imported directly as `timeout_service`.
 - Can be re-exported from the `mpi` facade with `enable-timeout-service`.
 - Emits a payload-free timeout-occurred event containing only the request's
-  `SessionId`; the requester supplies the typed event delivery operation.
+  `SessionId`. The infrastructure derives its return endpoint from the
+  requesting task scope; callers do not supply a delivery closure.
 
 ## Usage
 
@@ -32,6 +33,10 @@ Examples are in `examples/`:
 
 Build deadlines from `Time::now()` plus a `Duration` so requesters and the
 service use the same monotonic time basis.
+
+Construct requests inside a task with `TimeoutRequest::new(ctx, session_id,
+deadline)`, declare the timeout handler with `#[event(receive)]`, and send the
+request through `service.protocol().request(ctx, request)`.
 
 Use one active timeout per `SessionId`. A duplicate active request is a service
 error because it makes cancellation ambiguous.

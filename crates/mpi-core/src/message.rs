@@ -100,6 +100,12 @@ pub trait CanReceive<T>: TaskMessage {
     fn wrap(value: T) -> Self;
 }
 
+/// Type-erased task endpoint capable of receiving one typed message.
+pub trait MessageTarget<T>: Send + Sync {
+    /// Enqueue the typed message through the receiving task's generated queue.
+    fn send(&self, value: T) -> Result<(), crate::error::SendError>;
+}
+
 /// Framework-only queue-space wakeup message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueueSpaceWakeup;
