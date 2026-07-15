@@ -889,6 +889,42 @@ Verification: inspection
 
 Status: proposed
 
+### MPI-REQ-146: Task-context timed suspension
+
+A generated task context shall provide `sleep_until(deadline)`, returning an
+owned future that may be awaited without retaining a mutable context borrow.
+
+Verification: test
+
+Status: approved
+
+### MPI-REQ-147: Non-blocking deadline wait
+
+Awaiting `sleep_until` shall return control to the task runtime before the
+deadline and shall not block the task OS thread from receiving other messages.
+
+Verification: test
+
+Status: approved
+
+### MPI-REQ-148: Deadline wake routing
+
+The async-handler adapter shall supply a task-queue waker so a timed future can
+wake its task at the deadline without continuous polling.
+
+Verification: test and inspection
+
+Status: approved
+
+### MPI-REQ-149: Concurrent deadline ordering
+
+A task shall be able to host multiple suspended timed handlers whose deadlines
+complete independently and may complete out of request order.
+
+Verification: test
+
+Status: approved
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -986,6 +1022,14 @@ Architecture rules:
   handler, while call and stream termination is consumed by infrastructure.
 - MPI-ARCH-107: A task endpoint owns cleanup registrations for subscriptions
   created by that task, allowing subscriber termination to cancel them.
+- MPI-ARCH-108: Generated task contexts expose the standalone `ctx-future`
+  absolute-deadline future as `sleep_until(std::time::Instant)`.
+- MPI-ARCH-109: The standard-future handler adapter polls with a waker that
+  enqueues the receiver's framework queue-space wakeup message. Awaited call
+  and stream futures remain pending without self-waking; their matching
+  infrastructure message causes the scheduler to poll them again. This avoids
+  a priority-wakeup loop starving ordinary requests while a handler is
+  suspended.
 
 ## Transaction architecture
 
@@ -1142,6 +1186,12 @@ Interface rules:
 - MPI-INT-023: Generated task message enums shall carry infrastructure-generated
   task-termination messages. Call and stream messages complete matching waiters;
   supervised messages dispatch to the declared task-termination handler.
+- MPI-INT-025: Generated contexts shall expose
+  `sleep_until(std::time::Instant) -> SleepUntil`; callers shall await the
+  returned future explicitly.
+- MPI-INT-026: Generated event dispatch shall use the standard-future handler
+  adapter with the caller-owned task context so deadline wakeups and ordinary
+  request dispatch remain active during suspension.
 
 Conceptual transaction API:
 
@@ -1187,6 +1237,7 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-018 | Start a service, use its protocol bindings through the service instance, and observe synchronized stop when the final service instance clone is dropped. | proposed |
 | MPI-VAL-019 | Supervise a task, observe exactly one termination event, and cancel supervision by dropping the monitor or terminating the subscriber. | proposed |
 | MPI-VAL-020 | Panic in one task, observe target-terminated call, stream, monitor, and join outcomes, while unrelated tasks continue running. | proposed |
+| MPI-VAL-021 | Start several timed handlers in one task and observe completion in deadline order rather than request order. | approved |
 
 ## Verification
 
@@ -1220,6 +1271,8 @@ Verification should include:
   execution;
 - inspection that panic isolation is not claimed for `panic = "abort"` or other
   process-fatal failures.
+- timed-handler tests covering deadline wakeup, continued message dispatch,
+  cancellation, and out-of-order deadline completion.
 
 ## Traceability
 
@@ -1237,3 +1290,4 @@ Verification should include:
 | MPI-REQ-110..MPI-REQ-127 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-099 | MPI-INT-009..MPI-INT-014 | MPI-VAL-013..MPI-VAL-017 |
 | MPI-REQ-130..MPI-REQ-135 | MPI-CMP-015, MPI-ARCH-100..MPI-ARCH-102 | MPI-INT-015..MPI-INT-018 | MPI-VAL-018 |
 | MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-023 | MPI-VAL-019, MPI-VAL-020 |
+| MPI-REQ-146..MPI-REQ-149 | MPI-ARCH-108, MPI-ARCH-109 | MPI-INT-025 | MPI-VAL-021 |

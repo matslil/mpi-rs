@@ -649,13 +649,10 @@ where
 {
     type Output = Result<(), SendError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut().try_resume() {
             CtxPoll::Ready(value) => Poll::Ready(value),
-            CtxPoll::Pending => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+            CtxPoll::Pending => Poll::Pending,
         }
     }
 }
@@ -886,13 +883,10 @@ pub struct SuspendedStreamNext<'a, T, E> {
 impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
     type Output = Result<Option<T>, StreamError<E>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut().try_resume() {
             CtxPoll::Ready(value) => Poll::Ready(value),
-            CtxPoll::Pending => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+            CtxPoll::Pending => Poll::Pending,
         }
     }
 }

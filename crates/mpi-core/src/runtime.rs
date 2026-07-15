@@ -1,13 +1,26 @@
 //! Minimal task-local future execution support.
 
-use ctx_future::{CtxFuture, CtxPoll, from_std_future};
+use ctx_future::{CtxFuture, CtxPoll, StdFutureCtx};
 use std::collections::VecDeque;
 use std::future::Future;
+use std::sync::Arc;
+use std::task::{Wake, Waker};
 
 use crate::call::{CallReleaseMessage, CallResponseMessage};
 use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
+use crate::queue::QueueSpaceWakeupTarget;
 use crate::stream::{StreamCancelMessage, StreamEventMessage, StreamPullMessage};
 use crate::task::{TaskContext, TaskEndpoint};
+
+struct HandlerWake {
+    target: Arc<dyn QueueSpaceWakeupTarget>,
+}
+
+impl Wake for HandlerWake {
+    fn wake(self: Arc<Self>) {
+        let _ = self.target.try_wake();
+    }
+}
 
 fn route_task_message_with_dispatch<M, D, const N: usize>(
     message: M,
@@ -191,5 +204,74 @@ where
         + QueueSpaceWakeupMessage,
     F: Future,
 {
-    block_on_task(from_std_future(future), endpoint, ctx, deferred)
+    let waker = Waker::from(Arc::new(HandlerWake {
+        target: ctx.self_handle().queue_space_wakeup_target(),
+    }));
+    block_on_task(
+        StdFutureCtx::with_waker(future, waker),
+        endpoint,
+        ctx,
+        deferred,
+    )
+}
+
+/// Run a compiler-generated handler while dispatching ordinary messages through
+/// independent nested handler continuations.
+pub fn block_on_handler_with_dispatch<M, F, D, const N: usize>(
+    future: F,
+    endpoint: &TaskEndpoint<M, N>,
+    ctx: &TaskContext<M, N>,
+    dispatch: D,
+) -> F::Output
+where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
+    F: Future,
+    D: FnMut(M, &mut TaskContext<M, N>),
+{
+    let waker = Waker::from(Arc::new(HandlerWake {
+        target: ctx.self_handle().queue_space_wakeup_target(),
+    }));
+    let mut ctx = ctx.clone();
+    block_on_ctx_task_with_dispatch(
+        StdFutureCtx::with_waker(future, waker),
+        endpoint,
+        &mut ctx,
+        dispatch,
+    )
+}
+
+/// Run a compiler-generated handler with a scheduler waker while routing
+/// messages through the caller-owned task context.
+pub fn block_on_handler_in_context_with_dispatch<M, F, D, const N: usize>(
+    future: F,
+    endpoint: &TaskEndpoint<M, N>,
+    ctx: &mut TaskContext<M, N>,
+    dispatch: D,
+) -> F::Output
+where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
+    F: Future,
+    D: FnMut(M, &mut TaskContext<M, N>),
+{
+    let waker = Waker::from(Arc::new(HandlerWake {
+        target: ctx.self_handle().queue_space_wakeup_target(),
+    }));
+    block_on_ctx_task_with_dispatch(
+        StdFutureCtx::with_waker(future, waker),
+        endpoint,
+        ctx,
+        dispatch,
+    )
 }

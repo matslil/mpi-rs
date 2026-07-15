@@ -1127,11 +1127,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             #message_ident::__TaskTerminated { event } => {
                 if let Some(event) = ctx.inner.deliver_task_terminated(event) {
                     let __ctx_inner = ctx.inner.clone();
-                    ::mpi::block_on_handler(
+                    __run_handler(
                         #task_ident::#method_ident(&mut ctx, event),
-                        inner_handle.task_endpoint(),
+                        inner_handle,
+                        state,
                         &__ctx_inner,
-                        &mut *deferred,
                     );
                 }
             }
@@ -1227,11 +1227,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
                         let __ctx_inner = ctx.inner.clone();
-                        ::mpi::block_on_handler(
+                        __run_handler(
                             #handler_call,
-                            inner_handle.task_endpoint(),
+                            inner_handle,
+                            state,
                             &__ctx_inner,
-                            &mut *deferred,
                         );
                     }
                 });
@@ -1253,13 +1253,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             inner: ctx.inner.clone(),
                             state: state.clone(),
                         };
-                        let mut __mpi_handler_future = {
+                        let __mpi_handler_future = {
                             let ctx = &mut __mpi_handler_ctx;
                             #task_ident::#method_ident(ctx, #(#arg_idents),*)
                         };
 
-                        ::mpi::block_on_ctx_task_with_dispatch(
-                            ::mpi::from_std_future(__mpi_handler_future),
+                        ::mpi::block_on_handler_in_context_with_dispatch(
+                            __mpi_handler_future,
                             inner_handle.task_endpoint(),
                             &mut ctx.inner,
                             |__mpi_message, __mpi_inner| {
@@ -1336,11 +1336,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { session_id, reply #(, #arg_idents)* } => {
                         if !ctx.inner.take_call_released(session_id) {
                             let __ctx_inner = ctx.inner.clone();
-                            let value = ::mpi::block_on_handler(
+                            let value = __run_handler(
                                 #handler_call,
-                                inner_handle.task_endpoint(),
+                                inner_handle,
+                                state,
                                 &__ctx_inner,
-                                &mut *deferred,
                             );
                             let _ = reply.send_from(
                                 inner_handle.queue_space_wakeup_target(),
@@ -1481,11 +1481,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>,
                         );
                         let __ctx_inner = ctx.inner.clone();
-                        let result = ::mpi::block_on_handler(
+                        let result = __run_handler(
                             #stream_handler_call,
-                            inner_handle.task_endpoint(),
+                            inner_handle,
+                            state,
                             &__ctx_inner,
-                            &mut *deferred,
                         );
                         match result {
                             Ok(()) => {
@@ -1612,11 +1612,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #message_ident::#variant_ident { session_id, reply } => {
                         if !ctx.inner.take_call_released(session_id) {
                             let __ctx_inner = ctx.inner.clone();
-                            ::mpi::block_on_handler(
+                            __run_handler(
                                 #handler_call,
-                                inner_handle.task_endpoint(),
+                                inner_handle,
+                                state,
                                 &__ctx_inner,
-                                &mut *deferred,
                             );
                             ctx.stop();
                             let _ = reply.send_from(
@@ -2016,6 +2016,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self.inner.next_session_id()
             }
 
+            pub fn sleep_until(
+                &self,
+                deadline: ::std::time::Instant,
+            ) -> ::mpi::SleepUntil {
+                self.inner.sleep_until(deadline)
+            }
+
             pub fn stop(&mut self) {
                 self.inner.stop();
             }
@@ -2055,6 +2062,50 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 #(#dispatch_arms),*
                             }
                             ctx
+                        }
+
+                        fn __run_handler<F>(
+                            future: F,
+                            inner_handle: &::mpi::TaskHandle<#message_ident, #queue_size>,
+                            state: &::std::rc::Rc<::std::cell::RefCell<#task_ident>>,
+                            inner_ctx: &::mpi::TaskContext<#message_ident, #queue_size>,
+                        ) -> F::Output
+                        where
+                            F: ::std::future::Future,
+                        {
+                            ::mpi::block_on_handler_with_dispatch(
+                                future,
+                                inner_handle.task_endpoint(),
+                                inner_ctx,
+                                |message, dispatched_inner| {
+                                    let nested_ctx = #context_ident {
+                                        inner: dispatched_inner.clone(),
+                                        state: state.clone(),
+                                    };
+                                    let mut nested_deferred =
+                                        ::std::collections::VecDeque::<#message_ident>::new();
+                                    let _ = __dispatch_message(
+                                        state,
+                                        inner_handle,
+                                        nested_ctx,
+                                        &mut nested_deferred,
+                                        message,
+                                    );
+                                    while let Some(message) = nested_deferred.pop_front() {
+                                        let nested_ctx = #context_ident {
+                                            inner: dispatched_inner.clone(),
+                                            state: state.clone(),
+                                        };
+                                        let _ = __dispatch_message(
+                                            state,
+                                            inner_handle,
+                                            nested_ctx,
+                                            &mut nested_deferred,
+                                            message,
+                                        );
+                                    }
+                                },
+                            )
                         }
 
                         let mut ctx = #context_ident {

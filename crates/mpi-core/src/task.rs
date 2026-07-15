@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 use crate::call::{
     CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
@@ -524,6 +525,12 @@ where
     /// Allocate the next task-local session ID.
     pub fn next_session_id(&self) -> SessionId {
         self.inner.borrow_mut().session_ids.next_session_id()
+    }
+
+    /// Suspend the current handler until an absolute monotonic deadline.
+    #[must_use]
+    pub fn sleep_until(&self, deadline: Instant) -> ctx_future::SleepUntil {
+        ctx_future::sleep_until(deadline)
     }
 
     /// Route a queued call response to the registered waiter, if any.
