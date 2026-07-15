@@ -1,5 +1,66 @@
 use mpi::{protocol, task};
-use std::sync::mpsc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex};
+
+#[derive(Clone)]
+struct TestSender<T> {
+    shared: Arc<(Mutex<VecDeque<T>>, Condvar)>,
+}
+
+struct TestReceiver<T> {
+    shared: Arc<(Mutex<VecDeque<T>>, Condvar)>,
+}
+
+#[derive(Debug)]
+struct TestRecvError;
+
+fn test_channel<T>() -> (TestSender<T>, TestReceiver<T>) {
+    let shared = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+    (
+        TestSender {
+            shared: Arc::clone(&shared),
+        },
+        TestReceiver { shared },
+    )
+}
+
+impl<T> TestSender<T> {
+    fn send(&self, value: T) -> Result<(), TestRecvError> {
+        let (values, available) = &*self.shared;
+        values
+            .lock()
+            .expect("test channel mutex poisoned")
+            .push_back(value);
+        available.notify_one();
+        Ok(())
+    }
+}
+
+impl<T> TestReceiver<T> {
+    fn recv(&self) -> Result<T, TestRecvError> {
+        let (values, available) = &*self.shared;
+        let mut values = values.lock().expect("test channel mutex poisoned");
+        loop {
+            if let Some(value) = values.pop_front() {
+                return Ok(value);
+            }
+            values = available.wait(values).expect("test channel mutex poisoned");
+        }
+    }
+
+    fn recv_timeout(&self, timeout: std::time::Duration) -> Result<T, TestRecvError> {
+        let (values, available) = &*self.shared;
+        let values = values.lock().expect("test channel mutex poisoned");
+        let (mut values, result) = available
+            .wait_timeout_while(values, timeout, |values| values.is_empty())
+            .expect("test channel mutex poisoned");
+        if result.timed_out() {
+            Err(TestRecvError)
+        } else {
+            values.pop_front().ok_or(TestRecvError)
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AddRequest {
@@ -171,8 +232,8 @@ impl ProtocolCounter {
 #[derive(Default)]
 struct Client {
     observed: u32,
-    observed_probe: Option<mpsc::Sender<u32>>,
-    delayed_completion_probe: Option<mpsc::Sender<()>>,
+    observed_probe: Option<TestSender<u32>>,
+    delayed_completion_probe: Option<TestSender<()>>,
 }
 
 #[task(
@@ -377,8 +438,8 @@ impl Client {
 }
 
 struct DelayedCounter {
-    started: mpsc::Sender<()>,
-    release: mpsc::Receiver<()>,
+    started: TestSender<()>,
+    release: TestReceiver<()>,
 }
 
 #[task(queue_size = 8)]
@@ -533,8 +594,8 @@ impl BackpressureClient {
 }
 
 struct DelayedProducer {
-    started: mpsc::Sender<()>,
-    release: mpsc::Receiver<()>,
+    started: TestSender<()>,
+    release: TestReceiver<()>,
 }
 
 #[task(queue_size = 8)]
@@ -707,15 +768,15 @@ fn req_062_generated_deferred_future_dispatches_ordinary_message_while_suspended
 
 #[test]
 fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
+    let (started_tx, started_rx) = test_channel();
+    let (release_tx, release_rx) = test_channel();
     let (delayed_counter, delayed_counter_runtime) = DelayedCounter::spawn(DelayedCounter {
         started: started_tx,
         release: release_rx,
     })
     .unwrap();
-    let (observed_probe_tx, observed_probe_rx) = mpsc::channel();
-    let (delayed_completion_tx, delayed_completion_rx) = mpsc::channel();
+    let (observed_probe_tx, observed_probe_rx) = test_channel();
+    let (delayed_completion_tx, delayed_completion_rx) = test_channel();
     let (client, client_runtime) = Client::spawn(Client {
         observed_probe: Some(observed_probe_tx),
         delayed_completion_probe: Some(delayed_completion_tx),
@@ -730,7 +791,7 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
-    let (observed_tx, observed_rx) = mpsc::channel();
+    let (observed_tx, observed_rx) = test_channel();
     let observed_client = client.clone();
     let observed_thread = std::thread::spawn(move || {
         observed_tx
@@ -760,8 +821,8 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
 
 #[test]
 fn req_062_generated_pre_await_handler_dispatches_ordinary_message_while_suspended() {
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
+    let (started_tx, started_rx) = test_channel();
+    let (release_tx, release_rx) = test_channel();
     let (delayed_counter, delayed_counter_runtime) = DelayedCounter::spawn(DelayedCounter {
         started: started_tx,
         release: release_rx,
@@ -797,15 +858,15 @@ fn req_062_generated_pre_await_handler_dispatches_ordinary_message_while_suspend
 
 #[test]
 fn req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspended() {
-    let (first_started_tx, first_started_rx) = mpsc::channel();
-    let (first_release_tx, first_release_rx) = mpsc::channel();
+    let (first_started_tx, first_started_rx) = test_channel();
+    let (first_release_tx, first_release_rx) = test_channel();
     let (first_counter, first_runtime) = DelayedCounter::spawn(DelayedCounter {
         started: first_started_tx,
         release: first_release_rx,
     })
     .unwrap();
-    let (second_started_tx, second_started_rx) = mpsc::channel();
-    let (second_release_tx, second_release_rx) = mpsc::channel();
+    let (second_started_tx, second_started_rx) = test_channel();
+    let (second_release_tx, second_release_rx) = test_channel();
     let (second_counter, second_runtime) = DelayedCounter::spawn(DelayedCounter {
         started: second_started_tx,
         release: second_release_rx,
@@ -823,7 +884,7 @@ fn req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspend
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
-    let (observed_tx, observed_rx) = mpsc::channel();
+    let (observed_tx, observed_rx) = test_channel();
     let observed_client = client.clone();
     let observed_thread = std::thread::spawn(move || {
         observed_tx
@@ -860,8 +921,8 @@ fn req_062_generated_two_await_handler_dispatches_ordinary_message_while_suspend
 
 #[test]
 fn req_062_generated_stream_next_handler_dispatches_ordinary_message_while_suspended() {
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
+    let (started_tx, started_rx) = test_channel();
+    let (release_tx, release_rx) = test_channel();
     let (producer, producer_runtime) = DelayedProducer::spawn(DelayedProducer {
         started: started_tx,
         release: release_rx,

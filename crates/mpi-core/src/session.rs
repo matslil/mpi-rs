@@ -2,8 +2,8 @@
 
 use core::fmt;
 use std::sync::Arc;
-use std::sync::mpsc;
 
+use crate::channel::{Receiver, channel};
 use crate::error::SendError;
 use crate::message::HasSessionId;
 use crate::queue::QueueSpaceWakeupTarget;
@@ -121,8 +121,8 @@ type ReplySendFn<T> = Box<
 /// Sender endpoint used by call handlers to return one typed reply.
 ///
 /// The sender is intentionally a one-shot abstraction. External calls back it
-/// with an `mpsc` channel; task-internal suspended calls back it with a queued
-/// response message to the caller task.
+/// with an internal blocking waiter; task-internal suspended calls back it with
+/// a queued response message to the caller task.
 pub struct SyncReplySender<T> {
     send: Option<ReplySendFn<T>>,
 }
@@ -169,12 +169,12 @@ impl<T> SyncReplySender<T> {
 }
 
 /// Receiver endpoint used by callers waiting for one typed reply.
-pub type SyncReplyReceiver<T> = mpsc::Receiver<Response<T>>;
+pub type SyncReplyReceiver<T> = Receiver<Response<T>>;
 
 /// Create a synchronous reply channel for external blocking calls.
 #[must_use]
 pub fn sync_reply_channel<T: Send + 'static>() -> (SyncReplySender<T>, SyncReplyReceiver<T>) {
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = channel();
     (
         SyncReplySender::new(move |response| {
             sender.send(response).map_err(|_| SendError::TaskStopped)

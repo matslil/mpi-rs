@@ -4,9 +4,9 @@ use ctx_future::{CtxFuture, CtxPoll};
 use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::task::{Context, Poll};
 
+use crate::channel::{Receiver, Sender, TryRecvError, channel};
 use crate::error::CallError;
 use crate::lifecycle::{TaskMonitor, TaskTermination};
 use crate::message::LateReplyPolicy;
@@ -113,6 +113,15 @@ enum CallReceiver<T> {
 }
 
 impl<T> SuspendedCall<T> {
+    fn register_waker(&self, waker: &std::task::Waker) {
+        if let Some(receiver) = &self.receiver {
+            match receiver {
+                CallReceiver::Direct(receiver) => receiver.register_waker(waker),
+                CallReceiver::Queued(receiver) => receiver.register_waker(waker),
+            }
+        }
+    }
+
     /// Create a suspended call future for an active session.
     #[must_use]
     pub fn pending(session_id: SessionId, receiver: Receiver<Response<T>>) -> Self {
@@ -264,8 +273,10 @@ impl<Cx, T> CtxFuture<Cx> for SuspendedCall<T> {
 impl<T> Future for SuspendedCall<T> {
     type Output = Result<T, CallError>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().try_resume() {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.register_waker(cx.waker());
+        match this.try_resume() {
             CtxPoll::Ready(value) => Poll::Ready(value),
             CtxPoll::Pending => Poll::Pending,
         }
@@ -299,7 +310,7 @@ pub fn suspended_call_waiter<T>(
     Sender<Result<Response<T>, TaskTermination>>,
     SuspendedCall<T>,
 ) {
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = channel();
     (sender, SuspendedCall::pending_queued(session_id, receiver))
 }
 
@@ -316,7 +327,7 @@ pub(crate) fn suspended_call_waiter_with_on_drop<T, F>(
 where
     F: FnOnce(SessionId) + 'static,
 {
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = channel();
     let future =
         SuspendedCall::pending_queued(session_id, receiver).with_additional_on_drop(on_drop);
     (sender, future)

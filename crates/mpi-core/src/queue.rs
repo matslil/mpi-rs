@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
 
+use crate::channel::{Sender, channel};
 use crate::error::{RecvError, SendError};
 use crate::message::{MessagePlacement, TaskMessage};
 use crate::session::EndpointId;
@@ -228,7 +229,7 @@ where
         let mut state = self.state.lock().expect("queue mutex poisoned");
         let mut message = Some(message);
         let sender_endpoint = sender.endpoint();
-        let (wakeup_tx, wakeup_rx) = std::sync::mpsc::channel();
+        let (wakeup_tx, wakeup_rx) = channel();
         let sender = Arc::new(QueueSpaceWakeupAttempt {
             target: sender,
             wakeup: Mutex::new(Some(wakeup_tx)),
@@ -373,7 +374,7 @@ where
 
 struct QueueSpaceWakeupAttempt {
     target: Arc<dyn QueueSpaceWakeupTarget>,
-    wakeup: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    wakeup: Mutex<Option<Sender<()>>>,
 }
 
 impl QueueSpaceWakeupTarget for QueueSpaceWakeupAttempt {

@@ -6,7 +6,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
@@ -14,6 +13,7 @@ use crate::call::{
     CallResponseMessage, CallSession, QueuedCallRelease, QueuedCallResponse,
     suspended_call_waiter_with_on_drop,
 };
+use crate::channel::Sender;
 use crate::error::{CallError, RecvError, SendError};
 use crate::lifecycle::{
     EndpointLifecycle, TaskMonitor, TaskTerminated, TaskTermination, TaskTerminationMessage,

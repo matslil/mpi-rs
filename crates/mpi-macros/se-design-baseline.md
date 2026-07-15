@@ -351,6 +351,16 @@ Verification: test and inspection
 
 Status: approved
 
+### MACRO-REQ-038: Runtime-owned generated stream waiters
+
+Generated blocking and suspended stream APIs shall construct their delivery
+waiters through `mpi-core` and shall not generate an independent
+message-passing channel.
+
+Verification: test and inspection
+
+Status: approved
+
 ## Architecture
 
 Architecture rules:
@@ -394,6 +404,9 @@ Stable architecture ID anchors:
 - MACRO-ARCH-016: Generated handler dispatch uses the runtime's dispatching
   future adapter so a pending timed handler does not defer unrelated ordinary
   messages until its deadline.
+- MACRO-ARCH-017: Generated stream bindings delegate waiter construction and
+  wake behavior to `mpi-core`, keeping one runtime synchronization model for
+  calls and streams.
 
 ## Interface
 
@@ -516,6 +529,8 @@ Interface rules:
   and streams shall not be dispatched to that handler.
 - MACRO-INT-026: Generated task contexts shall expose
   `sleep_until(std::time::Instant) -> SleepUntil`.
+- MACRO-INT-027: Generated blocking stream methods shall use the runtime's
+  blocking stream channel constructor.
 
 ## Validation Scenarios
 
@@ -566,3 +581,4 @@ Verification should include:
 | MACRO-REQ-035 | MACRO-ARCH-014 | MACRO-INT-021..MACRO-INT-022 | MACRO-VAL-010 |
 | MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023, MACRO-INT-024 | MACRO-VAL-011 |
 | MACRO-REQ-037 | MACRO-ARCH-016 | MACRO-INT-026 | MACRO-VAL-012 |
+| MACRO-REQ-038 | MACRO-ARCH-017 | MACRO-INT-027 | MACRO-VAL-002 |

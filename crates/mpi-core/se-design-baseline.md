@@ -925,6 +925,16 @@ Verification: test
 
 Status: approved
 
+### MPI-REQ-150: Native runtime waiters
+
+`mpi-core` shall implement call, stream, blocking-reply, and queue-capacity
+waiters as MPI-owned synchronization state and shall not use an independent
+message-passing channel implementation.
+
+Verification: test and inspection
+
+Status: approved
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -1030,6 +1040,10 @@ Architecture rules:
   infrastructure message causes the scheduler to poll them again. This avoids
   a priority-wakeup loop starving ordinary requests while a handler is
   suspended.
+- MPI-ARCH-110: Runtime waiters use mutex-protected state with condition-variable
+  notification for blocking external scope and stored Rust wakers for suspended
+  task handlers. Delivery stores the value before notifying or waking, and
+  disconnection is represented explicitly in the waiter state.
 
 ## Transaction architecture
 
@@ -1192,6 +1206,9 @@ Interface rules:
 - MPI-INT-026: Generated event dispatch shall use the standard-future handler
   adapter with the caller-owned task context so deadline wakeups and ordinary
   request dispatch remain active during suspension.
+- MPI-INT-027: The internal waiter interface shall provide blocking receive,
+  non-blocking receive, disconnection, and waker registration without exposing
+  an additional message-passing channel API to applications.
 
 Conceptual transaction API:
 
@@ -1273,6 +1290,10 @@ Verification should include:
   process-fatal failures.
 - timed-handler tests covering deadline wakeup, continued message dispatch,
   cancellation, and out-of-order deadline completion.
+- waiter tests covering delivery-before-registration, delivery-after-waker
+  registration, blocking notification, and sender/receiver disconnection;
+- source inspection confirming the workspace contains no independent
+  message-passing channel implementation.
 
 ## Traceability
 
@@ -1291,3 +1312,4 @@ Verification should include:
 | MPI-REQ-130..MPI-REQ-135 | MPI-CMP-015, MPI-ARCH-100..MPI-ARCH-102 | MPI-INT-015..MPI-INT-018 | MPI-VAL-018 |
 | MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-023 | MPI-VAL-019, MPI-VAL-020 |
 | MPI-REQ-146..MPI-REQ-149 | MPI-ARCH-108, MPI-ARCH-109 | MPI-INT-025 | MPI-VAL-021 |
+| MPI-REQ-150 | MPI-ARCH-110 | MPI-INT-027 | MPI-VAL-004, MPI-VAL-007, MPI-VAL-011 |

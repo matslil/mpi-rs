@@ -6,10 +6,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::{Context, Poll};
 
+use crate::channel::{Receiver, Sender, TryRecvError, channel};
 use crate::error::SendError;
 use crate::lifecycle::{TaskMonitor, TaskTermination};
 use crate::message::{HasSessionId, LateReplyPolicy};
@@ -883,8 +883,10 @@ pub struct SuspendedStreamNext<'a, T, E> {
 impl<T, E> Future for SuspendedStreamNext<'_, T, E> {
     type Output = Result<Option<T>, StreamError<E>>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().try_resume() {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.stream.receiver.register_waker(cx.waker());
+        match this.try_resume() {
             CtxPoll::Ready(value) => Poll::Ready(value),
             CtxPoll::Pending => Poll::Pending,
         }
@@ -939,7 +941,7 @@ pub fn suspended_stream_waiter<T, E>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
 ) -> (StreamWaiterSender<T, E>, SuspendedMessageStream<T, E>) {
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = channel();
     (
         sender,
         SuspendedMessageStream::new(session_id, control, receiver),
@@ -957,7 +959,7 @@ pub(crate) fn suspended_stream_waiter_with_on_drop<T, E, F>(
 where
     F: FnOnce(SessionId) + 'static,
 {
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = channel();
     (
         sender,
         SuspendedMessageStream::new_with_on_drop(session_id, control, receiver, on_drop),
@@ -968,6 +970,22 @@ where
 pub struct BlockingMessageStream<T, E> {
     stream: MessageStream<T, E>,
     receiver: Receiver<StreamEvent<T, E>>,
+}
+
+/// Create the producer endpoint and blocking consumer for an external stream.
+#[must_use]
+pub fn blocking_message_stream_channel<T: Send + 'static, E: Send + 'static>(
+    session_id: SessionId,
+    control: Arc<dyn StreamControl>,
+) -> (StreamEventSender<T, E>, BlockingMessageStream<T, E>) {
+    let (sender, receiver) = channel();
+    let events = StreamEventSender::new(Box::new(move |event| {
+        sender.send(event).map_err(|_| SendError::TaskStopped)
+    }) as Box<dyn StreamEventSink<T, E> + Send>);
+    (
+        events,
+        BlockingMessageStream::new(session_id, control, receiver),
+    )
 }
 
 impl<T, E> BlockingMessageStream<T, E> {

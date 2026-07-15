@@ -1532,16 +1532,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         #(#arg_idents: #arg_tys),*
                     ) -> Result<::mpi::BlockingMessageStream<#item, #error>, ::mpi::SendError> {
                         let session_id = self.inner.next_external_session_id();
-                        let (events, receiver) = ::std::sync::mpsc::channel::<::mpi::StreamEvent<#item, #error>>();
-                        let events = ::mpi::StreamEventSender::new(Box::new(move |event| {
-                            events
-                                .send(event)
-                                .map_err(|_| ::mpi::SendError::TaskStopped)
-                        }) as Box<dyn ::mpi::StreamEventSink<#item, #error> + Send>);
                         let control = ::std::sync::Arc::new(#stream_control_ident {
                             inner: self.inner.clone(),
                         });
-                        let stream = ::mpi::BlockingMessageStream::new(session_id, control, receiver);
+                        let (events, stream) =
+                            ::mpi::blocking_message_stream_channel(session_id, control);
                         self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             events
