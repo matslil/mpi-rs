@@ -11,6 +11,7 @@ use crate::{CtxFuture, CtxPoll};
 /// context-aware suspension should be represented directly as [`CtxFuture`].
 pub struct StdFutureCtx<F> {
     future: Pin<Box<F>>,
+    waker: Waker,
 }
 
 impl<F> StdFutureCtx<F> {
@@ -19,6 +20,16 @@ impl<F> StdFutureCtx<F> {
     pub fn new(future: F) -> Self {
         Self {
             future: Box::pin(future),
+            waker: Waker::noop().clone(),
+        }
+    }
+
+    /// Wrap a standard future with the scheduler waker used while polling.
+    #[must_use]
+    pub fn with_waker(future: F, waker: Waker) -> Self {
+        Self {
+            future: Box::pin(future),
+            waker,
         }
     }
 }
@@ -36,8 +47,7 @@ where
     type Output = F::Output;
 
     fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
-        let waker = Waker::noop();
-        let mut context = Context::from_waker(waker);
+        let mut context = Context::from_waker(&self.waker);
 
         match Future::poll(self.future.as_mut(), &mut context) {
             Poll::Ready(value) => CtxPoll::Ready(value),

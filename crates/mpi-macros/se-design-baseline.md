@@ -341,6 +341,16 @@ Verification: test and compile-fail test
 
 Status: proposed
 
+### MACRO-REQ-037: Generated timed suspension API
+
+Generated task contexts shall expose `sleep_until(std::time::Instant)`, and
+generated dispatch shall allow ordinary messages to start nested handler
+continuations while another handler is suspended.
+
+Verification: test and inspection
+
+Status: approved
+
 ## Architecture
 
 Architecture rules:
@@ -381,6 +391,9 @@ Stable architecture ID anchors:
 - MACRO-ARCH-015: Generated supervision methods delegate to endpoint lifecycle
   monitoring and require generated task context. Termination delivery uses a
   hidden generated message variant in the subscriber task queue.
+- MACRO-ARCH-016: Generated handler dispatch uses the runtime's dispatching
+  future adapter so a pending timed handler does not defer unrelated ordinary
+  messages until its deadline.
 
 ## Interface
 
@@ -501,6 +514,8 @@ Interface rules:
 - MACRO-INT-024: `#[task_terminated]` shall declare at most one handler accepting
   the supervised `TaskTerminated` event; infrastructure termination for calls
   and streams shall not be dispatched to that handler.
+- MACRO-INT-026: Generated task contexts shall expose
+  `sleep_until(std::time::Instant) -> SleepUntil`.
 
 ## Validation Scenarios
 
@@ -521,6 +536,7 @@ IDs below are grouping aliases.
 | MACRO-VAL-009 | A service declaration generates a service instance whose protocol bindings cannot outlive the instance and whose final drop stops the task. | proposed |
 | MACRO-VAL-010 | A task declaration with user symbols that collide with generated handle methods fails with an explicit compile error. | proposed |
 | MACRO-VAL-011 | A task supervises another generated task, observes panic termination, and external code cannot create the subscription. | proposed |
+| MACRO-VAL-012 | Several generated handlers sleep until different deadlines and complete in deadline order. | approved |
 
 ## Verification
 
@@ -549,3 +565,4 @@ Verification should include:
 | MACRO-REQ-030..MACRO-REQ-034 | MACRO-ARCH-011..MACRO-ARCH-013 | MACRO-INT-017..MACRO-INT-020 | MACRO-VAL-009 |
 | MACRO-REQ-035 | MACRO-ARCH-014 | MACRO-INT-021..MACRO-INT-022 | MACRO-VAL-010 |
 | MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023, MACRO-INT-024 | MACRO-VAL-011 |
+| MACRO-REQ-037 | MACRO-ARCH-016 | MACRO-INT-026 | MACRO-VAL-012 |
