@@ -96,8 +96,9 @@ Status: approved
   timeouts; no active-timeout registry or bespoke cancel protocol exists.
 - TOS-ARCH-005: Generated MPI stream machinery owns session routing,
   backpressure, target termination, and terminal outcomes.
-- TOS-ARCH-006: The service instance owns the generated timeout task handle and
-  runtime join capability.
+- TOS-ARCH-006: The task macro generates the service instance and start
+  function. The generated instance owns the timeout task binding and runtime
+  join capability; the crate adds only its timeout protocol convenience method.
 
 ## Interface
 

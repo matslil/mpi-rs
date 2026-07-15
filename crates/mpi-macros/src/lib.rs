@@ -23,6 +23,8 @@ struct TaskArgs {
     queue_size: TokenStream2,
     priority_reserved: TokenStream2,
     receives: Vec<Type>,
+    service_instance: Option<Ident>,
+    service_start: Option<Ident>,
 }
 
 impl Parse for TaskArgs {
@@ -30,6 +32,8 @@ impl Parse for TaskArgs {
         let mut queue_size = None;
         let mut priority_reserved = None;
         let mut receives = Vec::new();
+        let mut service_instance = None;
+        let mut service_start = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -47,10 +51,16 @@ impl Parse for TaskArgs {
                 receives = Punctuated::<Type, Token![,]>::parse_terminated(&content)?
                     .into_iter()
                     .collect();
+            } else if key == "service_instance" {
+                input.parse::<Token![=]>()?;
+                service_instance = Some(input.parse()?);
+            } else if key == "service_start" {
+                input.parse::<Token![=]>()?;
+                service_start = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `queue_size`, `priority_reserved`, or `receives`",
+                    "expected `queue_size`, `priority_reserved`, `receives`, `service_instance`, or `service_start`",
                 ));
             }
 
@@ -65,6 +75,8 @@ impl Parse for TaskArgs {
             queue_size,
             priority_reserved,
             receives,
+            service_instance,
+            service_start,
         })
     }
 }
@@ -934,6 +946,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let handle_ident = format_ident!("{}Handle", task_ident);
     let context_ident = format_ident!("{}Context", task_ident);
     let stream_control_ident = format_ident!("{}StreamControl", task_ident);
+    let service = match (args.service_instance, args.service_start) {
+        (Some(instance), Some(start)) => Some((instance, start)),
+        (None, None) => None,
+        _ => {
+            return compile_error(syn::Error::new_spanned(
+                &task_ident,
+                "`service_instance` and `service_start` must be specified together",
+            ));
+        }
+    };
     let queue_size = args.queue_size;
     let priority_reserved = args.priority_reserved;
     let receives = args.receives;
@@ -1748,9 +1770,64 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     });
+    let service_definition = service.map(|(instance_ident, start_ident)| {
+        let inner_ident = format_ident!("__{}Inner", instance_ident);
+        quote! {
+            struct #inner_ident {
+                handle: #handle_ident,
+                runtime: ::std::sync::Mutex<::std::option::Option<::mpi::TaskRuntime<()>>>,
+            }
+
+            impl ::std::ops::Drop for #inner_ident {
+                fn drop(&mut self) {
+                    self.handle.close();
+                    if let Some(runtime) = self
+                        .runtime
+                        .lock()
+                        .expect("service runtime lock poisoned")
+                        .take()
+                    {
+                        runtime.join().expect("service task failed while stopping");
+                    }
+                }
+            }
+
+            #[derive(Clone)]
+            pub struct #instance_ident {
+                inner: ::std::sync::Arc<#inner_ident>,
+            }
+
+            impl #instance_ident {
+                /// Return a protocol binding for this running service task.
+                pub fn binding(&self) -> #handle_ident {
+                    self.inner.handle.clone()
+                }
+            }
+
+            /// Start the service task and return its owning service instance.
+            #[must_use]
+            pub fn #start_ident(#(#start_arg_idents: #start_arg_tys),*) -> #instance_ident
+            where
+                #task_ident: ::std::default::Default + Send + 'static,
+            {
+                let (handle, runtime) = #task_ident::spawn(
+                    #task_ident::default()
+                    #(, #start_arg_idents)*
+                ).expect("start service task");
+                #instance_ident {
+                    inner: ::std::sync::Arc::new(#inner_ident {
+                        handle,
+                        runtime: ::std::sync::Mutex::new(Some(runtime)),
+                    }),
+                }
+            }
+        }
+    });
 
     let expanded = quote! {
         #item_impl
+
+        #service_definition
 
         #[allow(private_interfaces)]
         pub enum #message_ident {

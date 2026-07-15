@@ -819,6 +819,30 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
     delayed_counter_runtime.join().unwrap();
 }
 
+#[derive(Default)]
+struct GeneratedService;
+
+#[task(
+    queue_size = 4,
+    service_instance = GeneratedServiceInstance,
+    service_start = start_generated_service
+)]
+impl GeneratedService {
+    #[event]
+    fn ping(_ctx: &mut GeneratedServiceContext) {}
+}
+
+#[test]
+fn req_180_181_183_macro_generates_owning_service_start_api() {
+    let service = start_generated_service();
+    let binding = service.binding();
+
+    binding.ping_blocking().unwrap();
+    drop(service);
+
+    assert_eq!(binding.ping_blocking(), Err(mpi::SendError::TaskStopped));
+}
+
 #[test]
 fn req_062_generated_pre_await_handler_dispatches_ordinary_message_while_suspended() {
     let (started_tx, started_rx) = test_channel();

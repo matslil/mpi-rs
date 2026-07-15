@@ -278,7 +278,7 @@ bindings.
 
 Verification: inspection and test
 
-Status: proposed
+Status: implemented
 
 ### MACRO-REQ-031: Service binding stopped behavior
 
@@ -289,7 +289,7 @@ the task.
 
 Verification: compile-fail test and inspection
 
-Status: proposed
+Status: implemented
 
 ### MACRO-REQ-032: Service final-drop stop
 
@@ -299,7 +299,7 @@ from external scope.
 
 Verification: test and inspection
 
-Status: proposed
+Status: implemented
 
 ### MACRO-REQ-033: Omitted service start handler
 
@@ -391,6 +391,10 @@ Stable architecture ID anchors:
 - MACRO-ARCH-011: Generated service instances own service task lifetime and
   expose protocol bindings that may be cloned independently without keeping the
   service task alive.
+- A task opts into service generation by specifying both
+  `service_instance = TypeName` and `service_start = function_name`. The task
+  state must implement `Default`; generated start-handler arguments become the
+  generated start function's arguments.
 - MACRO-ARCH-012: Generated service final-drop logic closes the service
   capability and joins its runtime without external application messaging.
 - MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
@@ -518,6 +522,9 @@ Interface rules:
   externally callable message API.
 - MACRO-INT-020: Omitted service start and stop handlers shall mean empty
   no-argument handlers, not missing message variants.
+- MACRO-INT-020A: A service-enabled task declaration shall generate the named
+  public service-instance type and start function. The instance shall expose a
+  cloneable `binding()` while retaining sole ownership of runtime shutdown.
 - MACRO-INT-021: A non-message task method named `stop` shall be rejected when
   the macro would otherwise synthesize the generated stop API.
 - MACRO-INT-022: A message handler name shall be rejected when it collides with

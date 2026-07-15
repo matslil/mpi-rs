@@ -1,9 +1,8 @@
 //! Local `mpi` timeout service implemented as a single-result stream.
 
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use mpi::{CanReceive, SendError, StreamEvent, SuspendedMessageStream, TaskRuntime, task};
+use mpi::{CanReceive, SendError, StreamEvent, SuspendedMessageStream, task};
 
 /// Queue capacity used by the local timeout task.
 pub const TIMEOUT_QUEUE_SIZE: usize = 32;
@@ -64,7 +63,11 @@ impl std::error::Error for TimeoutError {}
 #[derive(Default)]
 struct TimeoutTask;
 
-#[task(queue_size = 32)]
+#[task(
+    queue_size = 32,
+    service_instance = TimeoutServiceInstance,
+    service_start = start_timeout_service
+)]
 impl TimeoutTask {
     #[stream(item = TimeoutOccurred, error = TimeoutError, batch_size = 1)]
     fn timeout(
@@ -79,26 +82,6 @@ impl TimeoutTask {
     }
 }
 
-struct TimeoutServiceInner {
-    handle: TimeoutTaskHandle,
-    runtime: Mutex<Option<TaskRuntime<()>>>,
-}
-
-impl Drop for TimeoutServiceInner {
-    fn drop(&mut self) {
-        self.handle.close();
-        if let Some(runtime) = self.runtime.lock().unwrap().take() {
-            runtime.join().expect("timeout task failed while stopping");
-        }
-    }
-}
-
-/// Owning instance of the local timeout task.
-#[derive(Clone)]
-pub struct TimeoutServiceInstance {
-    inner: Arc<TimeoutServiceInner>,
-}
-
 impl TimeoutServiceInstance {
     /// Start a single-result timeout stream from task scope.
     pub fn timeout<C>(
@@ -110,19 +93,7 @@ impl TimeoutServiceInstance {
         C: mpi::TaskScope,
         C::Message: CanReceive<StreamEvent<TimeoutOccurred, TimeoutError>>,
     {
-        self.inner.handle.timeout(ctx, deadline)
-    }
-}
-
-/// Start the local timeout service.
-#[must_use]
-pub fn start_timeout_service() -> TimeoutServiceInstance {
-    let (handle, runtime) = TimeoutTask::spawn(TimeoutTask).expect("start timeout task");
-    TimeoutServiceInstance {
-        inner: Arc::new(TimeoutServiceInner {
-            handle,
-            runtime: Mutex::new(Some(runtime)),
-        }),
+        self.binding().timeout(ctx, deadline)
     }
 }
 
