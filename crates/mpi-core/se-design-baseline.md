@@ -27,6 +27,18 @@ Core concepts:
 - the start message is forced to priority and must be the first application message received by a new task;
 - handlers suspend while waiting for replies or stream events instead of blocking the task thread.
 
+### Lifecycle terminology
+
+- **Task termination** is the irreversible end of a task runtime, classified as
+  completed, stopped, or panicked.
+- **Task supervision** is the infrastructure facility through which one task
+  subscribes to another endpoint's termination.
+- **Task monitor** is the cancellable task-scoped handle representing one
+  supervision subscription.
+- **Panic isolation** is the conversion of an unwinding task panic into panicked
+  task termination without automatically propagating that panic to unrelated
+  task threads or the application entry thread.
+
 ## Stakeholder Needs
 
 The following original stakeholder need IDs remain part of this crate baseline:
@@ -55,8 +67,14 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - SN-050: Rust developers need repository-provided long-lived task capabilities
   to expose protocol bindings through an owning service instance whose lifetime
   reports stopped-task errors after the service task has stopped.
-- SN-051: Rust developers need service shutdown to be synchronized by a
-  no-argument stop call without inventing a separate join interface.
+- SN-051: Rust developers need service shutdown to be synchronized by
+  capability closure and runtime joining without external application
+  messaging.
+- SN-052: Task authors need to supervise another task and receive a reliable
+  notification when that task terminates.
+- SN-053: Application authors need an unwinding panic in one task to terminate
+  that task and its active sessions without automatically terminating unrelated
+  tasks or the application process.
 
 ## Scope
 
@@ -76,6 +94,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - compile-time surface for generated transactional message APIs.
 - runtime support for service instance lifetime and service stop
   synchronization.
+- endpoint lifecycle state, task supervision subscriptions, and panic isolation.
 
 `mpi` is not responsible for:
 
@@ -512,7 +531,8 @@ Status: obsolete
 
 ### MPI-REQ-091: No accidental internal blocking
 
-Task-internal APIs shall be visually and type-system distinct from external blocking APIs so handlers do not accidentally block the task thread.
+Messaging APIs shall require task scope so handlers do not block the task thread
+and external construction scope cannot send or receive messages.
 
 Verification: inspection
 
@@ -765,6 +785,106 @@ Verification: inspection
 
 Status: proposed
 
+### MPI-REQ-136: Endpoint termination state
+
+Each task endpoint shall make one irreversible transition from running to a
+terminal state that records whether the task completed, stopped, or panicked.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-137: Task panic isolation
+
+When Rust panic strategy is `unwind`, an unwinding panic from task startup,
+message dispatch, or a message handler shall be caught at the task runtime
+boundary and shall terminate that task without automatically unwinding another
+task or the application entry thread.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-138: Panic isolation limitation
+
+The task runtime shall document that `panic = "abort"`, process abort, fatal
+signals, undefined behavior, and other process-fatal failures cannot be
+isolated by the task runtime.
+
+Verification: inspection
+
+Status: proposed
+
+### MPI-REQ-139: Active session termination
+
+When a task endpoint terminates, every active call or stream waiting on that
+endpoint shall complete with a typed target-terminated outcome carrying the
+recorded task termination reason.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-140: Task supervision subscription
+
+A task shall be able to subscribe from task scope to another endpoint's
+termination. The subscription shall produce exactly one task-terminated event,
+or complete immediately when the target is already terminated.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-141: Race-free supervision registration
+
+Registering supervision concurrently with target termination shall either
+register before termination notification or observe the already recorded
+termination; it shall not miss termination.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-142: Supervision cancellation
+
+Dropping a task supervision handle shall request cancellation, and termination
+of the subscriber task shall automatically cancel all supervision
+subscriptions owned by that subscriber.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-143: Join panic reporting
+
+Joining a task that terminated by panic shall return a typed join error rather
+than resume the task panic in the joining thread. Applications and supervisors
+decide whether that failure should terminate or restart other tasks.
+
+Verification: test
+
+Status: proposed
+
+### MPI-REQ-144: Sanitized panic termination data
+
+Panicked task termination may retain a diagnostic string extracted from a
+string panic payload, but shall not expose or route the raw type-erased panic
+payload as an application message.
+
+Verification: test and inspection
+
+Status: proposed
+
+### MPI-REQ-145: Panic hook behavior
+
+Task panic isolation shall not claim to suppress Rust's configured panic hook,
+which runs before `catch_unwind` observes the panic. The runtime shall not
+replace the process-global panic hook merely to hide isolated task panics.
+
+Verification: inspection
+
+Status: proposed
+
 ## Architecture
 
 The original architecture IDs ARCH-001 through ARCH-004, ARCH-010 through
@@ -802,6 +922,8 @@ Stable architecture ID anchors:
 | MPI-CMP-013 | Transaction core types | Allocates transaction identifiers and tracks transaction paths shared by generated transactional APIs and storage-backed transaction support. |
 | MPI-CMP-014 | Transaction log adapter | Lives in the separate `mpi-transaction` crate and persists prepared participant state and coordinator commit or abort decisions through the persistent log storage protocol. |
 | MPI-CMP-015 | Service instance | Owns one running service task, exposes its protocol bindings, and synchronizes stop when the final clone is dropped. |
+| MPI-CMP-016 | Endpoint lifecycle | Records the endpoint's irreversible running-to-terminated transition and termination reason. |
+| MPI-CMP-017 | Task monitor | Represents one cancellable task-scoped subscription to an endpoint's termination. |
 
 Architecture rules:
 
@@ -845,6 +967,18 @@ Architecture rules:
 - MPI-ARCH-102: Service task state is encapsulated behind message-based
   protocol bindings unless a crate-local baseline documents an explicit
   exception.
+- MPI-ARCH-103: Task startup and dispatch execute inside one unwind-catching
+  runtime boundary. Catching a panic records sanitized endpoint termination
+  before the task thread returns; it does not suppress the configured panic
+  hook.
+- MPI-ARCH-104: Endpoint termination atomically closes message acceptance,
+  completes active call and stream sessions, and notifies task monitors.
+- MPI-ARCH-105: Supervision registration and endpoint termination synchronize
+  through the same lifecycle state so registration cannot miss termination.
+- MPI-ARCH-106: Supervision is an infrastructure lifecycle subscription, not an
+  application protocol and not a general-purpose connection object.
+- MPI-ARCH-107: A task endpoint owns cleanup registrations for subscriptions
+  created by that task, allowing subscriber termination to cancel them.
 
 ## Transaction architecture
 
@@ -944,6 +1078,16 @@ pub struct Response<T> {
 pub trait CanReceive<T>: TaskMessage {
     fn wrap(value: T) -> Self;
 }
+
+pub enum TaskTermination {
+    Completed,
+    Stopped,
+    Panicked { message: Option<String> },
+}
+
+pub struct TaskMonitor {
+    // target endpoint, subscriber endpoint, and supervision session
+}
 ```
 
 Interface rules:
@@ -972,6 +1116,14 @@ Interface rules:
   service instance has stopped the task.
 - MPI-INT-018: Service shutdown shall be exposed as capability closure and
   runtime joining, not as an externally callable protocol message.
+- MPI-INT-019: Starting task supervision shall require task scope and return a
+  cancellable `TaskMonitor` associated with a supervision `SessionId`.
+- MPI-INT-020: Waiting on a task monitor shall yield `TaskTermination`; dropping
+  an unfinished monitor shall request cancellation without blocking.
+- MPI-INT-021: Call and stream APIs shall expose target termination as a typed
+  infrastructure error or terminal outcome, not as an application payload.
+- MPI-INT-022: `TaskRuntime::join` shall report panicked termination as a typed
+  error and shall not resume the caught panic payload.
 
 Conceptual transaction API:
 
@@ -1015,6 +1167,8 @@ for `mpi` runtime behavior. The `MPI-VAL-*` IDs below are grouping aliases.
 | MPI-VAL-016 | Reject generated non-transactional side-effecting sends from inside a transactional handler. | proposed |
 | MPI-VAL-017 | Recover transaction decisions from the default file-backed persistent log storage crate after restart. | proposed |
 | MPI-VAL-018 | Start a service, use its protocol bindings through the service instance, and observe synchronized stop when the final service instance clone is dropped. | proposed |
+| MPI-VAL-019 | Supervise a task, observe exactly one termination event, and cancel supervision by dropping the monitor or terminating the subscriber. | proposed |
+| MPI-VAL-020 | Panic in one task, observe target-terminated call, stream, monitor, and join outcomes, while unrelated tasks continue running. | proposed |
 
 ## Verification
 
@@ -1041,6 +1195,13 @@ Verification should include:
   decision as durable.
 - service lifecycle tests showing synchronized stop on final service instance
   drop and stopped-task errors from protocol bindings retained after stop.
+- supervision tests covering already-terminated targets, cancellation,
+  subscriber termination, and registration/termination races;
+- unwind-panic tests showing endpoint closure, typed session termination,
+  monitor notification, typed join failure, and continued unrelated task
+  execution;
+- inspection that panic isolation is not claimed for `panic = "abort"` or other
+  process-fatal failures.
 
 ## Traceability
 
@@ -1057,3 +1218,4 @@ Verification should include:
 | MPI-REQ-100 | MPI-CMP-012 | MPI-INT-006, MPI-INT-008 | MPI-VAL-012 |
 | MPI-REQ-110..MPI-REQ-127 | MPI-CMP-013, MPI-CMP-014, MPI-ARCH-090..MPI-ARCH-099 | MPI-INT-009..MPI-INT-014 | MPI-VAL-013..MPI-VAL-017 |
 | MPI-REQ-130..MPI-REQ-135 | MPI-CMP-015, MPI-ARCH-100..MPI-ARCH-102 | MPI-INT-015..MPI-INT-018 | MPI-VAL-018 |
+| MPI-REQ-136..MPI-REQ-145 | MPI-CMP-016, MPI-CMP-017, MPI-ARCH-103..MPI-ARCH-107 | MPI-INT-019..MPI-INT-022 | MPI-VAL-019, MPI-VAL-020 |

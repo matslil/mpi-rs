@@ -77,10 +77,11 @@ original IDs used by tests, reports, and traceability.
 - REQ-170: A protocol derivative may bind a protocol declaration to the concrete task, endpoint, or handle that implements a specific protocol instance.
 - REQ-180: A service start function shall return a service instance that owns
   one running service task and exposes that task's protocol bindings.
-- REQ-181: Dropping the final clone of a service instance shall send the
-  service stop call and wait for the stop reply.
-- REQ-182: A service stop call shall take no arguments and shall use its reply
-  only as a synchronization point for clean task termination.
+- REQ-181: Dropping the final clone of a service instance shall close the
+  service capability and join its runtime without external application
+  messaging.
+- REQ-182: Service shutdown synchronization shall use capability closure and
+  runtime join rather than an externally initiated stop call.
 - REQ-183: Protocol bindings cloned from a service instance may outlive the
   service instance object, but sends and calls through those bindings shall fail
   with task-stopped behavior after the service task has stopped.
@@ -292,8 +293,9 @@ Status: proposed
 
 ### MACRO-REQ-032: Service final-drop stop
 
-Generated service instance drop behavior shall send the no-argument service stop
-call and wait for the stop reply when the final clone is dropped.
+Generated service instance drop behavior shall close the service capability and
+join the service runtime without sending an application or protocol message
+from external scope.
 
 Verification: test and inspection
 
@@ -324,6 +326,16 @@ task API symbol, the macro shall produce a compile error that identifies the
 collision.
 
 Verification: compile-fail test
+
+Status: proposed
+
+### MACRO-REQ-036: Generated task supervision API
+
+Generated task handles shall expose a task-scoped supervision method that
+creates a cancellable task monitor for the handle's endpoint. The generated API
+shall not expose external supervision subscription methods.
+
+Verification: test and compile-fail test
 
 Status: proposed
 
@@ -364,6 +376,8 @@ Stable architecture ID anchors:
 - MACRO-ARCH-014: Generated task API names are reserved within the generated
   handle surface. User-declared handlers or task symbols that would collide
   with those names fail during macro expansion.
+- MACRO-ARCH-015: Generated supervision methods delegate to endpoint lifecycle
+  monitoring and require generated task context.
 
 ## Interface
 
@@ -470,7 +484,7 @@ Interface rules:
 - MACRO-INT-017: A service declaration shall identify the generated service
   instance type and the protocol binding or bindings exposed by that instance.
 - MACRO-INT-018: Generated service instances may be cloneable, but only final
-  clone drop shall stop the service task.
+  clone drop shall close the service capability and join the runtime.
 - MACRO-INT-019: `#[stop]` identifies a task-internal stop handler; it is not an
   externally callable message API.
 - MACRO-INT-020: Omitted service start and stop handlers shall mean empty
@@ -479,6 +493,8 @@ Interface rules:
   the macro would otherwise synthesize the generated stop API.
 - MACRO-INT-022: A message handler name shall be rejected when it collides with
   a built-in generated handle method or another generated messaging method.
+- MACRO-INT-023: Each generated task handle shall expose `supervise(ctx)` or an
+  equivalently explicit task-scoped method returning a `TaskMonitor`.
 
 ## Validation Scenarios
 
@@ -498,6 +514,7 @@ IDs below are grouping aliases.
 | MACRO-VAL-008 | Transactional handler contexts cannot send generated non-transactional side-effecting messages. | proposed |
 | MACRO-VAL-009 | A service declaration generates a service instance whose protocol bindings cannot outlive the instance and whose final drop stops the task. | proposed |
 | MACRO-VAL-010 | A task declaration with user symbols that collide with generated handle methods fails with an explicit compile error. | proposed |
+| MACRO-VAL-011 | A task supervises another generated task, observes panic termination, and external code cannot create the subscription. | proposed |
 
 ## Verification
 
@@ -514,6 +531,7 @@ Verification should include:
   cloned binding stopped behavior, synthesized empty start and stop handlers,
   and final-drop stop behavior;
 - examples demonstrating generated task APIs.
+- tests and compile-fail tests for task-scoped supervision generation.
 
 ## Traceability
 
@@ -524,3 +542,4 @@ Verification should include:
 | MACRO-REQ-020..MACRO-REQ-025 | MACRO-ARCH-008..MACRO-ARCH-010 | MACRO-INT-011..MACRO-INT-016 | MACRO-VAL-006..MACRO-VAL-008 |
 | MACRO-REQ-030..MACRO-REQ-034 | MACRO-ARCH-011..MACRO-ARCH-013 | MACRO-INT-017..MACRO-INT-020 | MACRO-VAL-009 |
 | MACRO-REQ-035 | MACRO-ARCH-014 | MACRO-INT-021..MACRO-INT-022 | MACRO-VAL-010 |
+| MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023 | MACRO-VAL-011 |
