@@ -14,7 +14,10 @@ use crate::call::{
     suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, RecvError, SendError};
-use crate::lifecycle::{EndpointLifecycle, TaskMonitor, TaskTermination};
+use crate::lifecycle::{
+    EndpointLifecycle, TaskMonitor, TaskTerminated, TaskTermination, TaskTerminationMessage,
+    TaskTerminationTarget,
+};
 use crate::message::{
     HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
     QueueSpaceWakeupMessage, TaskMessage,
@@ -99,8 +102,8 @@ where
         self.lifecycle.termination()
     }
 
-    fn monitor(&self, subscriber: EndpointId, session_id: SessionId) -> TaskMonitor {
-        self.lifecycle.monitor(subscriber, session_id)
+    fn monitor(&self, deliver: Box<dyn FnOnce(TaskTermination) + Send>) -> TaskMonitor {
+        self.lifecycle.monitor(deliver)
     }
 
     fn terminate(&self, termination: TaskTermination) {
@@ -244,13 +247,28 @@ where
     where
         C: TaskScope,
     {
-        self.endpoint.monitor(ctx.endpoint(), ctx.next_session_id())
+        let subscriber = ctx.task_termination_target();
+        let session_id = ctx.next_session_id();
+        self.monitor_session(subscriber, session_id, true)
     }
 
     /// Subscribe to target termination for an existing infrastructure session.
     #[doc(hidden)]
-    pub fn monitor_session(&self, subscriber: EndpointId, session_id: SessionId) -> TaskMonitor {
-        self.endpoint.monitor(subscriber, session_id)
+    pub fn monitor_session(
+        &self,
+        subscriber: Arc<dyn TaskTerminationTarget>,
+        session_id: SessionId,
+        supervised: bool,
+    ) -> TaskMonitor {
+        let target = self.endpoint();
+        self.endpoint.monitor(Box::new(move |termination| {
+            let _ = subscriber.send_task_terminated(TaskTerminated {
+                session_id,
+                target,
+                termination,
+                supervised,
+            });
+        }))
     }
 
     /// Enqueue one already-constructed message.
@@ -339,12 +357,22 @@ where
     }
 }
 
+impl<M, const N: usize> TaskTerminationTarget for TaskHandle<M, N>
+where
+    M: TaskMessage + TaskTerminationMessage,
+{
+    fn send_task_terminated(&self, event: TaskTerminated) -> Result<(), SendError> {
+        self.send_message(M::task_terminated(event))
+    }
+}
+
 trait ErasedCallWaiter {
     fn deliver(self: Box<Self>, response: QueuedCallResponse) -> Result<(), CallError>;
+    fn terminate(self: Box<Self>, termination: TaskTermination);
 }
 
 struct TypedCallWaiter<T> {
-    sender: Sender<Response<T>>,
+    sender: Sender<Result<Response<T>, TaskTermination>>,
 }
 
 impl<T: Send + 'static> ErasedCallWaiter for TypedCallWaiter<T> {
@@ -354,17 +382,22 @@ impl<T: Send + 'static> ErasedCallWaiter for TypedCallWaiter<T> {
             .downcast::<T>()
             .map_err(|_| CallError::UnexpectedReplyType)?;
         self.sender
-            .send(Response::new(response.session_id, *value))
+            .send(Ok(Response::new(response.session_id, *value)))
             .map_err(|_| CallError::ReplyDisconnected)
+    }
+
+    fn terminate(self: Box<Self>, termination: TaskTermination) {
+        let _ = self.sender.send(Err(termination));
     }
 }
 
 trait ErasedStreamWaiter {
     fn deliver(&self, event: QueuedStreamEvent) -> Result<bool, SendError>;
+    fn terminate(&self, termination: TaskTermination);
 }
 
 struct TypedStreamWaiter<T, E> {
-    sender: Sender<StreamEvent<T, E>>,
+    sender: Sender<Result<StreamEvent<T, E>, TaskTermination>>,
 }
 
 impl<T: Send + 'static, E: Send + 'static> ErasedStreamWaiter for TypedStreamWaiter<T, E> {
@@ -375,9 +408,13 @@ impl<T: Send + 'static, E: Send + 'static> ErasedStreamWaiter for TypedStreamWai
             .expect("queued stream event carried unexpected type");
         let finished = matches!(&*event, StreamEvent::End { .. } | StreamEvent::Error { .. });
         self.sender
-            .send(*event)
+            .send(Ok(*event))
             .map_err(|_| SendError::TaskStopped)?;
         Ok(finished)
+    }
+
+    fn terminate(&self, termination: TaskTermination) {
+        let _ = self.sender.send(Err(termination));
     }
 }
 
@@ -495,6 +532,26 @@ where
         response: QueuedCallResponse,
     ) -> Result<LateReplyAction, CallError> {
         self.deliver_call_response_with_late_reply_callback(response, |_| LateReplyAction::Ignore)
+    }
+
+    /// Consume an infrastructure termination message for an active session.
+    /// Returns the event when it belongs to explicit task supervision.
+    pub fn deliver_task_terminated(&self, event: TaskTerminated) -> Option<TaskTerminated> {
+        if event.supervised {
+            return Some(event);
+        }
+
+        let mut state = self.inner.borrow_mut();
+        if let Some(waiter) = state.call_waiters.remove(&event.session_id) {
+            waiter.terminate(event.termination);
+            return None;
+        }
+        if let Some(waiter) = state.stream_waiters.remove(&event.session_id) {
+            waiter.terminate(event.termination);
+            state.stream_credits.remove(&event.session_id);
+            forget_stream_credit(event.session_id);
+        }
+        None
     }
 
     /// Route a queued call response using an explicit late-reply callback.
@@ -777,7 +834,11 @@ where
 
 impl<M, const N: usize> TaskScope for TaskContext<M, N>
 where
-    M: TaskMessage + CallResponseMessage + StreamEventMessage + QueueSpaceWakeupMessage,
+    M: TaskMessage
+        + CallResponseMessage
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage
+        + TaskTerminationMessage,
 {
     type Message = M;
 
@@ -787,6 +848,10 @@ where
 
     fn next_session_id(&mut self) -> SessionId {
         TaskContext::next_session_id(self)
+    }
+
+    fn task_termination_target(&self) -> Arc<dyn TaskTerminationTarget> {
+        Arc::new(self.self_handle())
     }
 
     fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T> {

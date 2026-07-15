@@ -768,6 +768,7 @@ pub type StreamSession<T, E> = (
 );
 
 type StreamOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
+type StreamWaiterSender<T, E> = Sender<Result<StreamEvent<T, E>, TaskTermination>>;
 
 /// Typed terminal error returned by a task-internal stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -794,7 +795,7 @@ impl<E> std::error::Error for StreamError<E> where E: std::error::Error + 'stati
 /// Task-internal stream consumer for generated handlers.
 pub struct SuspendedMessageStream<T, E> {
     stream: MessageStream<T, E>,
-    receiver: Receiver<StreamEvent<T, E>>,
+    receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
     on_drop: Option<StreamOnDrop>,
     target_monitor: Option<TaskMonitor>,
 }
@@ -806,7 +807,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
     pub fn new(
         session_id: SessionId,
         control: Arc<dyn StreamControl>,
-        receiver: Receiver<StreamEvent<T, E>>,
+        receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
     ) -> Self {
         Self {
             stream: MessageStream::new(session_id, control),
@@ -821,7 +822,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
     pub fn new_with_on_drop<F>(
         session_id: SessionId,
         control: Arc<dyn StreamControl>,
-        receiver: Receiver<StreamEvent<T, E>>,
+        receiver: Receiver<Result<StreamEvent<T, E>, TaskTermination>>,
         on_drop: F,
     ) -> Self
     where
@@ -847,7 +848,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
         self.stream.is_finished()
     }
 
-    /// Complete this stream if the producer endpoint terminates first.
+    /// Retain the producer lifecycle registration for this active stream.
     #[must_use]
     pub fn with_target_monitor(mut self, monitor: TaskMonitor) -> Self {
         self.target_monitor = Some(monitor);
@@ -861,6 +862,7 @@ impl<T, E> SuspendedMessageStream<T, E> {
 
     fn disarm_on_drop(&mut self) {
         self.on_drop = None;
+        self.target_monitor = None;
     }
 }
 
@@ -909,27 +911,18 @@ impl<T, E> SuspendedStreamNext<'_, T, E> {
         }
 
         match self.stream.receiver.try_recv() {
-            Ok(event) => {
+            Ok(Ok(event)) => {
                 let result = self.stream.stream.next_from_event(event);
                 if self.stream.stream.is_finished() {
                     self.stream.disarm_on_drop();
                 }
                 CtxPoll::Ready(result.map_err(StreamError::Application))
             }
-            Err(TryRecvError::Empty) => {
-                if let Some(termination) = self
-                    .stream
-                    .target_monitor
-                    .as_mut()
-                    .and_then(TaskMonitor::try_termination)
-                {
-                    self.stream.target_monitor = None;
-                    self.stream.disarm_on_drop();
-                    CtxPoll::Ready(Err(StreamError::TargetTerminated(termination)))
-                } else {
-                    CtxPoll::Pending
-                }
+            Ok(Err(termination)) => {
+                self.stream.disarm_on_drop();
+                CtxPoll::Ready(Err(StreamError::TargetTerminated(termination)))
             }
+            Err(TryRecvError::Empty) => CtxPoll::Pending,
             Err(TryRecvError::Disconnected) => {
                 self.stream.disarm_on_drop();
                 CtxPoll::Ready(Ok(None))
@@ -951,7 +944,7 @@ impl<Cx, T, E> CtxFuture<Cx> for SuspendedStreamNext<'_, T, E> {
 pub fn suspended_stream_waiter<T, E>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
-) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>) {
+) -> (StreamWaiterSender<T, E>, SuspendedMessageStream<T, E>) {
     let (sender, receiver) = std::sync::mpsc::channel();
     (
         sender,
@@ -966,7 +959,7 @@ pub(crate) fn suspended_stream_waiter_with_on_drop<T, E, F>(
     session_id: SessionId,
     control: Arc<dyn StreamControl>,
     on_drop: F,
-) -> (Sender<StreamEvent<T, E>>, SuspendedMessageStream<T, E>)
+) -> (StreamWaiterSender<T, E>, SuspendedMessageStream<T, E>)
 where
     F: FnOnce(SessionId) + 'static,
 {

@@ -324,6 +324,7 @@ enum HandlerKind {
     },
     Stop,
     LateReply,
+    TaskTerminated,
 }
 
 struct Handler {
@@ -349,6 +350,8 @@ fn special_attr_name(attr: &Attribute) -> Option<&'static str> {
         Some("stop")
     } else if attr.path().is_ident("late_reply") {
         Some("late_reply")
+    } else if attr.path().is_ident("task_terminated") {
+        Some("task_terminated")
     } else {
         None
     }
@@ -412,6 +415,7 @@ fn handler_kind(attrs: &[Attribute]) -> syn::Result<Option<HandlerKind>> {
             }
             "stop" => HandlerKind::Stop,
             "late_reply" => HandlerKind::LateReply,
+            "task_terminated" => HandlerKind::TaskTerminated,
             _ => unreachable!(),
         });
     }
@@ -477,7 +481,10 @@ fn generated_handle_method_names(handlers: &[Handler], synthesize_stop: bool) ->
     let mut generated = HashMap::<String, Ident>::new();
 
     for handler in handlers {
-        if matches!(handler.kind, HandlerKind::Start | HandlerKind::LateReply) {
+        if matches!(
+            handler.kind,
+            HandlerKind::Start | HandlerKind::LateReply | HandlerKind::TaskTerminated
+        ) {
             continue;
         }
 
@@ -491,7 +498,10 @@ fn generated_handle_method_names(handlers: &[Handler], synthesize_stop: bool) ->
         }
 
         let mut names = vec![method_name];
-        if !matches!(handler.kind, HandlerKind::LateReply) {
+        if !matches!(
+            handler.kind,
+            HandlerKind::LateReply | HandlerKind::TaskTerminated
+        ) {
             names.push(format!("{}_blocking", method_ident));
         }
 
@@ -957,6 +967,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                             "late reply callback must take exactly one late reply argument after the context",
                         ));
                     }
+                    if matches!(kind, HandlerKind::TaskTerminated) && args.len() != 1 {
+                        return compile_error(syn::Error::new_spanned(
+                            &method.sig,
+                            "task terminated handler must take exactly one TaskTerminated argument after the context",
+                        ));
+                    }
                     if matches!(kind, HandlerKind::Stop) && !args.is_empty() {
                         return compile_error(syn::Error::new_spanned(
                             &method.sig,
@@ -1003,6 +1019,16 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             "#[task] supports at most one #[late_reply] callback",
         ));
     }
+    let task_terminated_count = handlers
+        .iter()
+        .filter(|handler| matches!(handler.kind, HandlerKind::TaskTerminated))
+        .count();
+    if task_terminated_count > 1 {
+        return compile_error(syn::Error::new_spanned(
+            &task_ident,
+            "#[task] supports at most one #[task_terminated] handler",
+        ));
+    }
     let stop_count = handlers
         .iter()
         .filter(|handler| matches!(handler.kind, HandlerKind::Stop))
@@ -1042,6 +1068,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let late_reply_callback = handlers
         .iter()
         .find(|handler| matches!(handler.kind, HandlerKind::LateReply))
+        .map(|handler| handler.method.sig.ident.clone());
+    let task_terminated_handler = handlers
+        .iter()
+        .find(|handler| matches!(handler.kind, HandlerKind::TaskTerminated))
         .map(|handler| handler.method.sig.ident.clone());
     let deliver_call_response = if let Some(method_ident) = &late_reply_callback {
         quote! {
@@ -1089,6 +1119,30 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
     };
+
+    variants.push(quote! { __TaskTerminated { event: ::mpi::TaskTerminated } });
+    placements.push(quote! { Self::__TaskTerminated { .. } => ::mpi::MessagePlacement::Priority });
+    if let Some(method_ident) = &task_terminated_handler {
+        dispatch_arms.push(quote! {
+            #message_ident::__TaskTerminated { event } => {
+                if let Some(event) = ctx.inner.deliver_task_terminated(event) {
+                    let __ctx_inner = ctx.inner.clone();
+                    ::mpi::block_on_handler(
+                        #task_ident::#method_ident(&mut ctx, event),
+                        inner_handle.task_endpoint(),
+                        &__ctx_inner,
+                        &mut *deferred,
+                    );
+                }
+            }
+        });
+    } else {
+        dispatch_arms.push(quote! {
+            #message_ident::__TaskTerminated { event } => {
+                let _ = ctx.inner.deliver_task_terminated(event);
+            }
+        });
+    }
 
     variants.push(quote! { __StreamCancel { session_id: ::mpi::SessionId } });
     placements.push(quote! { Self::__StreamCancel { .. } => ::mpi::MessagePlacement::Priority });
@@ -1305,11 +1359,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::Response<#reply>>,
                     {
-                        let __subscriber = ctx.endpoint();
+                        let __subscriber = ctx.task_termination_target();
                         let (session_id, reply, future) =
                             ctx.begin_call_with_late_reply_policy::<#reply>(#late_reply_policy);
                         let future = future.with_target_monitor(
-                            self.inner.monitor_session(__subscriber, session_id)
+                            self.inner.monitor_session(__subscriber, session_id, false)
                         );
                         match self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
@@ -1355,11 +1409,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Reply>,
                             {
-                                let __subscriber = ctx.endpoint();
+                                let __subscriber = ctx.task_termination_target();
                                 let (session_id, reply, future) =
                                     ctx.begin_call_with_late_reply_policy::<#protocol::ReplyPayload>(#late_reply_policy);
                                 let future = future.with_target_monitor(
-                                    self.inner.monitor_session(__subscriber, session_id)
+                                    self.inner.monitor_session(__subscriber, session_id, false)
                                 );
                                 match self.inner.send_message(#message_ident::#variant_ident {
                                     session_id,
@@ -1453,7 +1507,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::StreamEvent<#item, #error>>,
                     {
-                        let __subscriber = ctx.endpoint();
+                        let __subscriber = ctx.task_termination_target();
                         let control = ::std::sync::Arc::new(#stream_control_ident {
                             inner: self.inner.clone(),
                         });
@@ -1463,7 +1517,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 #late_reply_policy,
                             );
                         let stream = stream.with_target_monitor(
-                            self.inner.monitor_session(__subscriber, session_id)
+                            self.inner.monitor_session(__subscriber, session_id, false)
                         );
                         self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
@@ -1513,7 +1567,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Item>,
                             {
-                                let __subscriber = ctx.endpoint();
+                                let __subscriber = ctx.task_termination_target();
                                 let control = ::std::sync::Arc::new(#stream_control_ident {
                                     inner: self.inner.clone(),
                                 });
@@ -1523,7 +1577,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                         #late_reply_policy,
                                     );
                                 let stream = stream.with_target_monitor(
-                                    self.inner.monitor_session(__subscriber, session_id)
+                                    self.inner.monitor_session(__subscriber, session_id, false)
                                 );
                                 self.inner.send_message(#message_ident::#variant_ident {
                                     session_id,
@@ -1578,10 +1632,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
                     {
-                        let __subscriber = ctx.endpoint();
+                        let __subscriber = ctx.task_termination_target();
                         let (session_id, reply, future) = ctx.begin_call::<()>();
                         let future = future.with_target_monitor(
-                            self.inner.monitor_session(__subscriber, session_id)
+                            self.inner.monitor_session(__subscriber, session_id, false)
                         );
                         match self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
@@ -1609,7 +1663,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 });
             }
-            HandlerKind::LateReply => {}
+            HandlerKind::LateReply | HandlerKind::TaskTerminated => {}
         }
     }
 
@@ -1640,10 +1694,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 C: ::mpi::TaskScope,
                 C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
             {
-                let __subscriber = ctx.endpoint();
+                let __subscriber = ctx.task_termination_target();
                 let (session_id, reply, future) = ctx.begin_call::<()>();
                 let future = future.with_target_monitor(
-                    self.inner.monitor_session(__subscriber, session_id)
+                    self.inner.monitor_session(__subscriber, session_id, false)
                 );
                 match self.inner.send_message(#message_ident::Stop {
                     session_id,
@@ -1838,6 +1892,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::mpi::TaskTerminationMessage for #message_ident {
+            fn task_terminated(event: ::mpi::TaskTerminated) -> Self {
+                Self::__TaskTerminated { event }
+            }
+        }
+
         struct #stream_control_ident {
             inner: ::mpi::TaskHandle<#message_ident, #queue_size>,
         }
@@ -1898,6 +1958,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             fn next_session_id(&mut self) -> ::mpi::SessionId {
                 self.inner.next_session_id()
+            }
+
+            fn task_termination_target(
+                &self,
+            ) -> ::std::sync::Arc<dyn ::mpi::TaskTerminationTarget> {
+                ::std::sync::Arc::new(self.inner.self_handle())
             }
 
             fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
@@ -2070,5 +2136,11 @@ pub fn stop(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marks the optional callback for reported late replies.
 #[proc_macro_attribute]
 pub fn late_reply(attr: TokenStream, item: TokenStream) -> TokenStream {
+    passthrough(attr, item)
+}
+
+/// Marks the handler for explicitly supervised task-termination events.
+#[proc_macro_attribute]
+pub fn task_terminated(attr: TokenStream, item: TokenStream) -> TokenStream {
     passthrough(attr, item)
 }

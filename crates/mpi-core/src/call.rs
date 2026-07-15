@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
-use crate::lifecycle::TaskMonitor;
+use crate::lifecycle::{TaskMonitor, TaskTermination};
 use crate::message::LateReplyPolicy;
 use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
 
@@ -101,10 +101,15 @@ type CallOnDrop = Box<dyn FnOnce(SessionId) + 'static>;
 /// is suspended.
 pub struct SuspendedCall<T> {
     session_id: Option<SessionId>,
-    receiver: Option<Receiver<Response<T>>>,
+    receiver: Option<CallReceiver<T>>,
     failed: Option<CallError>,
     on_drop: Option<CallOnDrop>,
     target_monitor: Option<TaskMonitor>,
+}
+
+enum CallReceiver<T> {
+    Direct(Receiver<Response<T>>),
+    Queued(Receiver<Result<Response<T>, TaskTermination>>),
 }
 
 impl<T> SuspendedCall<T> {
@@ -113,7 +118,7 @@ impl<T> SuspendedCall<T> {
     pub fn pending(session_id: SessionId, receiver: Receiver<Response<T>>) -> Self {
         Self {
             session_id: Some(session_id),
-            receiver: Some(receiver),
+            receiver: Some(CallReceiver::Direct(receiver)),
             failed: None,
             on_drop: None,
             target_monitor: None,
@@ -132,11 +137,31 @@ impl<T> SuspendedCall<T> {
     {
         Self {
             session_id: Some(session_id),
-            receiver: Some(receiver),
+            receiver: Some(CallReceiver::Direct(receiver)),
             failed: None,
             on_drop: Some(Box::new(on_drop)),
             target_monitor: None,
         }
+    }
+
+    fn pending_queued(
+        session_id: SessionId,
+        receiver: Receiver<Result<Response<T>, TaskTermination>>,
+    ) -> Self {
+        Self {
+            session_id: Some(session_id),
+            receiver: Some(CallReceiver::Queued(receiver)),
+            failed: None,
+            on_drop: None,
+            target_monitor: None,
+        }
+    }
+
+    /// Retain the target lifecycle registration for this active call.
+    #[must_use]
+    pub fn with_target_monitor(mut self, monitor: TaskMonitor) -> Self {
+        self.target_monitor = Some(monitor);
+        self
     }
 
     /// Chain another drop hook onto this suspended call.
@@ -155,13 +180,6 @@ impl<T> SuspendedCall<T> {
             }
             on_drop(session_id);
         }));
-        self
-    }
-
-    /// Complete this call if the target endpoint terminates first.
-    #[must_use]
-    pub fn with_target_monitor(mut self, monitor: TaskMonitor) -> Self {
-        self.target_monitor = Some(monitor);
         self
     }
 
@@ -185,6 +203,7 @@ impl<T> SuspendedCall<T> {
 
     fn disarm_on_drop(&mut self) {
         self.on_drop = None;
+        self.target_monitor = None;
     }
 
     fn try_resume(&mut self) -> CtxPoll<Result<T, CallError>> {
@@ -200,8 +219,12 @@ impl<T> SuspendedCall<T> {
             .as_ref()
             .expect("suspended call receiver missing");
 
-        match receiver.try_recv() {
-            Ok(response) => {
+        let result = match receiver {
+            CallReceiver::Direct(receiver) => receiver.try_recv().map(Ok),
+            CallReceiver::Queued(receiver) => receiver.try_recv(),
+        };
+        match result {
+            Ok(Ok(response)) => {
                 assert_eq!(
                     response.session_id, session_id,
                     "suspended call received response for wrong session"
@@ -211,21 +234,13 @@ impl<T> SuspendedCall<T> {
                 self.disarm_on_drop();
                 CtxPoll::Ready(Ok(response.value))
             }
-            Err(TryRecvError::Empty) => {
-                if let Some(termination) = self
-                    .target_monitor
-                    .as_mut()
-                    .and_then(TaskMonitor::try_termination)
-                {
-                    self.session_id = None;
-                    self.receiver = None;
-                    self.target_monitor = None;
-                    self.disarm_on_drop();
-                    CtxPoll::Ready(Err(CallError::TargetTerminated(termination)))
-                } else {
-                    CtxPoll::Pending
-                }
+            Ok(Err(termination)) => {
+                self.session_id = None;
+                self.receiver = None;
+                self.disarm_on_drop();
+                CtxPoll::Ready(Err(CallError::TargetTerminated(termination)))
             }
+            Err(TryRecvError::Empty) => CtxPoll::Pending,
             Err(TryRecvError::Disconnected) => {
                 self.session_id = None;
                 self.receiver = None;
@@ -281,9 +296,14 @@ pub fn suspended_call_channel<T: Send + 'static>(session_id: SessionId) -> CallS
 
 /// Create the waiter sender and suspended future for one queued task-internal call.
 #[must_use]
-pub fn suspended_call_waiter<T>(session_id: SessionId) -> (Sender<Response<T>>, SuspendedCall<T>) {
+pub fn suspended_call_waiter<T>(
+    session_id: SessionId,
+) -> (
+    Sender<Result<Response<T>, TaskTermination>>,
+    SuspendedCall<T>,
+) {
     let (sender, receiver) = std::sync::mpsc::channel();
-    (sender, SuspendedCall::pending(session_id, receiver))
+    (sender, SuspendedCall::pending_queued(session_id, receiver))
 }
 
 /// Create the waiter sender and suspended future for one queued task-internal
@@ -292,13 +312,15 @@ pub fn suspended_call_waiter<T>(session_id: SessionId) -> (Sender<Response<T>>, 
 pub(crate) fn suspended_call_waiter_with_on_drop<T, F>(
     session_id: SessionId,
     on_drop: F,
-) -> (Sender<Response<T>>, SuspendedCall<T>)
+) -> (
+    Sender<Result<Response<T>, TaskTermination>>,
+    SuspendedCall<T>,
+)
 where
     F: FnOnce(SessionId) + 'static,
 {
     let (sender, receiver) = std::sync::mpsc::channel();
-    (
-        sender,
-        SuspendedCall::pending_with_on_drop(session_id, receiver, on_drop),
-    )
+    let future =
+        SuspendedCall::pending_queued(session_id, receiver).with_additional_on_drop(on_drop);
+    (sender, future)
 }

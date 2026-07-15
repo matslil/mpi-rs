@@ -1,14 +1,10 @@
-//! Task endpoint termination state and supervision subscriptions.
+//! Task endpoint termination state and infrastructure message subscriptions.
 
-use ctx_future::{CtxFuture, CtxPoll};
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
-use std::task::{Context, Poll};
 
+use crate::error::SendError;
 use crate::session::{EndpointId, SessionId};
 
 /// Irreversible reason recorded when a task endpoint terminates.
@@ -25,9 +21,36 @@ pub enum TaskTermination {
     },
 }
 
+/// Infrastructure-generated task termination message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskTerminated {
+    /// Session associated with a call, stream, or supervision subscription.
+    pub session_id: SessionId,
+    /// Endpoint that terminated.
+    pub target: EndpointId,
+    /// Recorded reason for termination.
+    pub termination: TaskTermination,
+    /// Whether this event belongs to an explicit supervision subscription.
+    pub supervised: bool,
+}
+
+/// Generated task message enums capable of carrying termination messages.
+pub trait TaskTerminationMessage: Sized {
+    /// Wrap an infrastructure termination event.
+    fn task_terminated(event: TaskTerminated) -> Self;
+}
+
+/// Type-erased target for an infrastructure termination message.
+pub trait TaskTerminationTarget: Send + Sync {
+    /// Enqueue one termination message at the receiving task.
+    fn send_task_terminated(&self, event: TaskTerminated) -> Result<(), SendError>;
+}
+
+type TerminationDelivery = Box<dyn FnOnce(TaskTermination) + Send + 'static>;
+
 struct LifecycleState {
     termination: Option<TaskTermination>,
-    monitors: HashMap<u64, Sender<TaskTermination>>,
+    monitors: HashMap<u64, TerminationDelivery>,
 }
 
 pub(crate) struct EndpointLifecycle {
@@ -66,19 +89,15 @@ impl EndpointLifecycle {
             state.termination = Some(termination.clone());
             std::mem::take(&mut state.monitors)
         };
-        for monitor in monitors.into_values() {
-            let _ = monitor.send(termination.clone());
+        for deliver in monitors.into_values() {
+            deliver(termination.clone());
         }
         true
     }
 
-    pub(crate) fn monitor(
-        self: &Arc<Self>,
-        subscriber: EndpointId,
-        session_id: SessionId,
-    ) -> TaskMonitor {
-        let (sender, receiver) = mpsc::channel();
+    pub(crate) fn monitor(self: &Arc<Self>, deliver: TerminationDelivery) -> TaskMonitor {
         let id = self.next_monitor.fetch_add(1, Ordering::Relaxed);
+        let mut deliver = Some(deliver);
         let immediate = {
             let mut state = self
                 .state
@@ -87,21 +106,22 @@ impl EndpointLifecycle {
             match state.termination.clone() {
                 Some(termination) => Some(termination),
                 None => {
-                    state.monitors.insert(id, sender.clone());
+                    state.monitors.insert(id, deliver.take().unwrap());
                     None
                 }
             }
         };
         if let Some(termination) = immediate {
-            let _ = sender.send(termination);
-        }
-        TaskMonitor {
-            target: Arc::downgrade(self),
-            id: Some(id),
-            subscriber,
-            session_id,
-            receiver,
-            completed: false,
+            deliver.take().unwrap()(termination);
+            TaskMonitor {
+                target: Weak::new(),
+                id: None,
+            }
+        } else {
+            TaskMonitor {
+                target: Arc::downgrade(self),
+                id: Some(id),
+            }
         }
     }
 
@@ -118,76 +138,10 @@ impl EndpointLifecycle {
 pub struct TaskMonitor {
     target: Weak<EndpointLifecycle>,
     id: Option<u64>,
-    subscriber: EndpointId,
-    session_id: SessionId,
-    receiver: Receiver<TaskTermination>,
-    completed: bool,
-}
-
-impl TaskMonitor {
-    /// Return the supervision session ID.
-    #[must_use]
-    pub const fn session_id(&self) -> SessionId {
-        self.session_id
-    }
-
-    /// Return the endpoint that owns this subscription.
-    #[must_use]
-    pub const fn subscriber(&self) -> EndpointId {
-        self.subscriber
-    }
-
-    pub(crate) fn try_termination(&mut self) -> Option<TaskTermination> {
-        match self.try_resume() {
-            CtxPoll::Ready(termination) => Some(termination),
-            CtxPoll::Pending => None,
-        }
-    }
-
-    fn try_resume(&mut self) -> CtxPoll<TaskTermination> {
-        match self.receiver.try_recv() {
-            Ok(termination) => {
-                self.completed = true;
-                self.id = None;
-                CtxPoll::Ready(termination)
-            }
-            Err(TryRecvError::Empty) => CtxPoll::Pending,
-            Err(TryRecvError::Disconnected) => {
-                self.completed = true;
-                self.id = None;
-                CtxPoll::Ready(TaskTermination::Stopped)
-            }
-        }
-    }
-}
-
-impl<Cx> CtxFuture<Cx> for TaskMonitor {
-    type Output = TaskTermination;
-
-    fn resume(&mut self, _cx: &mut Cx, (): ()) -> CtxPoll<Self::Output> {
-        self.try_resume()
-    }
-}
-
-impl Future for TaskMonitor {
-    type Output = TaskTermination;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().try_resume() {
-            CtxPoll::Ready(value) => Poll::Ready(value),
-            CtxPoll::Pending => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-        }
-    }
 }
 
 impl Drop for TaskMonitor {
     fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
         if let (Some(target), Some(id)) = (self.target.upgrade(), self.id.take()) {
             target.cancel(id);
         }
@@ -197,30 +151,39 @@ impl Drop for TaskMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn mpi_req_140_141_monitor_observes_exactly_one_recorded_termination() {
+    fn mpi_req_140_141_registration_observes_exactly_one_termination() {
         let lifecycle = EndpointLifecycle::new();
-        let session = SessionId::new(EndpointId(1), 1);
-        let mut before = lifecycle.monitor(EndpointId(1), session);
+        let deliveries = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&deliveries);
+        let _monitor = lifecycle.monitor(Box::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
 
         assert!(lifecycle.terminate(TaskTermination::Completed));
         assert!(!lifecycle.terminate(TaskTermination::Stopped));
-        assert_eq!(before.try_termination(), Some(TaskTermination::Completed));
-        assert_eq!(lifecycle.termination(), Some(TaskTermination::Completed));
+        assert_eq!(deliveries.load(Ordering::Relaxed), 1);
 
-        let mut after = lifecycle.monitor(EndpointId(2), SessionId::new(EndpointId(2), 1));
-        assert_eq!(after.try_termination(), Some(TaskTermination::Completed));
+        let observed = Arc::clone(&deliveries);
+        let _late_monitor = lifecycle.monitor(Box::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
+        assert_eq!(deliveries.load(Ordering::Relaxed), 2);
     }
 
     #[test]
-    fn mpi_req_142_dropping_monitor_cancels_subscription() {
+    fn mpi_req_142_dropping_monitor_cancels_delivery() {
         let lifecycle = EndpointLifecycle::new();
-        let monitor = lifecycle.monitor(EndpointId(1), SessionId::new(EndpointId(1), 1));
-        assert_eq!(lifecycle.state.lock().unwrap().monitors.len(), 1);
-
+        let deliveries = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&deliveries);
+        let monitor = lifecycle.monitor(Box::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
         drop(monitor);
 
-        assert!(lifecycle.state.lock().unwrap().monitors.is_empty());
+        lifecycle.terminate(TaskTermination::Stopped);
+        assert_eq!(deliveries.load(Ordering::Relaxed), 0);
     }
 }

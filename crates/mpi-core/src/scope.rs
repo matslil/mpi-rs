@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use crate::call::{CallResponseMessage, CallSession};
+use crate::lifecycle::TaskTerminationMessage;
+use crate::lifecycle::TaskTerminationTarget;
 use crate::message::LateReplyPolicy;
 use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
 use crate::session::EndpointId;
@@ -13,13 +15,20 @@ use crate::stream::{StreamControl, StreamSession};
 /// Marker trait implemented by generated task contexts.
 pub trait TaskScope {
     /// Generated task message enum associated with this scope.
-    type Message: TaskMessage + CallResponseMessage + StreamEventMessage + QueueSpaceWakeupMessage;
+    type Message: TaskMessage
+        + CallResponseMessage
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage
+        + TaskTerminationMessage;
 
     /// Return the endpoint represented by this task-local scope.
     fn endpoint(&self) -> EndpointId;
 
     /// Allocate the next task-local session ID.
     fn next_session_id(&mut self) -> SessionId;
+
+    /// Return the infrastructure termination-message target for this task.
+    fn task_termination_target(&self) -> Arc<dyn TaskTerminationTarget>;
 
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.
