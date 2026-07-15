@@ -199,7 +199,7 @@ impl Counter {
 }
 
 #[test]
-fn macro_req_033_task_without_start_uses_empty_start_handler() {
+fn macro_req_040_task_without_start_waits_for_messages() {
     let (task, runtime) = NoStartTask::spawn(NoStartTask::default()).unwrap();
 
     task.set_blocking(7).unwrap();
