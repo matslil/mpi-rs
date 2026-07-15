@@ -8,12 +8,8 @@ struct Worker {
 
 #[task(queue_size = 8)]
 impl Worker {
-    #[start]
-    fn start(ctx: &mut WorkerContext, log: Arc<Mutex<Vec<&'static str>>>) {
-        log.lock().unwrap().push("start");
-        ctx.with_state(|state| {
-            state.log = Some(log);
-        });
+    fn new(log: Arc<Mutex<Vec<&'static str>>>) -> Self {
+        Self { log: Some(log) }
     }
 
     #[event]
@@ -34,11 +30,11 @@ impl Worker {
 
 fn main() {
     let log = Arc::new(Mutex::new(Vec::new()));
-    let (worker, runtime) = Worker::spawn(Worker::default(), log.clone()).unwrap();
+    let (worker, runtime) = Worker::spawn(Worker::new(log.clone())).unwrap();
 
     worker.work_blocking().unwrap();
     worker.shutdown_blocking().unwrap();
     runtime.join().unwrap();
 
-    assert_eq!(log.lock().unwrap().as_slice(), &["start", "shutdown"]);
+    assert_eq!(log.lock().unwrap().as_slice(), &["shutdown"]);
 }

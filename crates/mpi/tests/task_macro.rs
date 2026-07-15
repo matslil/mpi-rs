@@ -110,6 +110,10 @@ struct NoStopTask {
     value: u32,
 }
 
+struct LifecycleTask {
+    started: bool,
+}
+
 #[task(queue_size = 4)]
 impl NoStartTask {
     #[event]
@@ -132,11 +136,8 @@ impl NoStartTask {
 
 #[task(queue_size = 4)]
 impl NoStopTask {
-    #[start]
-    fn start(ctx: &mut NoStopTaskContext, value: u32) {
-        ctx.with_state(|state| {
-            state.value = value;
-        });
+    fn new(value: u32) -> Self {
+        Self { value }
     }
 
     #[call]
@@ -145,13 +146,32 @@ impl NoStopTask {
     }
 }
 
+#[task(queue_size = 4)]
+impl LifecycleTask {
+    fn new() -> Self {
+        Self { started: false }
+    }
+
+    #[start]
+    fn start(ctx: &mut LifecycleTaskContext) {
+        ctx.with_state(|state| state.started = true);
+    }
+
+    #[call]
+    fn is_started(ctx: &mut LifecycleTaskContext) -> bool {
+        ctx.with_state(|state| state.started)
+    }
+
+    #[event(priority)]
+    fn stop(ctx: &mut LifecycleTaskContext) {
+        ctx.stop();
+    }
+}
+
 #[task(queue_size = 8)]
 impl Counter {
-    #[start]
-    fn start(ctx: &mut CounterContext, initial: u32) {
-        ctx.with_state(|state| {
-            state.value = initial;
-        });
+    fn new(initial: u32) -> Self {
+        Self { value: initial }
     }
 
     #[event(priority)]
@@ -179,7 +199,7 @@ impl Counter {
 }
 
 #[test]
-fn macro_req_033_task_without_start_uses_empty_start_handler() {
+fn macro_req_040_task_without_start_waits_for_messages() {
     let (task, runtime) = NoStartTask::spawn(NoStartTask::default()).unwrap();
 
     task.set_blocking(7).unwrap();
@@ -190,7 +210,7 @@ fn macro_req_033_task_without_start_uses_empty_start_handler() {
 
 #[test]
 fn macro_req_034_task_without_stop_uses_empty_stop_handler() {
-    let (task, runtime) = NoStopTask::spawn(NoStopTask::default(), 11).unwrap();
+    let (task, runtime) = NoStopTask::spawn(NoStopTask::new(11)).unwrap();
 
     assert_eq!(task.get_blocking().unwrap(), 11);
     task.stop_blocking().unwrap();
@@ -204,11 +224,8 @@ struct ProtocolCounter {
 
 #[task(queue_size = 8)]
 impl ProtocolCounter {
-    #[start]
-    fn start(ctx: &mut ProtocolCounterContext, initial: u32) {
-        ctx.with_state(|state| {
-            state.value = initial;
-        });
+    fn new(initial: u32) -> Self {
+        Self { value: initial }
     }
 
     #[event(protocol = CounterProtocolV1::add)]
@@ -480,11 +497,8 @@ struct ScopedState {
 
 #[task(queue_size = 8)]
 impl ScopedState {
-    #[start]
-    fn start(ctx: &mut ScopedStateContext, initial: u32) {
-        ctx.with_state(|state| {
-            state.value = initial;
-        });
+    fn new(initial: u32) -> Self {
+        Self { value: initial }
     }
 
     #[event]
@@ -655,7 +669,7 @@ impl ProtocolProducer {
 
 #[test]
 fn req_051_req_052_macro_generates_task_handle_dispatch_and_call_plumbing() {
-    let (counter, runtime) = Counter::spawn(Counter::default(), 10).unwrap();
+    let (counter, runtime) = Counter::spawn(Counter::new(10)).unwrap();
 
     counter.add_blocking(5).unwrap();
     counter.add_blocking(7).unwrap();
@@ -668,7 +682,7 @@ fn req_051_req_052_macro_generates_task_handle_dispatch_and_call_plumbing() {
 
 #[test]
 fn req_064_generated_context_with_state_scopes_user_state_access() {
-    let (task, runtime) = ScopedState::spawn(ScopedState::default(), 7).unwrap();
+    let (task, runtime) = ScopedState::spawn(ScopedState::new(7)).unwrap();
 
     task.add_blocking(5).unwrap();
     assert_eq!(task.value_blocking().unwrap(), 12);
@@ -678,18 +692,17 @@ fn req_064_generated_context_with_state_scopes_user_state_access() {
 }
 
 #[test]
-fn req_053_macro_forces_start_message_to_priority() {
-    let (counter, runtime) = Counter::spawn(Counter::default(), 3).unwrap();
+fn macro_req_040_start_callback_runs_before_receive_processing() {
+    let (task, runtime) = LifecycleTask::spawn(LifecycleTask::new()).unwrap();
 
-    // If the generated start message were normal, this priority stop could run
-    // first and prevent the start handler from initializing the value.
-    counter.stop_blocking().unwrap();
+    assert!(task.is_started_blocking().unwrap());
+    task.stop_blocking().unwrap();
     runtime.join().unwrap();
 }
 
 #[test]
 fn req_027_generated_event_send_requires_task_scope_for_non_blocking_api() {
-    let (counter, runtime) = Counter::spawn(Counter::default(), 1).unwrap();
+    let (counter, runtime) = Counter::spawn(Counter::new(1)).unwrap();
 
     counter.add_from_handler_blocking(4).unwrap();
     assert_eq!(counter.get_blocking().unwrap(), 5);
@@ -700,7 +713,7 @@ fn req_027_generated_event_send_requires_task_scope_for_non_blocking_api() {
 
 #[test]
 fn req_120_req_121_generated_call_has_context_aware_handler_api() {
-    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 41).unwrap();
+    let (counter, counter_runtime) = Counter::spawn(Counter::new(41)).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.ask_counter_blocking(counter.clone()).unwrap();
@@ -722,7 +735,7 @@ fn req_120_req_121_generated_call_has_context_aware_handler_api() {
 
 #[test]
 fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
-    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 21).unwrap();
+    let (counter, counter_runtime) = Counter::spawn(Counter::new(21)).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client.ask_counter_twice_blocking(counter.clone()).unwrap();
@@ -744,7 +757,7 @@ fn req_061_req_063_call_futures_do_not_borrow_task_context_while_suspended() {
 
 #[test]
 fn req_062_generated_deferred_future_dispatches_ordinary_message_while_suspended() {
-    let (counter, counter_runtime) = Counter::spawn(Counter::default(), 31).unwrap();
+    let (counter, counter_runtime) = Counter::spawn(Counter::new(31)).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client
@@ -817,6 +830,33 @@ fn req_062_generated_task_receives_call_request_while_handler_is_suspended() {
     delayed_counter.stop_blocking().unwrap();
     client_runtime.join().unwrap();
     delayed_counter_runtime.join().unwrap();
+}
+
+struct GeneratedService {
+    _configured_value: u32,
+}
+
+#[task(queue_size = 4)]
+impl GeneratedService {
+    fn new(configured_value: u32) -> Self {
+        Self {
+            _configured_value: configured_value,
+        }
+    }
+
+    #[event]
+    fn ping(_ctx: &mut GeneratedServiceContext) {}
+}
+
+#[test]
+fn req_180_181_183_macro_req_041_generates_owning_service_start_api() {
+    let service = GeneratedServiceServiceInstance::start(7);
+    let binding = service.binding();
+
+    binding.ping_blocking().unwrap();
+    drop(service);
+
+    assert_eq!(binding.ping_blocking(), Err(mpi::SendError::TaskStopped));
 }
 
 #[test]
@@ -1074,8 +1114,7 @@ fn req_105_req_111_generated_stream_error_is_reported_after_buffered_items() {
 
 #[test]
 fn req_160_req_163_req_169_protocol_binding_uses_declared_message_types() {
-    let (counter, counter_runtime) =
-        ProtocolCounter::spawn(ProtocolCounter::default(), 10).unwrap();
+    let (counter, counter_runtime) = ProtocolCounter::spawn(ProtocolCounter::new(10)).unwrap();
     let counter_protocol = CounterProtocolV1::bind(counter.clone());
 
     counter_protocol
@@ -1092,8 +1131,7 @@ fn req_160_req_163_req_169_protocol_binding_uses_declared_message_types() {
 
 #[test]
 fn req_166_req_168_protocol_receive_declaration_allows_task_internal_waits() {
-    let (counter, counter_runtime) =
-        ProtocolCounter::spawn(ProtocolCounter::default(), 33).unwrap();
+    let (counter, counter_runtime) = ProtocolCounter::spawn(ProtocolCounter::new(33)).unwrap();
     let (client, client_runtime) = Client::spawn(Client::default()).unwrap();
 
     client

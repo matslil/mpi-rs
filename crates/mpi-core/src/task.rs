@@ -928,11 +928,7 @@ impl core::fmt::Display for TaskJoinError {
 
 impl std::error::Error for TaskJoinError {}
 
-/// Spawn a minimal task loop with a start message already enqueued.
-///
-/// The start message is enqueued before the OS thread is spawned. If the start
-/// message has priority placement, it is therefore guaranteed to be received as
-/// the first application message.
+/// Spawn a minimal task loop without injecting an application message.
 ///
 /// With Rust's unwind panic strategy, this function catches an unwinding panic
 /// at the task thread boundary and records [`TaskTermination::Panicked`]. The
@@ -940,7 +936,6 @@ impl std::error::Error for TaskJoinError {}
 /// Abort-mode panics, explicit process aborts, fatal signals, undefined
 /// behavior, and other process-fatal failures cannot be isolated this way.
 pub fn spawn_task<M, T, F, const N: usize>(
-    start_message: M,
     priority_reserved: usize,
     run: F,
 ) -> Result<(TaskHandle<M, N>, TaskRuntime<T>), SendError>
@@ -952,7 +947,6 @@ where
     let endpoint = Arc::new(TaskEndpoint::new(Arc::new(
         TaskQueue::<M, N>::with_priority_reserved(priority_reserved),
     )));
-    endpoint.send_message(start_message)?;
     let handle = TaskHandle::from_endpoint(endpoint);
     let runtime_handle = handle.clone();
     let runtime_endpoint = Arc::clone(runtime_handle.task_endpoint());

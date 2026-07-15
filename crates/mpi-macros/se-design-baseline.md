@@ -30,7 +30,7 @@ The following original stakeholder need IDs remain part of this crate baseline:
 - task message enum generation;
 - task context and handle generation;
 - handler dispatch generation;
-- start, event, call, and stream handler plumbing;
+- optional start callback plus event, call, and stream handler plumbing;
 - late-reply callback plumbing;
 - generated service start, stop, and service-instance API support;
 - receive declaration generation;
@@ -62,7 +62,7 @@ original IDs used by tests, reports, and traceability.
 - REQ-050: The macro used for task declarations shall be named `task`.
 - REQ-051: The `#[task]` macro shall generate or support the task message enum, task context type, task handle, handle send methods, queue placement implementation, dispatch plumbing, and call or stream plumbing.
 - REQ-052: Generated dispatch logic shall route each message enum variant to the corresponding handler.
-- REQ-053: The macro shall either reject explicit normal placement for a start handler or ignore it and force priority.
+- REQ-053: Obsolete; `#[start]` identifies a lifecycle callback rather than a placed message handler.
 - REQ-160: A protocol shall define a named, exported set of message declarations.
 - REQ-161: A protocol shall belong to a namespace represented by the Rust module or crate path that exports it.
 - REQ-162: A protocol message identity shall include the protocol namespace, protocol name, and message name.
@@ -88,8 +88,8 @@ original IDs used by tests, reports, and traceability.
 - REQ-184: Direct access to service task state or direct function calls into the
   service task shall be unavailable unless an affected crate-local baseline
   documents an explicit exception.
-- REQ-186: A service task may omit an explicit start handler; when omitted, the
-  macro shall generate an empty no-argument start handler.
+- REQ-186: Obsolete; omitted `#[start]` means that the task enters ordinary
+  receive processing without running a start callback.
 - REQ-187: A service task may omit an explicit stop handler; when omitted, the
   macro shall generate an empty no-argument stop handler.
 - REQ-188: If a user-declared message handler or task symbol collides with a
@@ -120,13 +120,13 @@ Verification: test
 
 Status: approved
 
-### MACRO-REQ-004: Start handler priority
+### MACRO-REQ-004: Start handler priority (obsolete)
 
 The macro shall reject explicit normal placement for a start handler or ignore it and force priority.
 
 Verification: test
 
-Status: approved
+Status: obsolete
 
 ### MACRO-REQ-005: Ordinary handler syntax
 
@@ -278,7 +278,7 @@ bindings.
 
 Verification: inspection and test
 
-Status: proposed
+Status: implemented
 
 ### MACRO-REQ-031: Service binding stopped behavior
 
@@ -289,7 +289,7 @@ the task.
 
 Verification: compile-fail test and inspection
 
-Status: proposed
+Status: implemented
 
 ### MACRO-REQ-032: Service final-drop stop
 
@@ -299,16 +299,16 @@ from external scope.
 
 Verification: test and inspection
 
-Status: proposed
+Status: implemented
 
-### MACRO-REQ-033: Omitted service start handler
+### MACRO-REQ-033: Omitted service start handler (obsolete)
 
 A generated service task may omit an explicit start handler. When omitted, the
 macro shall synthesize an empty no-argument start handler.
 
 Verification: test and inspection
 
-Status: proposed
+Status: obsolete
 
 ### MACRO-REQ-034: Omitted service stop handler
 
@@ -361,6 +361,39 @@ Verification: test and inspection
 
 Status: approved
 
+### MACRO-REQ-039: Pure task-state constructor
+
+An ordinary task method named `new` shall be a synchronous associated function
+that accepts only user-declared construction arguments and returns `Self`. It
+shall not receive generated task context or framework state.
+
+Verification: compile-fail test and inspection
+
+Status: approved
+
+### MACRO-REQ-040: Optional start callback
+
+A task may declare at most one `#[start]` callback. The callback shall accept
+only the generated task context, shall run after state construction on the task
+thread, and shall be invoked before the ordinary receive loop starts. If it
+suspends, full task-context nested dispatch shall remain available. When
+omitted, the task shall immediately wait for incoming messages.
+
+Verification: test and compile-fail test
+
+Status: approved
+
+### MACRO-REQ-041: Automatic service start API
+
+For every task that declares `new`, the macro shall generate a
+`{Task}ServiceInstance` type with an associated `start` method whose arguments
+are the arguments of `new`. No task attribute shall be required to select the
+service-instance type or start-method name.
+
+Verification: test and inspection
+
+Status: approved
+
 ## Architecture
 
 Architecture rules:
@@ -391,10 +424,15 @@ Stable architecture ID anchors:
 - MACRO-ARCH-011: Generated service instances own service task lifetime and
   expose protocol bindings that may be cloned independently without keeping the
   service task alive.
+- A task method named `new` opts into generation of
+  `{Task}ServiceInstance::start`. Its arguments become the generated start
+  method's arguments, and it constructs only user state before the task is
+  spawned.
 - MACRO-ARCH-012: Generated service final-drop logic closes the service
   capability and joins its runtime without external application messaging.
-- MACRO-ARCH-013: Generated service start and stop handlers may be synthesized
-  as empty no-argument handlers when the service task declaration omits them.
+- MACRO-ARCH-013: An omitted start callback causes no callback to be generated;
+  an omitted stop handler may still be synthesized as an empty no-argument
+  handler where required by the generated stop API.
 - MACRO-ARCH-014: Generated task API names are reserved within the generated
   handle surface. User-declared handlers or task symbols that would collide
   with those names fail during macro expansion.
@@ -407,6 +445,10 @@ Stable architecture ID anchors:
 - MACRO-ARCH-017: Generated stream bindings delegate waiter construction and
   wake behavior to `mpi-core`, keeping one runtime synchronization model for
   calls and streams.
+- MACRO-ARCH-018: `new` executes in construction scope without framework
+  context. An optional `#[start]` callback executes on the task thread with full
+  generated task context before the ordinary receive loop; if it suspends, the
+  standard nested-dispatch behavior remains active.
 
 ## Interface
 
@@ -427,11 +469,15 @@ Conceptual task declaration:
 ```rust
 #[task(queue_size = 32, priority_reserved = 1)]
 impl ServerTask {
+    fn new(config: ServerConfig) -> Self {
+        Self {
+            state: ServerState::new(config),
+        }
+    }
+
     #[start]
-    fn start(ctx: &mut ServerTaskContext, config: ServerConfig) {
-        ctx.with_state(|state| {
-            state.state = ServerState::new(config);
-        });
+    fn start(ctx: &mut ServerTaskContext) {
+        // Optional task-scoped initialization may send or await messages.
     }
 
     #[event]
@@ -494,7 +540,8 @@ hierarchy checks.
 
 Interface rules:
 
-- MACRO-INT-001: `#[start]` identifies the start handler.
+- MACRO-INT-001: `#[start]` identifies an optional lifecycle callback, not a
+  message handler. It accepts only generated task context.
 - MACRO-INT-002: `#[event]` identifies an asynchronous message with no reply.
 - MACRO-INT-003: `#[call]` identifies a synchronous request handler.
 - MACRO-INT-004: `#[stream(item = T, error = E)]` identifies a streaming handler with item type `T` and error type `E`.
@@ -510,14 +557,19 @@ Interface rules:
 - MACRO-INT-014: Generated transactional APIs should accept a typed transaction handle rather than requiring ordinary users to manually pass transaction identifiers.
 - MACRO-INT-015: Generated child transaction APIs should be named from the child transaction kind and should only exist or type-check for allowed parent-child pairs.
 - MACRO-INT-016: Generated non-transactional side-effecting send APIs should be unavailable from transactional handler contexts.
-- MACRO-INT-017: A service declaration shall identify the generated service
-  instance type and the protocol binding or bindings exposed by that instance.
+- MACRO-INT-017: A task with `new` shall derive its service-instance name from
+  the task type and expose the task binding through that instance.
 - MACRO-INT-018: Generated service instances may be cloneable, but only final
   clone drop shall close the service capability and join the runtime.
 - MACRO-INT-019: `#[stop]` identifies a task-internal stop handler; it is not an
   externally callable message API.
-- MACRO-INT-020: Omitted service start and stop handlers shall mean empty
-  no-argument handlers, not missing message variants.
+- MACRO-INT-020: Omitted `#[start]` means no start callback is run. Omitted stop
+  handling may use an empty generated stop handler where the stop API requires
+  one.
+- MACRO-INT-020A: A task declaring `fn new(...) -> Self` shall generate public
+  `{Task}ServiceInstance::start(...)`, with the same arguments as `new`. The
+  instance shall expose a cloneable `binding()` while retaining sole ownership
+  of runtime shutdown.
 - MACRO-INT-021: A non-message task method named `stop` shall be rejected when
   the macro would otherwise synthesize the generated stop API.
 - MACRO-INT-022: A message handler name shall be rejected when it collides with
@@ -548,10 +600,11 @@ IDs below are grouping aliases.
 | MACRO-VAL-006 | A transaction declaration generates typed transaction handles that allow only declared messages. | proposed |
 | MACRO-VAL-007 | A transaction declaration generates child transaction APIs only for declared parent-child relationships. | proposed |
 | MACRO-VAL-008 | Transactional handler contexts cannot send generated non-transactional side-effecting messages. | proposed |
-| MACRO-VAL-009 | A service declaration generates a service instance whose protocol bindings cannot outlive the instance and whose final drop stops the task. | proposed |
+| MACRO-VAL-009 | A task with `new` generates a service instance whose final drop stops the task; retained protocol bindings then report task-stopped errors. | proposed |
 | MACRO-VAL-010 | A task declaration with user symbols that collide with generated handle methods fails with an explicit compile error. | proposed |
 | MACRO-VAL-011 | A task supervises another generated task, observes panic termination, and external code cannot create the subscription. | proposed |
 | MACRO-VAL-012 | Several generated handlers sleep until different deadlines and complete in deadline order. | approved |
+| MACRO-VAL-013 | A task's pure `new` constructor receives start arguments; its optional context-only `#[start]` callback runs before ordinary receive processing, or omission waits directly for messages. | approved |
 
 ## Verification
 
@@ -569,6 +622,8 @@ Verification should include:
   and final-drop stop behavior;
 - examples demonstrating generated task APIs.
 - tests and compile-fail tests for task-scoped supervision generation.
+- tests and compile-fail tests for pure constructor shape, context-only
+  `#[start]`, automatic service-instance naming, and omitted-start behavior.
 
 ## Traceability
 
@@ -582,3 +637,4 @@ Verification should include:
 | MACRO-REQ-036 | MACRO-ARCH-015 | MACRO-INT-023, MACRO-INT-024 | MACRO-VAL-011 |
 | MACRO-REQ-037 | MACRO-ARCH-016 | MACRO-INT-026 | MACRO-VAL-012 |
 | MACRO-REQ-038 | MACRO-ARCH-017 | MACRO-INT-027 | MACRO-VAL-002 |
+| MACRO-REQ-039..MACRO-REQ-041 | MACRO-ARCH-011, MACRO-ARCH-013, MACRO-ARCH-018 | MACRO-INT-001, MACRO-INT-020, MACRO-INT-020A | MACRO-VAL-009, MACRO-VAL-013 |
