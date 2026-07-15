@@ -1,4 +1,5 @@
 pub mod call;
+mod channel;
 pub mod error;
 pub mod lifecycle;
 pub mod message;
