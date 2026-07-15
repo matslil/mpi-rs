@@ -1,6 +1,6 @@
 use std::any::Any;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 
 use mpi::{
     CallReleaseMessage, CallResponseMessage, CtxFuture, CtxPoll, EndpointId, HasSessionId,
@@ -220,15 +220,20 @@ fn req_034_priority_messages_are_received_before_normal_messages() {
 
 #[test]
 fn req_040_req_041_req_042_start_message_is_first() {
-    let (handle, runtime) = spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, 1, |handle| {
-        handle.send_message(TestMessage::Priority(9)).unwrap();
-        let first = handle.recv_message().unwrap();
-        let second = handle.recv_message().unwrap();
-        (first, second)
-    })
-    .unwrap();
+    let ready = Arc::new(Barrier::new(2));
+    let task_ready = Arc::clone(&ready);
+    let (handle, runtime) =
+        spawn_task::<TestMessage, _, _, 4>(TestMessage::Start, 1, move |handle| {
+            task_ready.wait();
+            handle.send_message(TestMessage::Priority(9)).unwrap();
+            let first = handle.recv_message().unwrap();
+            let second = handle.recv_message().unwrap();
+            (first, second)
+        })
+        .unwrap();
 
     handle.send_message(TestMessage::Normal(1)).unwrap();
+    ready.wait();
     let (first, second) = runtime.join().unwrap();
 
     assert_eq!(first, TestMessage::Start);
