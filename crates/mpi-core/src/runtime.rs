@@ -245,3 +245,33 @@ where
         dispatch,
     )
 }
+
+/// Run a compiler-generated handler with a scheduler waker while routing
+/// messages through the caller-owned task context.
+pub fn block_on_handler_in_context_with_dispatch<M, F, D, const N: usize>(
+    future: F,
+    endpoint: &TaskEndpoint<M, N>,
+    ctx: &mut TaskContext<M, N>,
+    dispatch: D,
+) -> F::Output
+where
+    M: TaskMessage
+        + CallResponseMessage
+        + CallReleaseMessage
+        + StreamPullMessage
+        + StreamCancelMessage
+        + StreamEventMessage
+        + QueueSpaceWakeupMessage,
+    F: Future,
+    D: FnMut(M, &mut TaskContext<M, N>),
+{
+    let waker = Waker::from(Arc::new(HandlerWake {
+        target: ctx.self_handle().queue_space_wakeup_target(),
+    }));
+    block_on_ctx_task_with_dispatch(
+        StdFutureCtx::with_waker(future, waker),
+        endpoint,
+        ctx,
+        dispatch,
+    )
+}

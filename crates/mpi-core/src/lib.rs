@@ -32,7 +32,7 @@ pub use mpi_macros::{
 pub use queue::{QueueSpaceWakeupTarget, TaskQueue, TaskQueueSnapshot};
 pub use runtime::{
     block_on_ctx_task, block_on_ctx_task_with_dispatch, block_on_handler,
-    block_on_handler_with_dispatch, block_on_task,
+    block_on_handler_in_context_with_dispatch, block_on_handler_with_dispatch, block_on_task,
 };
 pub use scope::TaskScope;
 pub use session::{

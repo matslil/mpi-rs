@@ -1249,12 +1249,32 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
                 dispatch_arms.push(quote! {
                     #message_ident::#variant_ident { #(#arg_idents),* } => {
-                        let __ctx_inner = ctx.inner.clone();
-                        __run_handler(
-                            #handler_call,
-                            inner_handle,
-                            state,
-                            &__ctx_inner,
+                        let mut __mpi_handler_ctx = #context_ident {
+                            inner: ctx.inner.clone(),
+                            state: state.clone(),
+                        };
+                        let __mpi_handler_future = {
+                            let ctx = &mut __mpi_handler_ctx;
+                            #task_ident::#method_ident(ctx, #(#arg_idents),*)
+                        };
+
+                        ::mpi::block_on_handler_in_context_with_dispatch(
+                            __mpi_handler_future,
+                            inner_handle.task_endpoint(),
+                            &mut ctx.inner,
+                            |__mpi_message, __mpi_inner| {
+                                let ctx = #context_ident {
+                                    inner: __mpi_inner.clone(),
+                                    state: state.clone(),
+                                };
+                                let _ctx = __dispatch_message(
+                                    state,
+                                    inner_handle,
+                                    ctx,
+                                    deferred,
+                                    __mpi_message,
+                                );
+                            },
                         );
                     }
                 });

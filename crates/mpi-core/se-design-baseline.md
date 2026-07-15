@@ -1025,7 +1025,11 @@ Architecture rules:
 - MPI-ARCH-108: Generated task contexts expose the standalone `ctx-future`
   absolute-deadline future as `sleep_until(std::time::Instant)`.
 - MPI-ARCH-109: The standard-future handler adapter polls with a waker that
-  enqueues the receiver's framework queue-space wakeup message.
+  enqueues the receiver's framework queue-space wakeup message. Awaited call
+  and stream futures remain pending without self-waking; their matching
+  infrastructure message causes the scheduler to poll them again. This avoids
+  a priority-wakeup loop starving ordinary requests while a handler is
+  suspended.
 
 ## Transaction architecture
 
@@ -1185,6 +1189,9 @@ Interface rules:
 - MPI-INT-025: Generated contexts shall expose
   `sleep_until(std::time::Instant) -> SleepUntil`; callers shall await the
   returned future explicitly.
+- MPI-INT-026: Generated event dispatch shall use the standard-future handler
+  adapter with the caller-owned task context so deadline wakeups and ordinary
+  request dispatch remain active during suspension.
 
 Conceptual transaction API:
 
