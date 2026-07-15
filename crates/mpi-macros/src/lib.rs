@@ -1305,8 +1305,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::Response<#reply>>,
                     {
+                        let __subscriber = ctx.endpoint();
                         let (session_id, reply, future) =
                             ctx.begin_call_with_late_reply_policy::<#reply>(#late_reply_policy);
+                        let future = future.with_target_monitor(
+                            self.inner.monitor_session(__subscriber, session_id)
+                        );
                         match self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             reply
@@ -1351,8 +1355,12 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Reply>,
                             {
+                                let __subscriber = ctx.endpoint();
                                 let (session_id, reply, future) =
                                     ctx.begin_call_with_late_reply_policy::<#protocol::ReplyPayload>(#late_reply_policy);
+                                let future = future.with_target_monitor(
+                                    self.inner.monitor_session(__subscriber, session_id)
+                                );
                                 match self.inner.send_message(#message_ident::#variant_ident {
                                     session_id,
                                     reply
@@ -1445,6 +1453,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::StreamEvent<#item, #error>>,
                     {
+                        let __subscriber = ctx.endpoint();
                         let control = ::std::sync::Arc::new(#stream_control_ident {
                             inner: self.inner.clone(),
                         });
@@ -1453,6 +1462,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 control,
                                 #late_reply_policy,
                             );
+                        let stream = stream.with_target_monitor(
+                            self.inner.monitor_session(__subscriber, session_id)
+                        );
                         self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             events
@@ -1501,6 +1513,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 C: ::mpi::TaskScope,
                                 C::Message: ::mpi::CanReceive<#protocol::Item>,
                             {
+                                let __subscriber = ctx.endpoint();
                                 let control = ::std::sync::Arc::new(#stream_control_ident {
                                     inner: self.inner.clone(),
                                 });
@@ -1509,6 +1522,9 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                                         control,
                                         #late_reply_policy,
                                     );
+                                let stream = stream.with_target_monitor(
+                                    self.inner.monitor_session(__subscriber, session_id)
+                                );
                                 self.inner.send_message(#message_ident::#variant_ident {
                                     session_id,
                                     events
@@ -1562,7 +1578,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                         C: ::mpi::TaskScope,
                         C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
                     {
+                        let __subscriber = ctx.endpoint();
                         let (session_id, reply, future) = ctx.begin_call::<()>();
+                        let future = future.with_target_monitor(
+                            self.inner.monitor_session(__subscriber, session_id)
+                        );
                         match self.inner.send_message(#message_ident::#variant_ident {
                             session_id,
                             reply,
@@ -1620,7 +1640,11 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 C: ::mpi::TaskScope,
                 C::Message: ::mpi::CanReceive<::mpi::Response<()>>,
             {
+                let __subscriber = ctx.endpoint();
                 let (session_id, reply, future) = ctx.begin_call::<()>();
+                let future = future.with_target_monitor(
+                    self.inner.monitor_session(__subscriber, session_id)
+                );
                 match self.inner.send_message(#message_ident::Stop {
                     session_id,
                     reply,
@@ -1838,6 +1862,17 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 self.inner.endpoint()
             }
 
+            pub fn termination(&self) -> Option<::mpi::TaskTermination> {
+                self.inner.termination()
+            }
+
+            pub fn supervise(
+                &self,
+                ctx: &mut impl ::mpi::TaskScope,
+            ) -> ::mpi::TaskMonitor {
+                self.inner.supervise(ctx)
+            }
+
             pub fn close(&self) {
                 self.inner.close();
             }
@@ -1860,6 +1895,10 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         impl ::mpi::TaskScope for #context_ident {
             type Message = #message_ident;
+
+            fn next_session_id(&mut self) -> ::mpi::SessionId {
+                self.inner.next_session_id()
+            }
 
             fn begin_call<T: Send + 'static>(&mut self) -> ::mpi::CallSession<T> {
                 self.inner.begin_call::<T>()

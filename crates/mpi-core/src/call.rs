@@ -8,6 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::task::{Context, Poll};
 
 use crate::error::CallError;
+use crate::lifecycle::TaskMonitor;
 use crate::message::LateReplyPolicy;
 use crate::session::{Response, SessionId, SyncReplySender, sync_reply_channel};
 
@@ -103,6 +104,7 @@ pub struct SuspendedCall<T> {
     receiver: Option<Receiver<Response<T>>>,
     failed: Option<CallError>,
     on_drop: Option<CallOnDrop>,
+    target_monitor: Option<TaskMonitor>,
 }
 
 impl<T> SuspendedCall<T> {
@@ -114,6 +116,7 @@ impl<T> SuspendedCall<T> {
             receiver: Some(receiver),
             failed: None,
             on_drop: None,
+            target_monitor: None,
         }
     }
 
@@ -132,6 +135,7 @@ impl<T> SuspendedCall<T> {
             receiver: Some(receiver),
             failed: None,
             on_drop: Some(Box::new(on_drop)),
+            target_monitor: None,
         }
     }
 
@@ -154,6 +158,13 @@ impl<T> SuspendedCall<T> {
         self
     }
 
+    /// Complete this call if the target endpoint terminates first.
+    #[must_use]
+    pub fn with_target_monitor(mut self, monitor: TaskMonitor) -> Self {
+        self.target_monitor = Some(monitor);
+        self
+    }
+
     /// Create a suspended call future that immediately resolves to an error.
     #[must_use]
     pub fn failed(error: CallError) -> Self {
@@ -162,6 +173,7 @@ impl<T> SuspendedCall<T> {
             receiver: None,
             failed: Some(error),
             on_drop: None,
+            target_monitor: None,
         }
     }
 
@@ -199,7 +211,21 @@ impl<T> SuspendedCall<T> {
                 self.disarm_on_drop();
                 CtxPoll::Ready(Ok(response.value))
             }
-            Err(TryRecvError::Empty) => CtxPoll::Pending,
+            Err(TryRecvError::Empty) => {
+                if let Some(termination) = self
+                    .target_monitor
+                    .as_mut()
+                    .and_then(TaskMonitor::try_termination)
+                {
+                    self.session_id = None;
+                    self.receiver = None;
+                    self.target_monitor = None;
+                    self.disarm_on_drop();
+                    CtxPoll::Ready(Err(CallError::TargetTerminated(termination)))
+                } else {
+                    CtxPoll::Pending
+                }
+            }
             Err(TryRecvError::Disconnected) => {
                 self.session_id = None;
                 self.receiver = None;

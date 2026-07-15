@@ -14,6 +14,7 @@ use crate::call::{
     suspended_call_waiter_with_on_drop,
 };
 use crate::error::{CallError, RecvError, SendError};
+use crate::lifecycle::{EndpointLifecycle, TaskMonitor, TaskTermination};
 use crate::message::{
     HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
     QueueSpaceWakeupMessage, TaskMessage,
@@ -48,6 +49,7 @@ where
     endpoint: EndpointId,
     queue: Arc<TaskQueue<M, N>>,
     accepting: AtomicBool,
+    lifecycle: Arc<EndpointLifecycle>,
     next_external_sequence: AtomicU64,
 }
 
@@ -68,6 +70,7 @@ where
             endpoint,
             queue,
             accepting: AtomicBool::new(true),
+            lifecycle: EndpointLifecycle::new(),
             next_external_sequence: AtomicU64::new(0),
         }
     }
@@ -88,6 +91,22 @@ where
     #[must_use]
     pub fn is_accepting(&self) -> bool {
         self.accepting.load(Ordering::Acquire)
+    }
+
+    /// Return the recorded task termination reason, if terminated.
+    #[must_use]
+    pub fn termination(&self) -> Option<TaskTermination> {
+        self.lifecycle.termination()
+    }
+
+    fn monitor(&self, subscriber: EndpointId, session_id: SessionId) -> TaskMonitor {
+        self.lifecycle.monitor(subscriber, session_id)
+    }
+
+    fn terminate(&self, termination: TaskTermination) {
+        self.lifecycle.terminate(termination);
+        self.accepting.store(false, Ordering::Release);
+        self.queue.close();
     }
 
     /// Enqueue one message through this endpoint.
@@ -212,6 +231,26 @@ where
     #[must_use]
     pub fn is_accepting(&self) -> bool {
         self.endpoint.is_accepting()
+    }
+
+    /// Return the recorded task termination reason, if terminated.
+    #[must_use]
+    pub fn termination(&self) -> Option<TaskTermination> {
+        self.endpoint.termination()
+    }
+
+    /// Subscribe from task scope to this handle's endpoint termination.
+    pub fn supervise<C>(&self, ctx: &mut C) -> TaskMonitor
+    where
+        C: TaskScope,
+    {
+        self.endpoint.monitor(ctx.endpoint(), ctx.next_session_id())
+    }
+
+    /// Subscribe to target termination for an existing infrastructure session.
+    #[doc(hidden)]
+    pub fn monitor_session(&self, subscriber: EndpointId, session_id: SessionId) -> TaskMonitor {
+        self.endpoint.monitor(subscriber, session_id)
     }
 
     /// Enqueue one already-constructed message.
@@ -746,6 +785,10 @@ where
         TaskContext::endpoint(self)
     }
 
+    fn next_session_id(&mut self) -> SessionId {
+        TaskContext::next_session_id(self)
+    }
+
     fn begin_call<T: Send + 'static>(&mut self) -> CallSession<T> {
         TaskContext::begin_call::<T>(self)
     }
@@ -775,23 +818,39 @@ where
 
 /// Join handle for a spawned task runtime.
 pub struct TaskRuntime<T> {
-    join: JoinHandle<T>,
+    join: JoinHandle<Result<T, TaskTermination>>,
 }
 
 impl<T> TaskRuntime<T> {
     /// Wait for the task thread to finish.
     pub fn join(self) -> Result<T, TaskJoinError> {
-        self.join.join().map_err(|_| TaskJoinError)
+        match self.join.join() {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(termination)) => Err(TaskJoinError { termination }),
+            Err(_) => Err(TaskJoinError {
+                termination: TaskTermination::Panicked { message: None },
+            }),
+        }
     }
 }
 
 /// Error returned when a task thread panics before joining.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct TaskJoinError;
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TaskJoinError {
+    termination: TaskTermination,
+}
+
+impl TaskJoinError {
+    /// Return the task termination reason reported by the runtime.
+    #[must_use]
+    pub const fn termination(&self) -> &TaskTermination {
+        &self.termination
+    }
+}
 
 impl core::fmt::Display for TaskJoinError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("task thread panicked")
+        write!(f, "task terminated: {:?}", self.termination)
     }
 }
 
@@ -802,6 +861,12 @@ impl std::error::Error for TaskJoinError {}
 /// The start message is enqueued before the OS thread is spawned. If the start
 /// message has priority placement, it is therefore guaranteed to be received as
 /// the first application message.
+///
+/// With Rust's unwind panic strategy, this function catches an unwinding panic
+/// at the task thread boundary and records [`TaskTermination::Panicked`]. The
+/// configured process-global panic hook still runs before the panic is caught.
+/// Abort-mode panics, explicit process aborts, fatal signals, undefined
+/// behavior, and other process-fatal failures cannot be isolated this way.
 pub fn spawn_task<M, T, F, const N: usize>(
     start_message: M,
     priority_reserved: usize,
@@ -818,6 +883,32 @@ where
     endpoint.send_message(start_message)?;
     let handle = TaskHandle::from_endpoint(endpoint);
     let runtime_handle = handle.clone();
-    let join = thread::spawn(move || run(runtime_handle));
+    let runtime_endpoint = Arc::clone(runtime_handle.task_endpoint());
+    let join = thread::spawn(move || {
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(runtime_handle)));
+        match outcome {
+            Ok(value) => {
+                if runtime_endpoint.termination().is_none() {
+                    let termination = if runtime_endpoint.is_accepting() {
+                        TaskTermination::Completed
+                    } else {
+                        TaskTermination::Stopped
+                    };
+                    runtime_endpoint.terminate(termination);
+                }
+                Ok(value)
+            }
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+                    .or_else(|| payload.downcast_ref::<String>().cloned());
+                let termination = TaskTermination::Panicked { message };
+                runtime_endpoint.terminate(termination.clone());
+                Err(termination)
+            }
+        }
+    });
     Ok((handle, TaskRuntime { join }))
 }

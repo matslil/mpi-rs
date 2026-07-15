@@ -6,6 +6,7 @@ use crate::call::{CallResponseMessage, CallSession};
 use crate::message::LateReplyPolicy;
 use crate::message::{QueueSpaceWakeupMessage, TaskMessage};
 use crate::session::EndpointId;
+use crate::session::SessionId;
 use crate::stream::StreamEventMessage;
 use crate::stream::{StreamControl, StreamSession};
 
@@ -16,6 +17,9 @@ pub trait TaskScope {
 
     /// Return the endpoint represented by this task-local scope.
     fn endpoint(&self) -> EndpointId;
+
+    /// Allocate the next task-local session ID.
+    fn next_session_id(&mut self) -> SessionId;
 
     /// Allocate one task-local call session and return its reply sender and
     /// owned suspended-call future.

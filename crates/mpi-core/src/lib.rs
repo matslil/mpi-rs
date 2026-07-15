@@ -1,5 +1,6 @@
 pub mod call;
 pub mod error;
+pub mod lifecycle;
 pub mod message;
 pub mod queue;
 pub mod runtime;
@@ -16,6 +17,7 @@ pub use call::{
 };
 pub use ctx_future::{CtxFuture, CtxPoll, ResumeFn, StdFutureCtx, from_std_future, resume_fn};
 pub use error::{CallError, RecvError, SendError};
+pub use lifecycle::{TaskMonitor, TaskTermination};
 pub use message::{
     CanReceive, HasSessionId, LateReplyAction, LateReplyKind, LateReplyPolicy, LateReplyRef,
     MessagePlacement, ProtocolReceive, QueueSpaceWakeup, QueueSpaceWakeupMessage, TaskMessage,

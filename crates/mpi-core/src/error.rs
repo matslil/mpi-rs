@@ -2,6 +2,8 @@
 
 use core::fmt;
 
+use crate::lifecycle::TaskTermination;
+
 /// Error returned when a message cannot be enqueued.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SendError {
@@ -49,13 +51,16 @@ impl fmt::Display for RecvError {
 impl std::error::Error for RecvError {}
 
 /// Error returned by synchronous calls.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum CallError {
     /// The request could not be enqueued.
     Send(SendError),
 
     /// The callee stopped before sending a reply.
     ReplyDisconnected,
+
+    /// The target endpoint terminated before sending a reply.
+    TargetTerminated(TaskTermination),
 
     /// A queued reply carried a different type than the registered waiter.
     UnexpectedReplyType,
@@ -66,6 +71,9 @@ impl fmt::Display for CallError {
         match self {
             Self::Send(error) => write!(f, "call request could not be sent: {error}"),
             Self::ReplyDisconnected => f.write_str("call reply channel disconnected"),
+            Self::TargetTerminated(termination) => {
+                write!(f, "call target terminated: {termination:?}")
+            }
             Self::UnexpectedReplyType => f.write_str("call reply carried unexpected type"),
         }
     }
